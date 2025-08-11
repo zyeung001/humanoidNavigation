@@ -62,7 +62,7 @@ def run_simulation():
     env = gym.make("Humanoid-v5", render_mode="rgb_array")
     
     # Video writer
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    fourcc = cv2.VideoWriter_fourcc(*'H264')
     out = cv2.VideoWriter('humanoid_simulation.mp4', fourcc, 30.0, (640, 480))
     
     obs, info = env.reset()
