@@ -1,0 +1,5 @@
+gymnasium[mujoco]
+opencv-python
+numpy
+matplotlib
+pyyaml
