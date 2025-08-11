@@ -58,13 +58,66 @@ def run_simulation():
     import gymnasium as gym
     import numpy as np
     import cv2
+    import os  # Add this import
     
     env = gym.make("Humanoid-v5", render_mode="rgb_array")
     
-    # Video writer
-    fourcc = cv2.VideoWriter_fourcc(*'H264')
-    out = cv2.VideoWriter('humanoid_simulation.mp4', fourcc, 30.0, (640, 480))
+    # Try different codecs in order of preference
+    codecs_to_try = [
+        ('XVID', cv2.VideoWriter_fourcc(*'XVID')),
+        ('MJPG', cv2.VideoWriter_fourcc(*'MJPG')),
+        ('mp4v', cv2.VideoWriter_fourcc(*'mp4v')),
+    ]
     
+    out = None
+    video_path = '/content/humanoid_simulation.mp4'  # Use absolute path
+    
+    for codec_name, fourcc in codecs_to_try:
+        print(f"Trying codec: {codec_name}")
+        out = cv2.VideoWriter(video_path, fourcc, 30.0, (640, 480))
+        
+        if out.isOpened():
+            print(f"Successfully initialized VideoWriter with {codec_name}")
+            break
+        else:
+            print(f"{codec_name} failed")
+            out.release()
+            out = None
+    
+    if out is None:
+        print("ERROR: Could not initialize any video codec!")
+        print("Falling back to saving individual frames...")
+        
+        # Fallback: save frames as images
+        frames_dir = '/content/frames/'
+        os.makedirs(frames_dir, exist_ok=True)
+        
+        obs, info = env.reset()
+        
+        for i in range(100):  # Fewer frames for image sequence
+            action = env.action_space.sample()
+            obs, reward, terminated, truncated, info = env.step(action)
+            
+            try:
+                frame = env.render()
+                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                frame_resized = cv2.resize(frame_bgr, (640, 480))
+                cv2.imwrite(f'{frames_dir}/frame_{i:04d}.png', frame_resized)
+            except Exception as e:
+                print(f"Frame save error at step {i}: {e}")
+                break
+            
+            if terminated or truncated:
+                obs, info = env.reset()
+            
+            if i % 25 == 0:
+                print(f"Frame {i}/100")
+        
+        env.close()
+        print(f"Frames saved to {frames_dir}")
+        return
+    
+    # If video writer worked, proceed with original code
     obs, info = env.reset()
     
     print("Starting simulation...")
@@ -89,9 +142,9 @@ def run_simulation():
     
     env.close()
     out.release()
-    print("Video saved as 'humanoid_simulation.mp4'")
+    print(f"Video saved as '{video_path}'")
 
-def main():
+def main():  # ADD THIS FUNCTION
     print("="*50)
     print("HUMANOID SIMULATION SETUP")
     print("="*50)
@@ -111,7 +164,7 @@ def main():
     
     print("="*50)
     print("SIMULATION COMPLETE!")
-    print("Video file: humanoid_simulation.mp4")
+    print("Video file: /content/humanoid_simulation.mp4")
     print("="*50)
 
 if __name__ == "__main__":
