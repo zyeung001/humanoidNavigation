@@ -15,7 +15,6 @@ class HumanoidEnv(gym.Wrapper):  # Inherit from Wrapper
         env = gym.make("Humanoid-v5", render_mode=render_mode)  # Create the base env first
         super().__init__(env)  # Pass it to super() for proper wrapping
         self.task_type = task_type
-        self.render_mode = render_mode  # This can be removed if not used elsewhere
         
         # Task parameters
         self.target_position = None
