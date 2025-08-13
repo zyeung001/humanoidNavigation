@@ -61,7 +61,8 @@ class HumanoidEnv(gym.Wrapper):  # Inherit from Wrapper
             # Penalize torso tilt (if orientation quaternions/angles are in obs[7:10])
             tilt_penalty = 0.0
             if len(obs) > 10:
-                tilt_penalty = -np.sum(np.abs(obs[7:10])) * 0.5
+                tilt_penalty = -np.sum(np.clip(np.abs(obs[7:10]), 0, 1.0)) * 0.5
+
 
             # Encourage survival at every step
             alive_bonus = 5.0
