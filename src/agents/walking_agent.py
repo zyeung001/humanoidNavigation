@@ -1,275 +1,303 @@
 """
 Walking agent for humanoid using PPO
-Designed for Google Colab training
+Parallel VecEnvs + VecNormalize, Colab-friendly
 """
 
 import os
+from typing import Callable, Optional
+
 import numpy as np
-from typing import Dict, Any, Optional
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
-from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
+from stable_baselines3.common.evaluation import evaluate_policy
+
+# Ensure headless Mujoco works in workers
+os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
 
 # Import the environment (adjust path for Colab)
 try:
     from src.environments.humanoid_env import make_humanoid_env
 except ImportError:
-    # Fallback for Colab
     import sys
     sys.path.append('/content')
     from src.environments.humanoid_env import make_humanoid_env
 
 
 class WalkingCallback(BaseCallback):
-    """Custom callback for training progress and model saving"""
-    
-    def __init__(self, eval_freq=10000, save_freq=25000, verbose=1):
+    """Periodic evaluation + checkpointing, with best-model saving."""
+
+    def __init__(
+        self,
+        eval_env_fn: Optional[Callable[[], DummyVecEnv]] = None,
+        n_eval_episodes: int = 3,
+        eval_freq: int = 50_000,
+        save_freq: int = 250_000,
+        verbose: int = 1,
+        best_model_path: str = "models/saved_models/best_walking_model.zip",
+        checkpoint_dir: str = "data/checkpoints",
+        checkpoint_prefix: str = "walking_model",
+    ):
         super().__init__(verbose)
+        self.eval_env_fn = eval_env_fn
+        self.n_eval_episodes = n_eval_episodes
         self.eval_freq = eval_freq
         self.save_freq = save_freq
+        self.best_model_path = best_model_path
+        self.checkpoint_dir = checkpoint_dir
+        self.checkpoint_prefix = checkpoint_prefix
         self.best_mean_reward = -np.inf
-        
-    def _on_step(self):
-        # Evaluate model periodically
-        if self.num_timesteps % self.eval_freq == 0:
-            self._evaluate_model()
-        
-        # Save model periodically
-        if self.num_timesteps % self.save_freq == 0:
-            model_path = f"data/checkpoints/walking_model_{self.num_timesteps}.zip"
-            os.makedirs(os.path.dirname(model_path), exist_ok=True)
-            self.model.save(model_path)
-            if self.verbose > 0:
-                print(f"Model saved: {model_path}")
-        
+        os.makedirs(os.path.dirname(self.best_model_path), exist_ok=True)
+        os.makedirs(self.checkpoint_dir, exist_ok=True)
+
+    def _on_step(self) -> bool:
+        t = self.num_timesteps
+
+        if self.eval_env_fn is not None and self.eval_freq > 0 and (t % self.eval_freq == 0):
+            eval_env = self.eval_env_fn()
+            mean_rew, std_rew = evaluate_policy(
+                self.model, eval_env, n_eval_episodes=self.n_eval_episodes, deterministic=True, render=False
+            )
+            if self.verbose:
+                print(f"[eval] t={t:,} mean={mean_rew:.2f} ± {std_rew:.2f}")
+            # Track best model
+            if mean_rew > self.best_mean_reward:
+                self.best_mean_reward = mean_rew
+                self.model.save(self.best_model_path)
+                if self.verbose:
+                    print(f"New best model saved to {self.best_model_path} (mean {mean_rew:.2f})")
+            # Log to tensorboard
+            if hasattr(self.model, "logger") and self.model.logger is not None:
+                self.model.logger.record("eval/mean_reward", float(mean_rew))
+                self.model.logger.record("eval/std_reward", float(std_rew))
+                self.model.logger.record("eval/best_mean_reward", float(self.best_mean_reward))
+            eval_env.close()
+
+        if self.save_freq > 0 and (t % self.save_freq == 0):
+            path = os.path.join(self.checkpoint_dir, f"{self.checkpoint_prefix}_{t}.zip")
+            self.model.save(path)
+            if self.verbose:
+                print(f"Checkpoint saved: {path}")
+
         return True
-    
-    def _evaluate_model(self, n_episodes=3):
-        """Evaluate current model performance"""
-        env = make_humanoid_env("walking")
-        
-        episode_rewards = []
-        for _ in range(n_episodes):
-            obs, _ = env.reset()
-            episode_reward = 0
-            done = False
-            
-            while not done:
-                action, _ = self.model.predict(obs, deterministic=True)
-                obs, reward, terminated, truncated, _ = env.step(action)
-                episode_reward += reward
-                done = terminated or truncated
-            
-            episode_rewards.append(episode_reward)
-        
-        mean_reward = np.mean(episode_rewards)
-        
-        # Save best model
-        if mean_reward > self.best_mean_reward:
-            self.best_mean_reward = mean_reward
-            best_model_path = "models/saved_models/best_walking_model.zip"
-            os.makedirs(os.path.dirname(best_model_path), exist_ok=True)
-            self.model.save(best_model_path)
-            if self.verbose > 0:
-                print(f"🏆 New best model! Reward: {mean_reward:.2f}")
-        
-        env.close()
-        
-        # Log to tensorboard
-        if hasattr(self.model, 'logger') and self.model.logger is not None:
-            self.model.logger.record('eval/mean_reward', mean_reward)
-            self.model.logger.record('eval/best_mean_reward', self.best_mean_reward)
 
 
 class WalkingAgent:
-    """PPO agent for humanoid walking"""
-    
+    """PPO agent for humanoid walking with parallel envs and normalization."""
+
     def __init__(self, config):
         self.config = config
-        self.model = None
-        self.env = None
-        
+        self.model: Optional[PPO] = None
+        self.env = None  # VecEnv (possibly VecNormalize)
+        self.vecnormalize_path = self.config.get(
+            "vecnormalize_path", "models/saved_models/vecnorm_walking.pkl"
+        )
+
+    # ---------- Env construction ----------
+
+    def _make_single_env(self, seed: int, rank: int, render_mode=None) -> Callable:
+        """Factory that returns a thunk creating one monitored env with seeding."""
+        def _init():
+            os.environ.setdefault("MUJOCO_GL", "egl")
+            env = make_humanoid_env("walking", render_mode=render_mode)
+            log_dir = self.config.get("log_dir", "data/logs")
+            os.makedirs(log_dir, exist_ok=True)
+            env = Monitor(env, filename=os.path.join(log_dir, f"train_env_{rank}.csv"))
+            # Seeding
+            if hasattr(env, "reset"):
+                env.reset(seed=seed + rank)
+            try:
+                env.action_space.seed(seed + rank)
+                env.observation_space.seed(seed + rank)
+            except Exception:
+                pass
+            return env
+        return _init
+
     def create_environment(self, render_mode=None):
-        """Create the walking environment"""
-        env = make_humanoid_env("walking", render_mode=render_mode)
-        
-        # Add monitoring for logging
-        log_dir = self.config.get('log_dir', 'data/logs')
-        os.makedirs(log_dir, exist_ok=True)
-        env = Monitor(env, filename=os.path.join(log_dir, 'training.csv'))
-        
-        # Vectorize for stable-baselines3
-        self.env = DummyVecEnv([lambda: env])
+        """Create vectorized training env, wrap with VecNormalize if requested."""
+        n_envs = int(self.config.get("n_envs", 1))
+        seed = int(self.config.get("seed", 42))
+
+        if n_envs > 1:
+            env_fns = [self._make_single_env(seed, i, render_mode=None) for i in range(n_envs)]
+            vec = SubprocVecEnv(env_fns)
+        else:
+            vec = DummyVecEnv([self._make_single_env(seed, 0, render_mode=None)])
+
+        if self.config.get("normalize", True):
+            self.env = VecNormalize(
+                vec,
+                norm_obs=True,
+                norm_reward=True,
+                clip_obs=10.0,
+                gamma=self.config.get("gamma", 0.99),
+            )
+        else:
+            self.env = vec
         return self.env
-    
+
+    # ---------- Model construction ----------
+
     def create_model(self):
-        """Create PPO model"""
+        """Create PPO model on the requested device."""
         if self.env is None:
             self.create_environment()
-        
-        # PPO parameters from config
+
         model_params = {
-            'learning_rate': self.config.get('learning_rate', 0.0003),
-            'n_steps': self.config.get('n_steps', 2048),
-            'batch_size': self.config.get('batch_size', 64),
-            'n_epochs': self.config.get('n_epochs', 10),
-            'gamma': self.config.get('gamma', 0.99),
-            'gae_lambda': self.config.get('gae_lambda', 0.95),
-            'clip_range': self.config.get('clip_range', 0.2),
-            'ent_coef': self.config.get('ent_coef', 0.0),
-            'vf_coef': self.config.get('vf_coef', 0.5),
-            'max_grad_norm': self.config.get('max_grad_norm', 0.5),
-            'verbose': self.config.get('verbose', 1),
-            'seed': self.config.get('seed', 42),
-            'device': self.config.get('device', 'auto'),
+            "learning_rate": self.config.get("learning_rate", 3e-4),
+            "n_steps": self.config.get("n_steps", 2048),      # per-env
+            "batch_size": self.config.get("batch_size", 256),
+            "n_epochs": self.config.get("n_epochs", 10),
+            "gamma": self.config.get("gamma", 0.99),
+            "gae_lambda": self.config.get("gae_lambda", 0.95),
+            "clip_range": self.config.get("clip_range", 0.1),
+            "ent_coef": self.config.get("ent_coef", 0.001),
+            "vf_coef": self.config.get("vf_coef", 0.5),
+            "max_grad_norm": self.config.get("max_grad_norm", 0.5),
+            "verbose": self.config.get("verbose", 1),
+            "seed": self.config.get("seed", 42),
+            "device": self.config.get("device", "cuda"),
         }
-        
-        # Network architecture
-        policy_kwargs = self.config.get('policy_kwargs', {
-            'net_arch': dict(pi=[400, 300], vf=[400, 300])
-        })
+
+        policy_kwargs = self.config.get("policy_kwargs", {"net_arch": dict(pi=[400, 300], vf=[400, 300])})
+
+        # Optional: map string activation names to torch.nn modules
         import torch.nn as nn
-
         activation_map = {
-            'relu': 'ReLU',
-            'tanh': 'Tanh',
-            'sigmoid': 'Sigmoid',
-            'elu': 'ELU',
-            'gelu': 'GELU',
-            'leaky_relu': 'LeakyReLU',
-            'leakyrelu': 'LeakyReLU',
-            'silu': 'SiLU',
-            'mish': 'Mish',
-            'hardswish': 'Hardswish',
-            }
+            "relu": "ReLU", "tanh": "Tanh", "sigmoid": "Sigmoid", "elu": "ELU",
+            "gelu": "GELU", "leaky_relu": "LeakyReLU", "leakyrelu": "LeakyReLU",
+            "silu": "SiLU", "mish": "Mish", "hardswish": "Hardswish",
+        }
+        if "activation_fn" in policy_kwargs and isinstance(policy_kwargs["activation_fn"], str):
+            act = policy_kwargs["activation_fn"].lower().replace("_", "")
+            policy_kwargs["activation_fn"] = getattr(nn, activation_map.get(act, policy_kwargs["activation_fn"]))
 
-        if 'activation_fn' in policy_kwargs:
-            act_fn_str = policy_kwargs['activation_fn']
-            if isinstance(act_fn_str, str):
-                 # Normalize via map (handles lowercase or variants)
-                act_fn_str = activation_map.get(act_fn_str.lower().replace('_', ''), act_fn_str)
-                try:
-                    policy_kwargs['activation_fn'] = getattr(nn, act_fn_str)
-                except AttributeError:
-                    raise ValueError(f"Invalid activation function '{act_fn_str}'. Use a valid torch.nn module name like 'ReLU', 'Tanh', 'LeakyReLU', or their lowercase equivalents.")
-        
-        # Tensorboard logging
-        tensorboard_log = self.config.get('log_dir', 'data/logs') if self.config.get('use_tensorboard', True) else None
-        
+        tensorboard_log = self.config.get("log_dir", "data/logs") if self.config.get("use_tensorboard", True) else None
+
         self.model = PPO(
             "MlpPolicy",
             self.env,
             policy_kwargs=policy_kwargs,
             tensorboard_log=tensorboard_log,
-            **model_params
+            **model_params,
         )
-        
         return self.model
-    
+
+    # ---------- Training / Evaluation ----------
+
+    def _build_eval_env(self):
+        """Create a single-env VecEnv for evaluation, restoring normalization stats if available."""
+        eval_vec = DummyVecEnv([self._make_single_env(self.config.get("seed", 42), rank=10_000)])
+        if self.config.get("normalize", True) and os.path.exists(self.vecnormalize_path):
+            eval_vec = VecNormalize.load(self.vecnormalize_path, eval_vec)
+            eval_vec.training = False
+            eval_vec.norm_reward = False
+        return eval_vec
+
     def train(self, total_timesteps=None, callback=None):
-        """Train the agent"""
+        """Train the agent with periodic eval/checkpoints and save VecNormalize stats."""
         if self.model is None:
             self.create_model()
-        
         if total_timesteps is None:
-            total_timesteps = self.config.get('total_timesteps', 500000)
-        
-        # Setup callback
+            total_timesteps = int(self.config.get("total_timesteps", 2_000_000))
+
+        # Prepare eval env factory that uses current normalization stats
+        def eval_env_fn():
+            # Save current stats so eval can load the latest normalization
+            if isinstance(self.env, VecNormalize):
+                os.makedirs(os.path.dirname(self.vecnormalize_path), exist_ok=True)
+                self.env.save(self.vecnormalize_path)
+            return self._build_eval_env()
+
         if callback is None:
             callback = WalkingCallback(
-                eval_freq=self.config.get('eval_freq', 10000),
-                save_freq=self.config.get('save_freq', 25000),
-                verbose=self.config.get('verbose', 1)
+                eval_env_fn=eval_env_fn,
+                n_eval_episodes=self.config.get("n_eval_episodes", 3),
+                eval_freq=self.config.get("eval_freq", 50_000),
+                save_freq=self.config.get("save_freq", 250_000),
+                verbose=self.config.get("verbose", 1),
+                best_model_path=self.config.get("best_model_path", "models/saved_models/best_walking_model.zip"),
+                checkpoint_dir=self.config.get("checkpoint_dir", "data/checkpoints"),
+                checkpoint_prefix=self.config.get("checkpoint_prefix", "walking_model"),
             )
-        
-        # Create directories
-        os.makedirs('data/checkpoints', exist_ok=True)
-        os.makedirs('models/saved_models', exist_ok=True)
-        
-        print(f"Starting training for {total_timesteps:,} timesteps...")
-        
-        # Train
+
+        os.makedirs("data/checkpoints", exist_ok=True)
+        os.makedirs("models/saved_models", exist_ok=True)
+
+        n_envs = getattr(self.env, "num_envs", 1)
+        print(f"Starting training for {total_timesteps:,} timesteps (n_envs={n_envs})...")
         self.model.learn(total_timesteps=total_timesteps, callback=callback)
-        
-        # Save final model
+
+        # Save final model + normalization stats
         final_model_path = "models/saved_models/final_walking_model.zip"
         self.model.save(final_model_path)
+        if isinstance(self.env, VecNormalize):
+            self.env.save(self.vecnormalize_path)
         print(f"Training completed! Final model: {final_model_path}")
-        
         return self.model
-    
+
     def load_model(self, model_path):
-        """Load a trained model"""
-        if self.env is None:
-            self.create_environment()
-        
-        self.model = PPO.load(model_path, env=self.env)
+        """Load a trained model and restore normalization stats."""
+        # Recreate env first
+        self.create_environment()
+        self.model = PPO.load(model_path, env=self.env, device=self.config.get("device", "cuda"))
+        # Load VecNormalize stats if present
+        if isinstance(self.env, VecNormalize) and os.path.exists(self.vecnormalize_path):
+            loaded = VecNormalize.load(self.vecnormalize_path, self.env.venv)
+            loaded.training = False
+            loaded.norm_reward = False
+            self.env = loaded
+            self.model.set_env(self.env)
         print(f"Model loaded from {model_path}")
         return self.model
-    
+
     def evaluate(self, n_episodes=5, render=False):
-        """Evaluate the trained model"""
+        """Evaluate the trained model with consistent normalization."""
         if self.model is None:
             raise ValueError("No model available. Train or load a model first.")
-        
-        render_mode = "human" if render else None
-        eval_env = make_humanoid_env("walking", render_mode=render_mode)
-        
-        episode_rewards = []
-        episode_lengths = []
-        
-        print(f"Evaluating model for {n_episodes} episodes...")
-        
-        for episode in range(n_episodes):
-            obs, _ = eval_env.reset()
-            episode_reward = 0
-            episode_length = 0
+
+        eval_env = self._build_eval_env()
+        mean_rew, std_rew = evaluate_policy(
+            self.model, eval_env, n_eval_episodes=n_episodes, deterministic=True, render=render
+        )
+
+        # Manual rollout stats per-episode length if desired
+        lengths = []
+        for _ in range(n_episodes):
+            obs = eval_env.reset()
             done = False
-            
+            ep_len = 0
             while not done:
                 action, _ = self.model.predict(obs, deterministic=True)
                 obs, reward, terminated, truncated, info = eval_env.step(action)
-                episode_reward += reward
-                episode_length += 1
-                done = terminated or truncated
-                
-                if render:
-                    eval_env.render()
-            
-            episode_rewards.append(episode_reward)
-            episode_lengths.append(episode_length)
-            
-            print(f"  Episode {episode + 1}: Reward = {episode_reward:.2f}, Length = {episode_length}")
-        
+                done = bool(terminated | truncated)
+                ep_len += 1
+            lengths.append(ep_len)
+
         eval_env.close()
-        
-        # Calculate statistics
-        mean_reward = np.mean(episode_rewards)
-        std_reward = np.std(episode_rewards)
-        mean_length = np.mean(episode_lengths)
-        std_length = np.std(episode_lengths)
-        
+
         print(f"\nEvaluation Results:")
-        print(f"   Mean Reward: {mean_reward:.2f} ± {std_reward:.2f}")
-        print(f"   Mean Length: {mean_length:.2f} ± {std_length:.2f}")
-        
+        print(f"   Mean Reward: {mean_rew:.2f} ± {std_rew:.2f}")
+        print(f"   Mean Length: {float(np.mean(lengths)):.2f} ± {float(np.std(lengths)):.2f}")
+
         return {
-            'mean_reward': mean_reward,
-            'std_reward': std_reward,
-            'mean_length': mean_length,
-            'std_length': std_length,
-            'episodes': episode_rewards
+            "mean_reward": float(mean_rew),
+            "std_reward": float(std_rew),
+            "mean_length": float(np.mean(lengths)),
+            "std_length": float(np.std(lengths)),
+            "episodes": None,
         }
-    
+
     def predict(self, observation, deterministic=True):
-        """Predict action for given observation"""
+        """Predict action for a given observation (supports raw or vec env)."""
         if self.model is None:
             raise ValueError("No model available. Train or load a model first.")
-        
         return self.model.predict(observation, deterministic=deterministic)
-    
+
     def close(self):
-        """Clean up resources"""
         if self.env is not None:
             self.env.close()
