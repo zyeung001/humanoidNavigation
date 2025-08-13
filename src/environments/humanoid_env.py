@@ -8,26 +8,21 @@ import numpy as np
 from typing import Dict, Any, Tuple, Optional
 
 
-class HumanoidEnv:
+class HumanoidEnv(gym.Wrapper):  # Inherit from Wrapper
     """Wrapper for MuJoCo Humanoid environment with task-specific modifications"""
     
     def __init__(self, task_type: str = "walking", render_mode: Optional[str] = None):
+        env = gym.make("Humanoid-v5", render_mode=render_mode)  # Create the base env first
+        super().__init__(env)  # Pass it to super() for proper wrapping
         self.task_type = task_type
-        self.render_mode = render_mode
-        self.env = gym.make("Humanoid-v5", render_mode=render_mode)
+        self.render_mode = render_mode  # This can be removed if not used elsewhere
         
         # Task parameters
         self.target_position = None
         self.max_episode_steps = 1000
         self.current_step = 0
         
-    @property
-    def observation_space(self):
-        return self.env.observation_space
-    
-    @property
-    def action_space(self):
-        return self.env.action_space
+    # No need for explicit @property overrides; they are inherited from Wrapper
     
     def reset(self, seed: Optional[int] = None):
         observation, info = self.env.reset(seed=seed)
@@ -117,11 +112,7 @@ class HumanoidEnv:
         """Set random target for navigation"""
         self.target_position = np.random.uniform(low=[-5, -5], high=[5, 5])
     
-    def render(self):
-        return self.env.render()
-    
-    def close(self):
-        self.env.close()
+    # No need for explicit render/close; inherited from Wrapper
 
 
 def make_humanoid_env(task_type="walking", render_mode=None):
