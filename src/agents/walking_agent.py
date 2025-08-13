@@ -130,14 +130,29 @@ class WalkingAgent:
             'net_arch': dict(pi=[400, 300], vf=[400, 300])
         })
         import torch.nn as nn
-        
+
+        activation_map = {
+            'relu': 'ReLU',
+            'tanh': 'Tanh',
+            'sigmoid': 'Sigmoid',
+            'elu': 'ELU',
+            'gelu': 'GELU',
+            'leaky_relu': 'LeakyReLU',
+            'leakyrelu': 'LeakyReLU',
+            'silu': 'SiLU',
+            'mish': 'Mish',
+            'hardswish': 'Hardswish',
+            }
+
         if 'activation_fn' in policy_kwargs:
             act_fn_str = policy_kwargs['activation_fn']
             if isinstance(act_fn_str, str):
+                 # Normalize via map (handles lowercase or variants)
+                act_fn_str = activation_map.get(act_fn_str.lower().replace('_', ''), act_fn_str)
                 try:
                     policy_kwargs['activation_fn'] = getattr(nn, act_fn_str)
                 except AttributeError:
-                    raise ValueError(f"Invalid activation function '{act_fn_str}'. Use a valid torch.nn module name like 'ReLU' or 'Tanh'.")
+                    raise ValueError(f"Invalid activation function '{act_fn_str}'. Use a valid torch.nn module name like 'ReLU', 'Tanh', 'LeakyReLU', or their lowercase equivalents.")
         
         # Tensorboard logging
         tensorboard_log = self.config.get('log_dir', 'data/logs') if self.config.get('use_tensorboard', True) else None
