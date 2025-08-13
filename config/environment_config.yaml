@@ -1,0 +1,10 @@
+environment:
+  name: "Humanoid-v5"
+  render_mode: "rgb_array"
+  max_episode_steps: 1000
+
+recording:
+  fps: 30
+  width: 640
+  height: 480
+  default_episodes: 5

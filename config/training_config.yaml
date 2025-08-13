@@ -1,0 +1,107 @@
+# Training Configuration for Humanoid Navigation
+
+# General settings
+general:
+  seed: 42
+  device: "auto"  # Will auto-detect GPU in Colab
+  verbose: 1
+  save_freq: 25000    # Save model every 25k steps (good for Colab)
+  eval_freq: 10000    # Evaluate every 10k steps
+  eval_episodes: 5
+
+# Logging
+logging:
+  use_tensorboard: true
+  log_dir: "data/logs"
+  project_name: "humanoid-navigation"
+
+# Walking task - main focus
+walking:
+  algorithm: "PPO"
+  total_timesteps: 500000    # 500k steps for Colab (adjust as needed)
+  learning_rate: 0.0003
+  batch_size: 64
+  n_steps: 2048
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.0
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  
+  # Environment settings
+  env_params:
+    task_type: "walking"
+    max_episode_steps: 1000
+  
+  # Neural network architecture
+  policy_kwargs:
+    net_arch:
+      pi: [400, 300]      # Policy network layers
+      vf: [400, 300]      # Value network layers
+    activation_fn: "tanh"
+
+# Standing task
+standing:
+  algorithm: "PPO"
+  total_timesteps: 300000
+  learning_rate: 0.0003
+  batch_size: 64
+  n_steps: 1024
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  
+  env_params:
+    task_type: "standing"
+    max_episode_steps: 2000
+  
+  policy_kwargs:
+    net_arch:
+      pi: [256, 256]
+      vf: [256, 256]
+    activation_fn: "tanh"
+
+# Navigation task  
+navigation:
+  algorithm: "PPO"
+  total_timesteps: 1000000
+  learning_rate: 0.0001
+  batch_size: 128
+  n_steps: 2048
+  n_epochs: 10
+  gamma: 0.995
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  
+  env_params:
+    task_type: "navigation"
+    max_episode_steps: 3000
+  
+  policy_kwargs:
+    net_arch:
+      pi: [512, 512, 256]
+      vf: [512, 512, 256]
+    activation_fn: "relu"
+
+# Model saving
+checkpointing:
+  save_best: true
+  save_last: true
+  checkpoint_dir: "data/checkpoints"
+  model_dir: "models/saved_models"
+
+# Evaluation
+evaluation:
+  render_eval: false      # Set to true if you want to see the humanoid move
+  record_video: true
+  video_dir: "data/videos"
+  video_length: 1000

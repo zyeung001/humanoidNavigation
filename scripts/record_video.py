@@ -16,40 +16,13 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from utils.visualization import setup_display, test_environment
 
-def parse_arguments():
-    """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description='Record videos of humanoid agents')
-    
-    parser.add_argument('--model', type=str, default=None,
-                       help='Path to trained model file (if None, uses random policy)')
-    parser.add_argument('--env', type=str, default='Humanoid-v5',
-                       help='Environment name')
-    parser.add_argument('--episodes', type=int, default=5,
-                       help='Number of episodes to record')
-    parser.add_argument('--steps', type=int, default=500,
-                       help='Maximum steps per episode')
-    parser.add_argument('--output', type=str, default=None,
-                       help='Output video path (default: auto-generated)')
-    parser.add_argument('--fps', type=int, default=30,
-                       help='Video frame rate')
-    parser.add_argument('--width', type=int, default=640,
-                       help='Video width')
-    parser.add_argument('--height', type=int, default=480,
-                       help='Video height')
-    parser.add_argument('--frames-only', action='store_true',
-                       help='Save frames as images instead of video')
-    parser.add_argument('--random', action='store_true',
-                       help='Use random policy instead of trained model')
-    
-    return parser.parse_args()
-
 def load_model(model_path, env):
     """Load a trained model (placeholder - implement based on your RL library)"""
     if model_path is None or not os.path.exists(model_path):
         print("No valid model provided, using random policy")
         return None
     
-    # TODO: Implement model loading based on your RL library
+    # TODO: Implement model loading based on RL library
     # Example for stable-baselines3:
     # from stable_baselines3 import PPO
     # return PPO.load(model_path)
@@ -63,7 +36,7 @@ def get_action(model, observation):
         # Random policy
         return env.action_space.sample()
     else:
-        # TODO: Implement based on your RL library
+        # TODO: Implement based on RL library
         # Example for stable-baselines3:
         # action, _ = model.predict(observation, deterministic=True)
         # return action
@@ -185,12 +158,10 @@ def main():
     print("HUMANOID VIDEO RECORDING")
     print("="*50)
     
-    # Step 1: Setup display
     if not setup_display():
         print("Failed to setup display. Exiting.")
         return 1
     
-    # Step 2: Create environment
     try:
         env = gym.make(args.env, render_mode="rgb_array")
         print(f"Environment '{args.env}' created successfully")
@@ -198,16 +169,13 @@ def main():
         print(f"Failed to create environment: {e}")
         return 1
     
-    # Step 3: Test environment
     if not test_environment(env):
         print("Environment test failed. Check your setup.")
         env.close()
         return 1
     
-    # Step 4: Load model (if specified)
     model = None if args.random else load_model(args.model, env)
     
-    # Step 5: Record video
     try:
         record_video(env, model, args)
     except Exception as e:
