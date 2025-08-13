@@ -1,198 +1,186 @@
 """
-Simple training script for humanoid walking
-Designed to run in Google Colab
+Humanoid walking PPO training with parallel VecEnvs and reward shaping
+Colab-optimised for headless MuJoCo + T4 GPU
 """
 
+# ======================================================
+# EARLY ENVIRONMENT CONFIGURATION (before any Mujoco/Gym imports)
+# ======================================================
 import os
+os.environ.setdefault("MUJOCO_GL", "egl")       # Headless rendering backend
+os.environ.setdefault("OMP_NUM_THREADS", "1")   # Limit CPU threading
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+
 import sys
 import yaml
 from datetime import datetime
+import torch
+torch.set_num_threads(1)
 
-# Add project root to sys.path for imports (Colab-friendly and robust)
-import os
-
+# ======================================================
+# PROJECT IMPORTS
+# ======================================================
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# Import our modules
-from src.agents.walking_agent import WalkingAgent
+from src.agents.walking_agent import WalkingAgent  # <-- use the parallel VecEnv + VecNormalize version
 
-
+# ======================================================
+# SETUP HELPERS
+# ======================================================
 def setup_colab_environment():
-    """Quick setup for Colab"""
-    # Install dependencies if needed
+    """Quick setup for Colab runtime."""
+    os.environ.setdefault("MUJOCO_GL", "egl")
+
     try:
         import gymnasium
         import stable_baselines3
     except ImportError:
         print("Installing dependencies...")
-        os.system("pip install gymnasium[mujoco] stable-baselines3[extra] tensorboard pyyaml")
-    
-    # Create directories
-    dirs = ['data/logs', 'data/checkpoints', 'models/saved_models', 'data/videos']
-    for d in dirs:
-        os.makedirs(d, exist_ok=True)
-    
-    # Check GPU
+        os.system(
+            "pip install --upgrade "
+            "gymnasium[mujoco]==0.29.1 "
+            "mujoco>=3.1.4 "
+            "stable-baselines3>=2.3.0 "
+            "tensorboard pyyaml"
+        )
+
     try:
-        import torch
         if torch.cuda.is_available():
             print(f"GPU detected: {torch.cuda.get_device_name(0)}")
             return 'cuda'
         else:
             print("Using CPU (training will be slower)")
             return 'cpu'
-    except:
+    except Exception:
         return 'cpu'
 
 
 def load_config():
-    """Load training configuration"""
+    """Load or create default training config."""
     config_path = 'config/training_config.yaml'
-    
     if os.path.exists(config_path):
         with open(config_path, 'r') as f:
             config = yaml.safe_load(f)
         print(f"Loaded config from {config_path}")
     else:
-        # Default config if file doesn't exist
         print("Using default configuration")
         config = {
             'walking': {
-                'total_timesteps': 500000,
-                'learning_rate': 0.0003,
-                'batch_size': 64,
-                'n_steps': 2048,
-                'save_freq': 25000,
-                'eval_freq': 10000,
+                # PPO / Training parameters
+                'total_timesteps': 3_000_000,
+                'learning_rate': 3e-4,
+                'batch_size': 256,
+                'n_steps': 2048,      # per-env; total rollout = n_steps * n_envs
+                'clip_range': 0.1,
+                'ent_coef': 0.001,
+                'save_freq': 250_000,
+                'eval_freq': 50_000,
                 'verbose': 1,
-                'seed': 42
+                'seed': 42,
+                'n_envs': 2,           # Colab typically has 2 vCPUs
+                'normalize': True,     # VecNormalize obs+reward
             }
         }
-    
     return config
 
-
+# ======================================================
+# TRAINING MAIN
+# ======================================================
 def main():
-    """Main training function"""
-    print("Humanoid Walking Training")
-    print("=" * 40)
-    
-    # Setup environment
+    print("=== Humanoid Walking PPO Training ===")
     device = setup_colab_environment()
 
-    import os
-    os.environ["MUJOCO_GL"] = "egl"
-    
     # Load configuration
     config = load_config()
-    
-    # Get walking config and add device
     walking_config = config.get('walking', {})
     walking_config['device'] = device
-    
-    # Create experiment name with timestamp
+
+    # Experiment naming
     timestamp = datetime.now().strftime("%m%d_%H%M")
     experiment_name = f"walking_colab_{timestamp}"
     walking_config['log_dir'] = f"data/logs/{experiment_name}"
-    
+    os.makedirs(walking_config['log_dir'], exist_ok=True)
+
     print(f"Experiment: {experiment_name}")
     print(f"Device: {device}")
-    print(f"Timesteps: {walking_config.get('total_timesteps', 500000):,}")
+    print(f"Timesteps: {walking_config['total_timesteps']:,}")
     print(f"Log dir: {walking_config['log_dir']}")
-    print()
-    
-    # Create and train agent
+
     try:
-        print("Creating agent...")
+        # Create and train agent
         agent = WalkingAgent(walking_config)
-        
-        print("Starting training...")
         model = agent.train()
-        
-        print("\nTraining completed!")
-        
-        # Quick evaluation
-        print("Running evaluation...")
+
+        # Evaluate without rendering
         results = agent.evaluate(n_episodes=3, render=False)
-        
-        # Save results
-        results_path = f"data/logs/{experiment_name}/final_results.txt"
-        os.makedirs(os.path.dirname(results_path), exist_ok=True)
+
+        # Save final eval results
+        results_path = f"{walking_config['log_dir']}/final_results.txt"
         with open(results_path, 'w') as f:
             f.write(f"Experiment: {experiment_name}\n")
             f.write(f"Mean Reward: {results['mean_reward']:.2f}\n")
             f.write(f"Std Reward: {results['std_reward']:.2f}\n")
             f.write(f"Configuration: {walking_config}\n")
-        
-        print(f"\nResults saved to: {results_path}")
-        print(f"Best model: models/saved_models/best_walking_model.zip")
-        print(f"Final model: models/saved_models/final_walking_model.zip")
-        
+        print(f"Results saved to: {results_path}")
+
+        print("Best model: models/saved_models/best_walking_model.zip")
+        print("Final model: models/saved_models/final_walking_model.zip")
+
     except KeyboardInterrupt:
         print("\nTraining interrupted!")
-        if 'agent' in locals():
-            # Save current progress
+        if 'agent' in locals() and hasattr(agent, 'model') and agent.model is not None:
             interrupted_path = f"models/saved_models/interrupted_walking_{timestamp}.zip"
-            if hasattr(agent, 'model') and agent.model is not None:
-                agent.model.save(interrupted_path)
-                print(f"Progress saved to: {interrupted_path}")
-    
-    except Exception as e:
-        print(f"\nError during training: {e}")
-        raise
-    
+            agent.model.save(interrupted_path)
+            print(f"Progress saved to: {interrupted_path}")
+
     finally:
-        # Cleanup
         if 'agent' in locals():
             agent.close()
-        print("Cleanup completed")
+        print("Cleanup complete.")
 
-
+# ======================================================
+# QUICK ENV TEST
+# ======================================================
 def quick_test():
-    """Quick test to verify everything works"""
     print("Running quick test...")
-    
+    os.environ.setdefault("MUJOCO_GL", "egl")
     setup_colab_environment()
-    
-    # Test environment creation
+
     from src.environments.humanoid_env import make_humanoid_env
-    
     env = make_humanoid_env("walking")
-    obs, info = env.reset()
-    
-    print(f"Environment test passed!")
-    print(f"   Observation shape: {obs.shape}")
-    print(f"   Action space: {env.action_space}")
-    
+    obs, info = env.reset(seed=0)
+    print(f"Observation shape: {obs.shape}")
+    print(f"Action space: {env.action_space}")
     env.close()
 
-
-# For running in Colab cells
-def train_walking(timesteps=500000, device='auto'):
-    """Simple function to call from Colab cell"""
-    config = {
+# ======================================================
+# SIMPLE TRAIN FUNCTION (from a Colab cell)
+# ======================================================
+def train_walking(timesteps=3_000_000, device='auto'):
+    cfg = {
         'total_timesteps': timesteps,
         'device': device,
-        'learning_rate': 0.0003,
-        'batch_size': 64,
-        'save_freq': 25000,
-        'eval_freq': 10000,
+        'learning_rate': 3e-4,
+        'batch_size': 256,
+        'n_steps': 2048,
+        'clip_range': 0.1,
+        'ent_coef': 0.001,
         'verbose': 1,
+        'n_envs': 2,
+        'normalize': True,
         'log_dir': f"data/logs/walking_{datetime.now().strftime('%m%d_%H%M')}"
     }
-    
     setup_colab_environment()
-    
-    agent = WalkingAgent(config)
+    agent = WalkingAgent(cfg)
     model = agent.train()
-    results = agent.evaluate(n_episodes=3)
+    results = agent.evaluate(n_episodes=3, render=False)
     agent.close()
-    
     return model, results
 
-
+# ======================================================
+# ENTRY POINT
+# ======================================================
 if __name__ == "__main__":
-    # If you want to run the full script
     main()
