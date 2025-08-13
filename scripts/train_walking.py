@@ -81,6 +81,9 @@ def main():
     
     # Setup environment
     device = setup_colab_environment()
+
+    import os
+    os.environ["MUJOCO_GL"] = "egl"
     
     # Load configuration
     config = load_config()

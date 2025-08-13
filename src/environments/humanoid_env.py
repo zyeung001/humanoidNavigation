@@ -14,7 +14,7 @@ class HumanoidEnv:
     def __init__(self, task_type: str = "walking", render_mode: Optional[str] = None):
         self.task_type = task_type
         self.render_mode = render_mode
-        self.env = gym.make("Humanoid-v4", render_mode=render_mode)
+        self.env = gym.make("Humanoid-v5", render_mode=render_mode)
         
         # Task parameters
         self.target_position = None
