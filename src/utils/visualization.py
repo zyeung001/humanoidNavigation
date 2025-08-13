@@ -1,22 +1,10 @@
 # src/utils/visualization.py
 
-def setup_display() -> bool:
-    """
-    Prepare headless rendering for MuJoCo/Gymnasium in environments like Colab.
-    - Ensures MUJOCO_GL=egl so rgb_array rendering works without an X server.
-    """
-    try:
-        import os
-        if os.environ.get("MUJOCO_GL") is None:
-            os.environ["MUJOCO_GL"] = "egl"
-            print("[visualization] MUJOCO_GL not set; defaulting to 'egl' for headless rendering.")
-        else:
-            print(f"[visualization] MUJOCO_GL={os.environ['MUJOCO_GL']}")
-        return True
-    except Exception as e:
-        print(f"[visualization] setup_display failed: {e}")
-        return False
-
+def setup_display():
+    import os
+    os.environ.setdefault("MUJOCO_GL", "egl")
+    print(f"[visualization] MUJOCO_GL={os.environ['MUJOCO_GL']}")
+    return True
 
 def test_environment(env) -> bool:
     try:
