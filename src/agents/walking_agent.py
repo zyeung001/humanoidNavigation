@@ -129,6 +129,15 @@ class WalkingAgent:
         policy_kwargs = self.config.get('policy_kwargs', {
             'net_arch': dict(pi=[400, 300], vf=[400, 300])
         })
+        import torch.nn as nn
+        
+        if 'activation_fn' in policy_kwargs:
+            act_fn_str = policy_kwargs['activation_fn']
+            if isinstance(act_fn_str, str):
+                try:
+                    policy_kwargs['activation_fn'] = getattr(nn, act_fn_str)
+                except AttributeError:
+                    raise ValueError(f"Invalid activation function '{act_fn_str}'. Use a valid torch.nn module name like 'ReLU' or 'Tanh'.")
         
         # Tensorboard logging
         tensorboard_log = self.config.get('log_dir', 'data/logs') if self.config.get('use_tensorboard', True) else None
