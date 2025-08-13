@@ -54,11 +54,25 @@ class HumanoidEnv(gym.Wrapper):  # Inherit from Wrapper
     def _compute_task_reward(self, obs, base_reward, info):
         """Compute task-specific reward"""
         if self.task_type == "walking":
-            # Encourage forward movement and staying upright
             height = obs[0]
-            stability_bonus = 0.1 if height > 1.0 else -0.1
-            return base_reward + stability_bonus
-            
+            # Target upright height for torso
+            upright_bonus = 2.0 if height > 1.2 else -2.0
+
+            # Penalize torso tilt (if orientation quaternions/angles are in obs[7:10])
+            tilt_penalty = 0.0
+            if len(obs) > 10:
+                tilt_penalty = -np.sum(np.abs(obs[7:10])) * 0.5
+
+            # Encourage survival at every step
+            alive_bonus = 5.0
+
+            # You can also directly reward forward velocity from obs if you want tighter control
+            forward_vel = np.clip(obs[22], 0, 5.0)
+            forward_bonus = forward_vel * 1.0
+
+
+            return base_reward + upright_bonus + tilt_penalty + alive_bonus + forward_bonus
+
         elif self.task_type == "standing":
             # Reward staying still and upright
             height = obs[0]
