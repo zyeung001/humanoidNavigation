@@ -176,6 +176,21 @@ def record_video(env, model, args):
     out.release()
     print(f"Video saved as '{args.output}'")
 
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Record Gymnasium env videos with trained SB3 model or random policy.")
+    parser.add_argument("--env", type=str, default="Humanoid-v4", help="Gymnasium environment id")
+    parser.add_argument("--episodes", type=int, default=1, help="Number of episodes to record")
+    parser.add_argument("--steps", type=int, default=1000, help="Max steps per episode")
+    parser.add_argument("--width", type=int, default=640, help="Video width")
+    parser.add_argument("--height", type=int, default=360, help="Video height")
+    parser.add_argument("--fps", type=int, default=30, help="Frames per second")
+    parser.add_argument("--output", type=str, default=None, help="Output video path (mp4/avi)")
+    parser.add_argument("--random", action="store_true", help="Use random actions instead of a trained model")
+    parser.add_argument("--frames_only", action="store_true", help="Save individual frames instead of a video")
+    parser.add_argument("--model", type=str, default=None, help="Path to Stable-Baselines3 model (.zip)")
+    parser.add_argument("--algo", type=str, default="ppo", choices=["ppo","a2c","sac","td3","ddpg"],
+                        help="SB3 algorithm used to train the model")
+    return parser.parse_args()
 
 def main():
     args = parse_arguments()
