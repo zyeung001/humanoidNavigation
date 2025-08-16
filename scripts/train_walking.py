@@ -1,6 +1,6 @@
 """
 Humanoid walking PPO training with parallel VecEnvs and reward shaping
-Colab-optimised for headless MuJoCo + T4 GPU
+Colab-optimised for headless MuJoCo + T4 GPU with WandB logging
 """
 
 # ======================================================
@@ -16,6 +16,14 @@ import yaml
 from datetime import datetime
 import torch
 torch.set_num_threads(1)
+
+# WandB import
+try:
+    import wandb
+except ImportError:
+    print("Installing wandb...")
+    os.system("pip install wandb")
+    import wandb
 
 # ======================================================
 # PROJECT IMPORTS
@@ -43,7 +51,7 @@ def setup_colab_environment():
             "gymnasium[mujoco]==0.29.1 "
             "mujoco>=3.1.4 "
             "stable-baselines3>=2.3.0 "
-            "tensorboard pyyaml"
+            "tensorboard pyyaml wandb"
         )
 
     try:
@@ -81,6 +89,13 @@ def load_config():
                 'seed': 42,
                 'n_envs': 2,           # Colab typically has 2 vCPUs
                 'normalize': True,     # VecNormalize obs+reward
+                
+                # WandB configuration
+                'use_wandb': True,
+                'wandb_project': 'humanoid-walking',
+                'wandb_entity': None,  # Set to your wandb username/team
+                'wandb_tags': ['ppo', 'humanoid', 'colab'],
+                'wandb_notes': 'PPO training for humanoid walking task',
             }
         }
     return config
@@ -89,7 +104,7 @@ def load_config():
 # TRAINING MAIN
 # ======================================================
 def main():
-    print("=== Humanoid Walking PPO Training ===")
+    print("=== Humanoid Walking PPO Training with WandB ===")
     device = setup_colab_environment()
 
     # Load configuration
@@ -103,10 +118,30 @@ def main():
     walking_config['log_dir'] = f"data/logs/{experiment_name}"
     os.makedirs(walking_config['log_dir'], exist_ok=True)
 
+    # Initialize WandB
+    use_wandb = walking_config.get('use_wandb', True)
+    if use_wandb:
+        wandb_run = wandb.init(
+            project=walking_config.get('wandb_project', 'humanoid-walking'),
+            entity=walking_config.get('wandb_entity'),
+            name=experiment_name,
+            config=walking_config,
+            tags=walking_config.get('wandb_tags', ['ppo', 'humanoid']),
+            notes=walking_config.get('wandb_notes', ''),
+            sync_tensorboard=True,  # Auto-sync tensorboard logs
+            monitor_gym=True,        # Log gym episode stats
+            save_code=True,          # Save code to wandb
+        )
+        walking_config['wandb_run'] = wandb_run
+    else:
+        walking_config['wandb_run'] = None
+
     print(f"Experiment: {experiment_name}")
     print(f"Device: {device}")
     print(f"Timesteps: {walking_config['total_timesteps']:,}")
     print(f"Log dir: {walking_config['log_dir']}")
+    if use_wandb:
+        print(f"WandB run: {wandb.run.url if wandb.run else 'N/A'}")
 
     try:
         # Create and train agent
@@ -114,7 +149,20 @@ def main():
         model = agent.train()
 
         # Evaluate without rendering
-        results = agent.evaluate(n_episodes=3, render=False)
+        results = agent.evaluate(n_episodes=5, render=False)
+
+        # Log final results to WandB
+        if use_wandb and wandb.run:
+            wandb.log({
+                "final/mean_reward": results['mean_reward'],
+                "final/std_reward": results['std_reward'],
+                "final/mean_length": results['mean_length'],
+                "final/std_length": results['std_length'],
+            })
+            
+            # Save model to wandb
+            wandb.save("models/saved_models/best_walking_model.zip")
+            wandb.save("models/saved_models/final_walking_model.zip")
 
         # Save final eval results
         results_path = f"{walking_config['log_dir']}/final_results.txt"
@@ -134,10 +182,14 @@ def main():
             interrupted_path = f"models/saved_models/interrupted_walking_{timestamp}.zip"
             agent.model.save(interrupted_path)
             print(f"Progress saved to: {interrupted_path}")
+            if use_wandb and wandb.run:
+                wandb.save(interrupted_path)
 
     finally:
         if 'agent' in locals():
             agent.close()
+        if use_wandb and wandb.run:
+            wandb.finish()
         print("Cleanup complete.")
 
 # ======================================================
@@ -158,7 +210,7 @@ def quick_test():
 # ======================================================
 # SIMPLE TRAIN FUNCTION (from a Colab cell)
 # ======================================================
-def train_walking(timesteps=3_000_000, device='auto'):
+def train_walking(timesteps=3_000_000, device='auto', use_wandb=True, project_name='humanoid-walking'):
     cfg = {
         'total_timesteps': timesteps,
         'device': device,
@@ -170,12 +222,37 @@ def train_walking(timesteps=3_000_000, device='auto'):
         'verbose': 1,
         'n_envs': 2,
         'normalize': True,
+        'use_wandb': use_wandb,
+        'wandb_project': project_name,
         'log_dir': f"data/logs/walking_{datetime.now().strftime('%m%d_%H%M')}"
     }
+    
     setup_colab_environment()
+    
+    # Initialize WandB if requested
+    if use_wandb:
+        wandb_run = wandb.init(
+            project=cfg['wandb_project'],
+            name=f"walking_{datetime.now().strftime('%m%d_%H%M')}",
+            config=cfg,
+            sync_tensorboard=True,
+            monitor_gym=True,
+        )
+        cfg['wandb_run'] = wandb_run
+    else:
+        cfg['wandb_run'] = None
+    
     agent = WalkingAgent(cfg)
     model = agent.train()
     results = agent.evaluate(n_episodes=3, render=False)
+    
+    if use_wandb and wandb.run:
+        wandb.log({
+            "final/mean_reward": results['mean_reward'],
+            "final/std_reward": results['std_reward'],
+        })
+        wandb.finish()
+    
     agent.close()
     return model, results
 

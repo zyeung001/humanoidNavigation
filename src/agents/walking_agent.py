@@ -1,6 +1,6 @@
 """
 Walking agent for humanoid using PPO
-Parallel VecEnvs + VecNormalize, Colab-friendly
+Parallel VecEnvs + VecNormalize, Colab-friendly with WandB logging
 """
 
 import os
@@ -12,6 +12,14 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 from stable_baselines3.common.evaluation import evaluate_policy
+
+# Try to import wandb
+try:
+    import wandb
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
+    print("WandB not available. Install with: pip install wandb")
 
 # Ensure headless Mujoco works in workers
 os.environ.setdefault("MUJOCO_GL", "egl")
@@ -27,8 +35,70 @@ except ImportError:
     from src.environments.humanoid_env import make_humanoid_env
 
 
+class WandBCallback(BaseCallback):
+    """Custom callback for logging to WandB during training."""
+    
+    def __init__(self, log_freq: int = 1000, verbose: int = 0):
+        super().__init__(verbose)
+        self.log_freq = log_freq
+        self.episode_rewards = []
+        self.episode_lengths = []
+        
+    def _on_step(self) -> bool:
+        # Log every log_freq steps
+        if self.n_calls % self.log_freq == 0 and WANDB_AVAILABLE and wandb.run:
+            # Get info from all environments
+            infos = self.locals.get("infos", [])
+            
+            # Collect episode stats if available
+            for info in infos:
+                if "episode" in info:
+                    self.episode_rewards.append(info["episode"]["r"])
+                    self.episode_lengths.append(info["episode"]["l"])
+            
+            # Log training metrics
+            log_dict = {
+                "train/timesteps": self.num_timesteps,
+                "train/n_updates": self.model.n_updates if hasattr(self.model, 'n_updates') else 0,
+            }
+            
+            # Add episode stats if we have them
+            if self.episode_rewards:
+                log_dict.update({
+                    "train/episode_reward_mean": np.mean(self.episode_rewards[-100:]),
+                    "train/episode_reward_std": np.std(self.episode_rewards[-100:]),
+                    "train/episode_length_mean": np.mean(self.episode_lengths[-100:]),
+                })
+            
+            # Get learning rate
+            if hasattr(self.model, 'learning_rate'):
+                if callable(self.model.learning_rate):
+                    lr = self.model.learning_rate(self.model._current_progress_remaining)
+                else:
+                    lr = self.model.learning_rate
+                log_dict["train/learning_rate"] = lr
+            
+            # Get other training stats from logger if available
+            if hasattr(self.model, "logger") and self.model.logger:
+                # These values might be available in the logger
+                if hasattr(self.model.logger, "name_to_value"):
+                    for key, value in self.model.logger.name_to_value.items():
+                        if value is not None:
+                            # Map SB3 keys to more readable names
+                            if "loss" in key.lower():
+                                log_dict[f"train/{key}"] = value
+                            elif "entropy" in key.lower():
+                                log_dict[f"train/{key}"] = value
+                            elif "clip" in key.lower():
+                                log_dict[f"train/{key}"] = value
+            
+            wandb.log(log_dict, step=self.num_timesteps)
+        
+        return True
+
+
 class WalkingCallback(BaseCallback):
-    """Periodic evaluation + checkpointing, with best-model saving."""
+    """Periodic evaluation + checkpointing, with best-model saving and WandB logging."""
 
     def __init__(
         self,
@@ -40,6 +110,7 @@ class WalkingCallback(BaseCallback):
         best_model_path: str = "models/saved_models/best_walking_model.zip",
         checkpoint_dir: str = "data/checkpoints",
         checkpoint_prefix: str = "walking_model",
+        wandb_run=None,
     ):
         super().__init__(verbose)
         self.eval_env_fn = eval_env_fn
@@ -50,6 +121,7 @@ class WalkingCallback(BaseCallback):
         self.checkpoint_dir = checkpoint_dir
         self.checkpoint_prefix = checkpoint_prefix
         self.best_mean_reward = -np.inf
+        self.wandb_run = wandb_run
         os.makedirs(os.path.dirname(self.best_model_path), exist_ok=True)
         os.makedirs(self.checkpoint_dir, exist_ok=True)
 
@@ -63,17 +135,33 @@ class WalkingCallback(BaseCallback):
             )
             if self.verbose:
                 print(f"[eval] t={t:,} mean={mean_rew:.2f} ± {std_rew:.2f}")
+            
             # Track best model
             if mean_rew > self.best_mean_reward:
                 self.best_mean_reward = mean_rew
                 self.model.save(self.best_model_path)
                 if self.verbose:
                     print(f"New best model saved to {self.best_model_path} (mean {mean_rew:.2f})")
+                # Log to WandB
+                if WANDB_AVAILABLE and wandb.run:
+                    wandb.save(self.best_model_path)
+                    wandb.run.summary["best_mean_reward"] = mean_rew
+            
             # Log to tensorboard
             if hasattr(self.model, "logger") and self.model.logger is not None:
                 self.model.logger.record("eval/mean_reward", float(mean_rew))
                 self.model.logger.record("eval/std_reward", float(std_rew))
                 self.model.logger.record("eval/best_mean_reward", float(self.best_mean_reward))
+            
+            # Log to WandB
+            if WANDB_AVAILABLE and wandb.run:
+                wandb.log({
+                    "eval/mean_reward": float(mean_rew),
+                    "eval/std_reward": float(std_rew),
+                    "eval/best_mean_reward": float(self.best_mean_reward),
+                    "eval/timesteps": t,
+                }, step=t)
+            
             eval_env.close()
 
         if self.save_freq > 0 and (t % self.save_freq == 0):
@@ -81,12 +169,15 @@ class WalkingCallback(BaseCallback):
             self.model.save(path)
             if self.verbose:
                 print(f"Checkpoint saved: {path}")
+            # Save checkpoint to WandB
+            if WANDB_AVAILABLE and wandb.run:
+                wandb.save(path)
 
         return True
 
 
 class WalkingAgent:
-    """PPO agent for humanoid walking with parallel envs and normalization."""
+    """PPO agent for humanoid walking with parallel envs, normalization, and WandB logging."""
 
     def __init__(self, config):
         self.config = config
@@ -95,6 +186,7 @@ class WalkingAgent:
         self.vecnormalize_path = self.config.get(
             "vecnormalize_path", "models/saved_models/vecnorm_walking.pkl"
         )
+        self.wandb_run = config.get('wandb_run', None)
 
     # ---------- Env construction ----------
 
@@ -185,6 +277,14 @@ class WalkingAgent:
             tensorboard_log=tensorboard_log,
             **model_params,
         )
+        
+        # Log model architecture to WandB
+        if WANDB_AVAILABLE and wandb.run:
+            wandb.config.update({
+                "model/policy_kwargs": str(policy_kwargs),
+                "model/n_params": sum(p.numel() for p in self.model.policy.parameters()),
+            })
+        
         return self.model
 
     # ---------- Training / Evaluation ----------
@@ -213,30 +313,63 @@ class WalkingAgent:
                 self.env.save(self.vecnormalize_path)
             return self._build_eval_env()
 
-        if callback is None:
-            callback = WalkingCallback(
-                eval_env_fn=eval_env_fn,
-                n_eval_episodes=self.config.get("n_eval_episodes", 3),
-                eval_freq=self.config.get("eval_freq", 50_000),
-                save_freq=self.config.get("save_freq", 250_000),
-                verbose=self.config.get("verbose", 1),
-                best_model_path=self.config.get("best_model_path", "models/saved_models/best_walking_model.zip"),
-                checkpoint_dir=self.config.get("checkpoint_dir", "data/checkpoints"),
-                checkpoint_prefix=self.config.get("checkpoint_prefix", "walking_model"),
+        # Create callbacks list
+        callbacks = []
+        
+        # Add WandB callback
+        if WANDB_AVAILABLE and wandb.run:
+            wandb_callback = WandBCallback(
+                log_freq=self.config.get("wandb_log_freq", 1000),
+                verbose=self.config.get("verbose", 1)
             )
+            callbacks.append(wandb_callback)
+        
+        # Add evaluation callback
+        eval_callback = WalkingCallback(
+            eval_env_fn=eval_env_fn,
+            n_eval_episodes=self.config.get("n_eval_episodes", 3),
+            eval_freq=self.config.get("eval_freq", 50_000),
+            save_freq=self.config.get("save_freq", 250_000),
+            verbose=self.config.get("verbose", 1),
+            best_model_path=self.config.get("best_model_path", "models/saved_models/best_walking_model.zip"),
+            checkpoint_dir=self.config.get("checkpoint_dir", "data/checkpoints"),
+            checkpoint_prefix=self.config.get("checkpoint_prefix", "walking_model"),
+            wandb_run=self.wandb_run,
+        )
+        callbacks.append(eval_callback)
+        
+        # Use custom callback if provided
+        if callback is not None:
+            callbacks.append(callback)
 
         os.makedirs("data/checkpoints", exist_ok=True)
         os.makedirs("models/saved_models", exist_ok=True)
 
         n_envs = getattr(self.env, "num_envs", 1)
         print(f"Starting training for {total_timesteps:,} timesteps (n_envs={n_envs})...")
-        self.model.learn(total_timesteps=total_timesteps, callback=callback)
+        
+        # Log training start to WandB
+        if WANDB_AVAILABLE and wandb.run:
+            wandb.log({"train/started": 1, "train/total_timesteps_target": total_timesteps})
+        
+        # Train with all callbacks
+        from stable_baselines3.common.callbacks import CallbackList
+        combined_callback = CallbackList(callbacks)
+        self.model.learn(total_timesteps=total_timesteps, callback=combined_callback)
 
         # Save final model + normalization stats
         final_model_path = "models/saved_models/final_walking_model.zip"
         self.model.save(final_model_path)
         if isinstance(self.env, VecNormalize):
             self.env.save(self.vecnormalize_path)
+            if WANDB_AVAILABLE and wandb.run:
+                wandb.save(self.vecnormalize_path)
+        
+        # Save final model to WandB
+        if WANDB_AVAILABLE and wandb.run:
+            wandb.save(final_model_path)
+            wandb.log({"train/completed": 1})
+        
         print(f"Training completed! Final model: {final_model_path}")
         return self.model
 
@@ -267,16 +400,27 @@ class WalkingAgent:
 
         # Manual rollout stats per-episode length if desired
         lengths = []
-        for _ in range(n_episodes):
+        rewards = []
+        for ep in range(n_episodes):
             obs = eval_env.reset()
             done = False
             ep_len = 0
+            ep_rew = 0
             while not done:
                 action, _ = self.model.predict(obs, deterministic=True)
                 obs, reward, terminated, truncated, info = eval_env.step(action)
                 done = bool(terminated | truncated)
                 ep_len += 1
+                ep_rew += reward[0] if isinstance(reward, np.ndarray) else reward
             lengths.append(ep_len)
+            rewards.append(ep_rew)
+            
+            # Log individual episode to WandB
+            if WANDB_AVAILABLE and wandb.run:
+                wandb.log({
+                    f"eval_episode/reward_ep_{ep}": ep_rew,
+                    f"eval_episode/length_ep_{ep}": ep_len,
+                })
 
         eval_env.close()
 
@@ -289,7 +433,7 @@ class WalkingAgent:
             "std_reward": float(std_rew),
             "mean_length": float(np.mean(lengths)),
             "std_length": float(np.std(lengths)),
-            "episodes": None,
+            "episodes": rewards,
         }
 
     def predict(self, observation, deterministic=True):
