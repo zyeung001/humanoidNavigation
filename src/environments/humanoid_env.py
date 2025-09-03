@@ -1,5 +1,5 @@
 """
-Fixed Humanoid environment wrapper for MuJoCo Humanoid-v4/v5
+Fixed Humanoid environment wrapper for MuJoCo Humanoid-v4
 Improved reward structure for better learning of walking, standing, and navigation tasks
 """
 
@@ -12,7 +12,7 @@ class HumanoidEnv(gym.Wrapper):
     """Fixed wrapper for MuJoCo Humanoid environment with improved reward design"""
     
     def __init__(self, task_type: str = "walking", render_mode: Optional[str] = None):
-        env = gym.make("Humanoid-v5", render_mode=render_mode)
+        env = gym.make("Humanoid-v4", render_mode=render_mode)
         super().__init__(env)
         self.task_type = task_type
         

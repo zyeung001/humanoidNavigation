@@ -23,7 +23,7 @@ except ImportError:
     print("WandB not available. Install with: pip install wandb")
 
 # Ensure headless Mujoco works in workers
-os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("MUJOCO_GL", "osmesa")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 

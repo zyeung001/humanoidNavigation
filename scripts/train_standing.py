@@ -39,7 +39,7 @@ from src.agents.standing_agent import StandingAgent  # <-- use the parallel VecE
 # ======================================================
 def setup_colab_environment():
     """Quick setup for Colab runtime."""
-    os.environ.setdefault("MUJOCO_GL", "egl")
+    os.environ.setdefault("MUJOCO_GL", "osmesa")
 
     try:
         import gymnasium
@@ -47,10 +47,8 @@ def setup_colab_environment():
     except ImportError:
         print("Installing dependencies...")
         os.system(
-            "pip install --upgrade "
-            "gymnasium[mujoco]==0.29.1 "
-            "mujoco>=3.1.4 "
-            "stable-baselines3>=2.3.0 "
+            "gymnasium[mujoco] "
+            "stable-baselines3[extra] "
             "tensorboard pyyaml wandb"
         )
 
@@ -265,7 +263,15 @@ def main():
             agent.close()
         if use_wandb and wandb.run:
             wandb.finish()
-        print("Cleanup complete.")
+        print("Cleanup complete.") 
+
+    # Upload training logs and data
+    if use_wandb and wandb.run:
+        # Upload log directory
+        for root, dirs, files in os.walk(standing_config['log_dir']):
+            for file in files:
+                if file.endswith(('.csv', '.txt', '.json')):
+                    wandb.save(os.path.join(root, file))
 
 # ======================================================
 # QUICK ENV TEST
