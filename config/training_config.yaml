@@ -45,8 +45,8 @@ walking:
 # Standing task
 standing:
   algorithm: "PPO"
-  total_timesteps: 3000000
-  learning_rate: 0.0003
+  total_timesteps: 100000
+  learning_rate: 5e-5
   batch_size: 64
   n_steps: 1024
   n_epochs: 10
