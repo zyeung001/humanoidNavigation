@@ -75,15 +75,15 @@ def load_config():
         config = {
             'standing': {
                 # PPO / Training parameters (optimized for standing)
-                'total_timesteps': 1_500_000,  # Less timesteps needed for standing
-                'learning_rate': 1e-4,         # Lower LR for stability
-                'batch_size': 128,             # Smaller batches
+                'total_timesteps': 100_000,  # Less timesteps needed for standing
+                'learning_rate': 5e-5,         # Lower LR for stability
+                'batch_size': 64,             # Smaller batches
                 'n_steps': 2048,               # per-env; total rollout = n_steps * n_envs
-                'n_epochs': 8,                 # Fewer epochs for stability
-                'clip_range': 0.15,            # Slightly more conservative
-                'ent_coef': 0.005,             # Higher entropy for exploration
+                'n_epochs': 4,                 # Fewer epochs for stability
+                'clip_range': 0.1,            # Slightly more conservative
+                'ent_coef': 0.01,             # Higher entropy for exploration
                 'vf_coef': 0.8,                # Higher value function weight
-                'gamma': 0.995,                # Higher gamma for long-term stability
+                'gamma': 0.99,                # Higher gamma for long-term stability
                 'gae_lambda': 0.98,
                 'max_grad_norm': 0.3,          # More aggressive gradient clipping
                 'save_freq': 200_000,
@@ -310,14 +310,14 @@ def train_standing(timesteps=1_500_000, device='auto', use_wandb=True, project_n
     cfg = {
         'total_timesteps': timesteps,
         'device': device,
-        'learning_rate': 1e-4,        # Conservative for standing
-        'batch_size': 128,
+        'learning_rate': 5e-5,
+        'batch_size': 64,
         'n_steps': 2048,
-        'n_epochs': 8,
-        'clip_range': 0.15,
-        'ent_coef': 0.005,
+        'n_epochs': 4,
+        'clip_range': 0.1,
+        'ent_coef': 0.01,
         'vf_coef': 0.8,
-        'gamma': 0.995,
+        'gamma': 0.99,
         'verbose': 1,
         'n_envs': 2,
         'normalize': True,

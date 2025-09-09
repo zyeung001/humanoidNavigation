@@ -56,106 +56,44 @@ class HumanoidEnv(gym.Wrapper):
         return observation, reward, terminated, truncated, info
     
     def _compute_task_reward(self, obs, base_reward, info):
-        """Compute task-specific reward with improved design"""
-        if self.task_type == "walking":
-            # Height reward (gradual, not binary)
-            height = obs[0]  # z-position
-            target_height = 1.3  # Target standing height
-            height_reward = -abs(height - target_height) * 0.5
-            
-            # Encourage upright posture (using quaternion if available)
-            stability_reward = 0.0
-            if len(obs) > 6:
-                # Quaternion orientation is in obs[3:7], w component should be close to 1
-                quat_w = obs[6]  # w component of quaternion
-                stability_reward = (abs(quat_w) - 0.8) * 2.0 if abs(quat_w) > 0.8 else -1.0
-            
-            # Forward velocity reward (encourage movement)
-            x_vel = obs[8] if len(obs) > 8 else 0  # x-velocity
-            forward_reward = np.clip(x_vel, 0, 2.0) * 0.5
-            
-            # Small survival bonus (much smaller than before)
-            alive_bonus = 0.1
-            
-            # Penalty for excessive angular velocity (encourage stability)
-            angular_vel_penalty = 0.0
-            if len(obs) > 11:
-                angular_vel = np.sum(np.abs(obs[9:12]))  # Angular velocities
-                angular_vel_penalty = -np.clip(angular_vel, 0, 5.0) * 0.1
-            
-            return (base_reward + height_reward + stability_reward + 
-                   forward_reward + alive_bonus + angular_vel_penalty)
-
-        elif self.task_type == "standing":
-            # Focus on staying upright and still
-            height = obs[0]
+        if self.task_type == "standing":
+            # Only focus on height maintenance
+            height = obs[0]  # Verify this is correct
             target_height = 1.3
-            height_reward = -abs(height - target_height) * 1.0
             
-            # Penalize movement for standing task
-            x_vel = obs[8] if len(obs) > 8 else 0
-            y_vel = obs[9] if len(obs) > 9 else 0
-            stillness_reward = -0.5 * (abs(x_vel) + abs(y_vel))
+            # Simple distance-based reward
+            height_error = abs(height - target_height)
             
-            # Encourage upright orientation
-            stability_bonus = 0.0
-            if len(obs) > 6:
-                quat_w = obs[6]
-                stability_bonus = max(0, abs(quat_w) - 0.9) * 5.0
+            # Strong reward for being near target height
+            if height_error < 0.1:
+                height_reward = 10.0  # Strong positive reward
+            elif height_error < 0.2:
+                height_reward = 5.0
+            else:
+                height_reward = -height_error * 10.0  # Strong penalty
             
-            # Small survival bonus
-            alive_bonus = 0.2
+            # Small penalties for movement (if velocity data available)
+            movement_penalty = 0.0
+            if len(obs) > 8:
+                velocities = obs[8:11] if len(obs) > 11 else obs[8:10]
+                movement_penalty = -np.sum(np.abs(velocities)) * 0.1
             
-            return base_reward + height_reward + stillness_reward + stability_bonus + alive_bonus
+            # Base survival reward only if upright
+            survival_reward = 1.0 if height > 1.0 else -5.0
             
-        elif self.task_type == "navigation":
-            if self.target_position is None:
-                return base_reward
+            total_reward = height_reward + movement_penalty + survival_reward
             
-            # Height maintenance
-            height = obs[0]
-            height_reward = -abs(height - 1.3) * 0.3
-            
-            # Distance to target
-            current_pos = obs[1:3]  # x, y position
-            distance = np.linalg.norm(current_pos - self.target_position)
-            distance_reward = -distance * 0.1
-            
-            # Bonus for reaching target
-            if distance < 0.5:
-                distance_reward += 5.0
-            
-            # Direction reward (encourage moving toward target)
-            direction_to_target = self.target_position - current_pos
-            direction_to_target = direction_to_target / (np.linalg.norm(direction_to_target) + 1e-8)
-            
-            x_vel = obs[8] if len(obs) > 8 else 0
-            y_vel = obs[9] if len(obs) > 9 else 0
-            velocity_vec = np.array([x_vel, y_vel])
-            
-            direction_reward = np.dot(velocity_vec, direction_to_target) * 0.3
-            
-            # Small survival bonus
-            alive_bonus = 0.1
-            
-            return (base_reward + height_reward + distance_reward + 
-                   direction_reward + alive_bonus)
+            return total_reward
         
         return base_reward
     
     def _check_task_termination(self, obs, info):
-        """Check if task is complete (less aggressive termination)"""
+        """More aggressive termination for faster learning"""
         height = obs[0]
         
-        # Only terminate if really fallen (not just wobbling)
-        if height < 0.7:  # More lenient than before
+        # Terminate if clearly fallen
+        if height < 0.9:  # More aggressive than 0.7
             return True
-            
-        # Task-specific termination
-        if self.task_type == "navigation" and self.target_position is not None:
-            current_pos = obs[1:3]
-            distance = np.linalg.norm(current_pos - self.target_position)
-            return distance < 0.3
             
         return False
     

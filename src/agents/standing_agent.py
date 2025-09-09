@@ -358,9 +358,9 @@ class StandingAgent:
             self.env = VecNormalize(
                 vec,
                 norm_obs=True,
-                norm_reward=True,
+                norm_reward=False,  # CRITICAL FIX: Don't normalize rewards
                 clip_obs=10.0,
-                gamma=self.config.get("gamma", 0.995),  # Higher gamma for standing
+                gamma=self.config.get("gamma", 0.995),
             )
         else:
             self.env = vec
@@ -828,12 +828,14 @@ class StandingAgent:
             print(f"   Episodes Completed: {analysis['episodes_completed']}/{n_episodes}")
             print(f"   Early Termination Rate: {analysis['early_termination_rate']:.1%}")
             
-            # Log only height analysis to WandB
+            # Log detailed analysis to WandB
             if WANDB_AVAILABLE and wandb.run:
                 wandb.log({
-                    "analysis/height_mean": analysis['mean_height'],
+                    "analysis/mean_height": analysis['mean_height'],
                     "analysis/height_stability": analysis['height_stability'],
                     "analysis/height_error": analysis['height_error'],
+                    "analysis/mean_reward": analysis['mean_reward'],
+                    "analysis/completion_rate": 1 - analysis['early_termination_rate'],
                 })
             
             return analysis
