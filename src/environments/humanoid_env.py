@@ -12,7 +12,7 @@ class HumanoidEnv(gym.Wrapper):
     """Fixed wrapper for MuJoCo Humanoid environment with improved reward design"""
     
     def __init__(self, task_type: str = "walking", render_mode: Optional[str] = None):
-        env = gym.make("Humanoid-v4", render_mode=render_mode)
+        env = gym.make("Humanoid-v5", render_mode=render_mode)
         super().__init__(env)
         self.task_type = task_type
         
