@@ -2,6 +2,7 @@
 Standing agent for humanoid using PPO
 Parallel VecEnvs + VecNormalize, Colab-friendly with WandB logging
 Optimized for stability and balance tasks
+FIXED: Gym API compatibility issues
 """
 
 import os
@@ -34,6 +35,20 @@ except ImportError:
     import sys
     sys.path.append('/content')
     from src.environments.humanoid_env import make_humanoid_env
+
+
+def safe_step(env, action):
+    """Safely handle both old and new gym API step returns"""
+    result = env.step(action)
+    if len(result) == 4:
+        # Old gym API: obs, reward, done, info
+        obs, reward, done, info = result
+        return obs, reward, done, False, info  # terminated=done, truncated=False
+    elif len(result) == 5:
+        # New gymnasium API: obs, reward, terminated, truncated, info
+        return result
+    else:
+        raise ValueError(f"Unexpected step() return format: {len(result)} values")
 
 
 class StandingWandBCallback(BaseCallback):
@@ -173,7 +188,9 @@ class StandingCallback(BaseCallback):
                 
                 while not done:
                     action, _ = self.model.predict(obs, deterministic=True)
-                    obs, reward, terminated, truncated, info = eval_env.step(action)
+                    
+                    # Use safe_step to handle API differences
+                    obs, reward, terminated, truncated, info = safe_step(eval_env, action)
                     done = bool(terminated[0] if hasattr(terminated, '__len__') else terminated) or \
                            bool(truncated[0] if hasattr(truncated, '__len__') else truncated)
                     
@@ -540,7 +557,9 @@ class StandingAgent:
             
             while not done:
                 action, _ = self.model.predict(obs, deterministic=True)
-                obs, reward, terminated, truncated, info = eval_env.step(action)
+                
+                # Use safe_step to handle API differences
+                obs, reward, terminated, truncated, info = safe_step(eval_env, action)
                 done = bool(terminated[0] if hasattr(terminated, '__len__') else terminated) or \
                        bool(truncated[0] if hasattr(truncated, '__len__') else truncated)
                 
@@ -665,7 +684,9 @@ class StandingAgent:
         
         for step in range(n_steps):
             action, _ = self.model.predict(obs, deterministic=True)
-            obs, reward, terminated, truncated, info = demo_env.step(action)
+            
+            # Use safe_step to handle API differences
+            obs, reward, terminated, truncated, info = safe_step(demo_env, action)
             
             # Extract height and reward
             if hasattr(info, '__len__') and len(info) > 0 and 'height' in info[0]:
@@ -747,7 +768,9 @@ class StandingAgent:
             
             while not done and step < 1000:
                 action, _ = self.model.predict(obs, deterministic=True)
-                obs, reward, terminated, truncated, info = eval_env.step(action)
+                
+                # Use safe_step to handle API differences
+                obs, reward, terminated, truncated, info = safe_step(eval_env, action)
                 
                 done = bool(terminated[0] if hasattr(terminated, '__len__') else terminated) or \
                        bool(truncated[0] if hasattr(truncated, '__len__') else truncated)
@@ -805,14 +828,12 @@ class StandingAgent:
             print(f"   Episodes Completed: {analysis['episodes_completed']}/{n_episodes}")
             print(f"   Early Termination Rate: {analysis['early_termination_rate']:.1%}")
             
-            # Log detailed analysis to WandB
+            # Log only height analysis to WandB
             if WANDB_AVAILABLE and wandb.run:
                 wandb.log({
-                    "analysis/mean_height": analysis['mean_height'],
+                    "analysis/height_mean": analysis['mean_height'],
                     "analysis/height_stability": analysis['height_stability'],
                     "analysis/height_error": analysis['height_error'],
-                    "analysis/mean_reward": analysis['mean_reward'],
-                    "analysis/completion_rate": 1 - analysis['early_termination_rate'],
                 })
             
             return analysis
