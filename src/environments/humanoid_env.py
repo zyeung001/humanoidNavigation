@@ -53,37 +53,48 @@ class HumanoidEnv(gym.Wrapper):
         
         return observation, reward, terminated, truncated, info
     
-def _compute_task_reward(self, obs, base_reward, info):
-    """Simplified reward for stable standing"""
-    if self.task_type == "standing":
-        height = obs[0]
-        target_height = 1.3
-        
-        # Simple distance-based reward (no exponentials)
-        height_error = abs(height - target_height)
-        height_reward = max(0, 2.0 - height_error * 10.0)  # Linear penalty
-        
-        # Small penalty for excessive movement
-        movement_penalty = 0.0
-        if len(obs) > 8:
-            velocities = obs[8:11] if len(obs) > 11 else obs[8:10]
-            movement_penalty = -np.sum(np.abs(velocities)) * 0.1  # Much smaller
-        
-        # Simple survival reward
-        survival_reward = 1.0 if height > 1.0 else 0.0
-        
-        # Total is simple sum
-        return height_reward + movement_penalty + survival_reward
-    
-    return base_reward
+    def _compute_task_reward(self, obs, base_reward, info):
+        """Compute task-specific reward"""
+        if self.task_type == "standing":
+            height = obs[2]  # Corrected: z-position is height
+            target_height = 1.25  # Adjusted to typical initial standing height; verify with reset
+            
+            # Softer quadratic penalty for height error
+            height_error = abs(height - target_height)
+            if height_error < 0.05:
+                height_reward = 15.0  # Strong reward for precise height
+            elif height_error < 0.1:
+                height_reward = 5.0
+            else:
+                height_reward = - (height_error ** 2) * 10.0  # Quadratic for smoother gradients
+            
+            # Penalize movement more heavily for true standing
+            movement_penalty = 0.0
+            velocities = obs[24:27]  # Corrected: torso linear velocities (x/y/z)
+            movement_penalty = -np.sum(np.abs(velocities)) * 0.5
+            
+            # Add penalty for x/y drift (promote centered standing)
+            xy_drift = np.sum(np.abs(obs[0:2]))  # Root x/y positions
+            drift_penalty = -xy_drift * 0.1
+            
+            # Strong survival bonus that increases over time
+            survival_reward = 2.0 if height > 1.0 else -10.0
+            
+            # Time-based bonus for longer standing
+            time_bonus = min(self.current_step * 0.01, 5.0)  # Up to +5 reward for long episodes
+            
+            total_reward = height_reward + movement_penalty + drift_penalty + survival_reward + time_bonus
+            return total_reward
+            
+        return base_reward
     
     def _check_task_termination(self, obs, info):
         """Check if episode should terminate based on task"""
-        height = obs[0]
+        height = obs[2]  # Corrected
         
         if self.task_type == "standing":
             # Only terminate if truly fallen (very lenient)
-            if height < 0.7:  # Only terminate if completely down
+            if height < 1.0:  # Stricter than before for better learning
                 return True
         else:
             # More aggressive termination for other tasks
@@ -97,18 +108,18 @@ def _compute_task_reward(self, obs, base_reward, info):
         info = {
             'task_type': self.task_type,
             'step': self.current_step,
-            'height': obs[0],
-            'x_position': obs[1] if len(obs) > 1 else 0,
-            'y_position': obs[2] if len(obs) > 2 else 0,
+            'height': obs[2],  # Corrected
+            'x_position': obs[0],  # Corrected
+            'y_position': obs[1],  # Corrected
         }
         
         # Add velocities if available
-        if len(obs) > 8:
-            info['x_velocity'] = obs[8]
-            info['y_velocity'] = obs[9] if len(obs) > 9 else 0
+        info['x_velocity'] = obs[24]
+        info['y_velocity'] = obs[25]
+        info['z_velocity'] = obs[26]
         
         if self.task_type == "navigation" and self.target_position is not None:
-            current_pos = obs[1:3]
+            current_pos = obs[0:2]  # Corrected to x/y
             info['distance_to_target'] = np.linalg.norm(current_pos - self.target_position)
             info['target_position'] = self.target_position.copy()
         
@@ -123,14 +134,10 @@ def _compute_task_reward(self, obs, base_reward, info):
         obs, _ = self.env.reset()
         print("\nObservation Analysis:")
         print(f"Total observation size: {len(obs)}")
-        print(f"obs[0] (height): {obs[0]:.3f}")
-        print(f"obs[1:3] (x,y pos): {obs[1:3]}")
-        if len(obs) > 6:
-            print(f"obs[3:7] (quaternion): {obs[3:7]}")
-        if len(obs) > 8:
-            print(f"obs[8:11] (linear vel): {obs[8:11]}")
-        if len(obs) > 11:
-            print(f"obs[11:14] (angular vel): {obs[11:14]}")
+        print(f"obs[0:3] (x,y,z/height pos): {obs[0:3]}")
+        print(f"obs[3:7] (root quaternion): {obs[3:7]}")
+        print(f"obs[24:27] (linear vel x/y/z): {obs[24:27]}")
+        print(f"obs[27:30] (angular vel): {obs[27:30]}")
         print("...")
         return obs
 

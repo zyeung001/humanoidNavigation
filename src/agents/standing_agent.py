@@ -769,7 +769,7 @@ class StandingAgent:
 # CONVENIENCE FUNCTIONS FOR COLAB
 # ======================================================
 
-def create_standing_agent(device='auto', use_wandb=True, n_envs=2):
+def create_standing_agent(device='auto', use_wandb=True, n_envs=4):
     """Quick setup function for Colab notebooks."""
     if device == 'auto':
         import torch
@@ -779,7 +779,7 @@ def create_standing_agent(device='auto', use_wandb=True, n_envs=2):
         'device': device,
         'n_envs': n_envs,
         'normalize': True,
-        'learning_rate': 1e-4,
+        'learning_rate': 3e-4,
         'batch_size': 128,
         'n_steps': 2048,
         'n_epochs': 8,

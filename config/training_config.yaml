@@ -5,7 +5,7 @@ general:
   seed: 42
   device: "auto" 
   verbose: 1
-  save_freq: 100000    # Save model every 100k steps
+  save_freq: 50000   # Save model every 50k steps
   eval_freq: 50000    # Evaluate every 50k steps
   eval_episodes: 3
 
@@ -45,7 +45,7 @@ walking:
 # Standing task
 standing:
   algorithm: "PPO"
-  total_timesteps: 100000
+  total_timesteps: 500000
   learning_rate: 0.0003
   batch_size: 128
   n_steps: 2048
