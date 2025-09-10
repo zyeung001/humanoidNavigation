@@ -5,8 +5,8 @@ general:
   seed: 42
   device: "auto" 
   verbose: 1
-  save_freq: 25000    # Save model every 25k steps
-  eval_freq: 10000    # Evaluate every 10k steps
+  save_freq: 100000    # Save model every 25k steps
+  eval_freq: 25000    # Evaluate every 10k steps
   eval_episodes: 5
 
 # Logging
@@ -45,17 +45,17 @@ walking:
 # Standing task
 standing:
   algorithm: "PPO"
-  total_timesteps: 500000
+  total_timesteps: 100000
   learning_rate: 0.00005
-  batch_size: 64
-  n_steps: 1024
-  n_epochs: 10
-  gamma: 0.99
-  gae_lambda: 0.95
-  clip_range: 0.2
+  batch_size: 128
+  n_steps: 2048
+  n_epochs: 6
+  gamma: 0.995
+  gae_lambda: 0.98
+  clip_range: 0.1
   ent_coef: 0.01
-  vf_coef: 0.5
-  max_grad_norm: 0.5
+  vf_coef: 0.8
+  max_grad_norm: 0.3
   
   env_params:
     task_type: "standing"
@@ -63,8 +63,8 @@ standing:
   
   policy_kwargs:
     net_arch:
-      pi: [256, 256]
-      vf: [256, 256]
+      pi: [512, 256, 128]
+      vf: [512, 256, 128]
     activation_fn: "tanh"
 
 # Navigation task  
