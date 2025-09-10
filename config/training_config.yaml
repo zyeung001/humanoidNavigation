@@ -7,7 +7,7 @@ general:
   verbose: 1
   save_freq: 100000    # Save model every 100k steps
   eval_freq: 50000    # Evaluate every 50k steps
-  eval_episodes: 5
+  eval_episodes: 3
 
 # Logging
 logging:
@@ -46,7 +46,7 @@ walking:
 standing:
   algorithm: "PPO"
   total_timesteps: 100000
-  learning_rate: 0.00005
+  learning_rate: 0.0003
   batch_size: 128
   n_steps: 2048
   n_epochs: 6
@@ -59,7 +59,7 @@ standing:
   
   env_params:
     task_type: "standing"
-    max_episode_steps: 5000
+    max_episode_steps: 1000
   
   policy_kwargs:
     net_arch:

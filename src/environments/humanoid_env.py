@@ -53,45 +53,29 @@ class HumanoidEnv(gym.Wrapper):
         
         return observation, reward, terminated, truncated, info
     
-    def _compute_task_reward(self, obs, base_reward, info):
-        """Compute task-specific reward"""
-        if self.task_type == "standing":
-            height = obs[0]
-            target_height = 1.3
-            
-            # Exponentially increasing penalty for height error
-            height_error = abs(height - target_height)
-            if height_error < 0.05:
-                height_reward = 15.0  # Strong reward for precise height
-            elif height_error < 0.1:
-                height_reward = 5.0
-            else:
-                height_reward = -height_error * 20.0  # Stronger penalty
-            
-            # Penalize movement more heavily for true standing
-            movement_penalty = 0.0
-            if len(obs) > 8:
-                velocities = obs[8:11] if len(obs) > 11 else obs[8:10]
-                movement_penalty = -np.sum(np.abs(velocities)) * 0.5
-            
-            # Strong survival bonus that increases over time
-            survival_reward = 2.0 if height > 1.0 else -10.0
-            
-            # Time-based bonus for longer standing
-            time_bonus = min(self.current_step * 0.01, 5.0)  # Up to +5 reward for long episodes
-            
-            total_reward = height_reward + movement_penalty + survival_reward + time_bonus
-            return total_reward
+def _compute_task_reward(self, obs, base_reward, info):
+    """Simplified reward for stable standing"""
+    if self.task_type == "standing":
+        height = obs[0]
+        target_height = 1.3
         
-        elif self.task_type == "walking":
-            # Original walking reward logic
-            return base_reward
+        # Simple distance-based reward (no exponentials)
+        height_error = abs(height - target_height)
+        height_reward = max(0, 2.0 - height_error * 10.0)  # Linear penalty
         
-        elif self.task_type == "navigation":
-            # Navigation reward logic would go here
-            return base_reward
-            
-        return base_reward
+        # Small penalty for excessive movement
+        movement_penalty = 0.0
+        if len(obs) > 8:
+            velocities = obs[8:11] if len(obs) > 11 else obs[8:10]
+            movement_penalty = -np.sum(np.abs(velocities)) * 0.1  # Much smaller
+        
+        # Simple survival reward
+        survival_reward = 1.0 if height > 1.0 else 0.0
+        
+        # Total is simple sum
+        return height_reward + movement_penalty + survival_reward
+    
+    return base_reward
     
     def _check_task_termination(self, obs, info):
         """Check if episode should terminate based on task"""
