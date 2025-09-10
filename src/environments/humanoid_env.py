@@ -12,18 +12,23 @@ class HumanoidEnv(gym.Wrapper):
     """Fixed wrapper for MuJoCo Humanoid environment with improved reward design"""
     
     def __init__(self, task_type: str = "walking", render_mode: Optional[str] = None):
-        env = gym.make("Humanoid-v5", render_mode=render_mode)
+        # Critical fix: Include x and y positions in observations for consistent indexing
+        env = gym.make(
+            "Humanoid-v5", 
+            render_mode=render_mode,
+            exclude_current_positions_from_observation=False  # Include x,y for obs[0:2]=x,y, obs[2]=z
+        )
         super().__init__(env)
         self.task_type = task_type
         
-        # Task parameters - INCREASED for longer episodes
+        # Task parameters
         self.target_position = None
-        self.max_episode_steps = 5000  # Much longer episodes for true standing
+        self.max_episode_steps = 1000  # Reduced for faster learning cycles
         self.current_step = 0
         
-        # Get observation info to verify indices
+        # Verify observation space
         obs_space = env.observation_space
-        print(f"Observation space shape: {obs_space.shape}")
+        print(f"Observation space shape: {obs_space.shape}")  # Should be (378,) now with x,y included
     
     def reset(self, seed: Optional[int] = None): 
         observation, info = self.env.reset(seed=seed)
@@ -48,7 +53,7 @@ class HumanoidEnv(gym.Wrapper):
         # Episode length limit
         truncated = truncated or (self.current_step >= self.max_episode_steps)
         
-        # Add task info
+        # Add task info with raw values
         info.update(self._get_task_info(observation))
         
         return observation, reward, terminated, truncated, info
@@ -56,70 +61,80 @@ class HumanoidEnv(gym.Wrapper):
     def _compute_task_reward(self, obs, base_reward, info):
         """Compute task-specific reward"""
         if self.task_type == "standing":
-            height = obs[2]  # Corrected: z-position is height
-            target_height = 1.25  # Adjusted to typical initial standing height; verify with reset
+            height = obs[2]  # z-position (height) with exclude=False
+            target_height = 1.3  # Restored to original; adjust based on initial reset if needed (typically ~1.25-1.3)
             
-            # Softer quadratic penalty for height error
+            # Softer linear penalty to reduce harsh negative rewards
             height_error = abs(height - target_height)
             if height_error < 0.05:
-                height_reward = 15.0  # Strong reward for precise height
+                height_reward = 20.0  # Increased positive for precision
             elif height_error < 0.1:
-                height_reward = 5.0
+                height_reward = 10.0
             else:
-                height_reward = - (height_error ** 2) * 10.0  # Quadratic for smoother gradients
+                height_reward = -height_error * 5.0  # Linear and less severe (was quadratic *10)
             
-            # Penalize movement more heavily for true standing
-            movement_penalty = 0.0
-            velocities = obs[24:27]  # Corrected: torso linear velocities (x/y/z)
-            movement_penalty = -np.sum(np.abs(velocities)) * 0.5
+            # Movement penalty on torso linear velocities
+            velocities = obs[24:27]  # qvel[0:3] = linear vel x,y,z
+            movement_penalty = -np.sum(np.abs(velocities)) * 0.2  # Reduced weight to allow some adjustment
             
-            # Add penalty for x/y drift (promote centered standing)
-            xy_drift = np.sum(np.abs(obs[0:2]))  # Root x/y positions
-            drift_penalty = -xy_drift * 0.1
+            # Drift penalty on x/y position for centered standing
+            xy_drift = np.linalg.norm(obs[0:2])  # Distance from origin in x/y
+            drift_penalty = -xy_drift * 0.05  # Mild penalty to encourage staying put
             
-            # Strong survival bonus that increases over time
-            survival_reward = 2.0 if height > 1.0 else -10.0
+            # Increased survival reward to make standing positive
+            survival_reward = 5.0 if height > 1.0 else -5.0  # Balanced to encourage maintaining height
             
-            # Time-based bonus for longer standing
-            time_bonus = min(self.current_step * 0.01, 5.0)  # Up to +5 reward for long episodes
+            # Time bonus for sustained standing
+            time_bonus = min(self.current_step * 0.02, 10.0)  # Ramp up faster, cap higher
             
-            total_reward = height_reward + movement_penalty + drift_penalty + survival_reward + time_bonus
+            # Add mild upright bonus based on torso quaternion (quat_w close to 1 for upright)
+            quat = obs[3:7]  # Quaternion w,x,y,z
+            upright_bonus = 2.0 * quat[0]  # w component ~1 when upright, ~0 when tilted
+            
+            total_reward = (
+                height_reward 
+                + movement_penalty 
+                + drift_penalty 
+                + survival_reward 
+                + time_bonus 
+                + upright_bonus
+            )
             return total_reward
             
+        # For other tasks, use base reward with possible adjustments
         return base_reward
     
     def _check_task_termination(self, obs, info):
         """Check if episode should terminate based on task"""
-        height = obs[2]  # Corrected
+        height = obs[2]
         
         if self.task_type == "standing":
-            # Only terminate if truly fallen (very lenient)
-            if height < 1.0:  # Stricter than before for better learning
+            # Lenient termination: only if truly fallen (allows recovery learning)
+            if height < 0.8:  # Lowered threshold to permit more exploration
                 return True
         else:
-            # More aggressive termination for other tasks
             if height < 0.9:
                 return True
         
         return False
     
     def _get_task_info(self, obs):
-        """Get task-specific information"""
+        """Get task-specific information (using raw obs values)"""
         info = {
             'task_type': self.task_type,
             'step': self.current_step,
-            'height': obs[2],  # Corrected
-            'x_position': obs[0],  # Corrected
-            'y_position': obs[1],  # Corrected
+            'height': obs[2],
+            'x_position': obs[0],
+            'y_position': obs[1],
         }
         
-        # Add velocities if available
+        # Add velocities
         info['x_velocity'] = obs[24]
         info['y_velocity'] = obs[25]
         info['z_velocity'] = obs[26]
         
         if self.task_type == "navigation" and self.target_position is not None:
-            current_pos = obs[0:2]  # Corrected to x/y
+            current_pos = obs[0:2]
             info['distance_to_target'] = np.linalg.norm(current_pos - self.target_position)
             info['target_position'] = self.target_position.copy()
         
@@ -135,9 +150,9 @@ class HumanoidEnv(gym.Wrapper):
         print("\nObservation Analysis:")
         print(f"Total observation size: {len(obs)}")
         print(f"obs[0:3] (x,y,z/height pos): {obs[0:3]}")
-        print(f"obs[3:7] (root quaternion): {obs[3:7]}")
-        print(f"obs[24:27] (linear vel x/y/z): {obs[24:27]}")
-        print(f"obs[27:30] (angular vel): {obs[27:30]}")
+        print(f"obs[3:7] (root quaternion w,x,y,z): {obs[3:7]}")
+        print(f"obs[24:27] (linear vel x,y,z): {obs[24:27]}")
+        print(f"obs[27:30] (angular vel x,y,z): {obs[27:30]}")
         print("...")
         return obs
 
@@ -161,7 +176,7 @@ def test_environment():
     obs, info = env.reset()
     total_reward = 0
     
-    for step in range(200):  # Test longer episodes
+    for step in range(200):
         action = env.action_space.sample()
         obs, reward, terminated, truncated, info = env.step(action)
         total_reward += reward
