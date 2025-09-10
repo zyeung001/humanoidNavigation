@@ -459,7 +459,6 @@ class StandingAgent:
                 best_model_path=self.config.get("best_model_path", "models/saved_models/best_standing_model.zip"),
                 checkpoint_dir=self.config.get("checkpoint_dir", "data/checkpoints"),
                 checkpoint_prefix=self.config.get("checkpoint_prefix", "standing_model"),
-                wandb_run=self.wandb_run,
                 target_height=self.target_height,
                 success_threshold=self.success_threshold,
             )
