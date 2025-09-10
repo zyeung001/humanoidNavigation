@@ -1,5 +1,5 @@
 """
-Fixed Humanoid environment wrapper for MuJoCo Humanoid-v4
+Fixed Humanoid environment wrapper for MuJoCo Humanoid-v5
 Improved reward structure for better learning of walking, standing, and navigation tasks
 """
 

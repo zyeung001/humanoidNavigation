@@ -124,7 +124,13 @@ def main():
 
     # Load configuration
     config = load_config()
-    standing_config = config.get('standing', {})
+    standing_config = config.get('standing', {}).copy()
+    general_config = config.get('general', {})
+
+    for key in ['save_freq', 'eval_freq', 'eval_episodes', 'seed', 'device', 'verbose']:
+        if key in general_config and key not in standing_config:
+            standing_config[key] = general_config[key]
+
     standing_config['device'] = device
 
     # Experiment naming
@@ -272,131 +278,6 @@ def main():
             for file in files:
                 if file.endswith(('.csv', '.txt', '.json')):
                     wandb.save(os.path.join(root, file))
-
-# ======================================================
-# QUICK ENV TEST
-# ======================================================
-def quick_test():
-    print("Running quick standing environment test...")
-    os.environ.setdefault("MUJOCO_GL", "egl")
-    setup_colab_environment()
-
-    from src.environments.humanoid_env import make_humanoid_env
-    env = make_humanoid_env("standing")
-    obs, info = env.reset(seed=0)
-    print(f"Observation shape: {obs.shape}")
-    print(f"Action space: {env.action_space}")
-    print(f"Task type: {env.task_type}")
-    
-    # Test a few steps
-    total_reward = 0
-    for i in range(10):
-        action = env.action_space.sample() * 0.1  # Small actions for standing
-        obs, reward, terminated, truncated, info = env.step(action)
-        total_reward += reward
-        if i % 5 == 0:
-            print(f"Step {i}: height={info.get('height', 'N/A'):.3f}, reward={reward:.3f}")
-        if terminated or truncated:
-            break
-    
-    print(f"Test completed. Total reward: {total_reward:.2f}")
-    env.close()
-
-# ======================================================
-# SIMPLE TRAIN FUNCTION (from a Colab cell)
-# ======================================================
-def train_standing(timesteps=1_500_000, device='auto', use_wandb=True, project_name='humanoid-standing'):
-    """Simple training function for Colab cells."""
-    cfg = {
-        'total_timesteps': timesteps,
-        'device': device,
-        'learning_rate': 5e-5,
-        'batch_size': 64,
-        'n_steps': 2048,
-        'n_epochs': 4,
-        'clip_range': 0.1,
-        'ent_coef': 0.01,
-        'vf_coef': 0.8,
-        'gamma': 0.99,
-        'verbose': 1,
-        'n_envs': 2,
-        'normalize': True,
-        'use_wandb': use_wandb,
-        'wandb_project': project_name,
-        'log_dir': f"data/logs/standing_{datetime.now().strftime('%m%d_%H%M')}",
-        'policy_kwargs': {
-            'net_arch': {'pi': [512, 256, 128], 'vf': [512, 256, 128]},
-            'activation_fn': 'tanh',
-        },
-    }
-    
-    setup_colab_environment()
-    
-    # Initialize WandB if requested
-    if use_wandb:
-        wandb_run = wandb.init(
-            project=cfg['wandb_project'],
-            name=f"standing_{datetime.now().strftime('%m%d_%H%M')}",
-            config=cfg,
-            tags=['ppo', 'humanoid', 'standing', 'colab'],
-            sync_tensorboard=True,
-            monitor_gym=True,
-        )
-        cfg['wandb_run'] = wandb_run
-        
-        # Define standing-specific metrics
-        wandb.define_metric("train/height_mean", summary="last")
-        wandb.define_metric("eval/height_error", summary="min")
-        wandb.define_metric("eval/height_stability", summary="min")
-    else:
-        cfg['wandb_run'] = None
-    
-    print("Starting simplified standing training...")
-    agent = StandingAgent(cfg)
-    model = agent.train()
-    results = agent.evaluate(n_episodes=5, render=False)
-    
-    # Quick success check
-    if 'height_error' in results:
-        success = (results['mean_reward'] > 100 and 
-                  results['height_error'] < 0.15 and 
-                  results['height_stability'] < 0.25)
-        print(f"\nStanding Success: {'✓' if success else '✗'}")
-        print(f"Height Error: {results['height_error']:.3f}, Stability: {results['height_stability']:.3f}")
-    
-    if use_wandb and wandb.run:
-        wandb.log({
-            "final/mean_reward": results['mean_reward'],
-            "final/success": success if 'height_error' in results else False,
-        })
-        wandb.finish()
-    
-    agent.close()
-    return model, results
-
-# ======================================================
-# EVALUATION FUNCTION
-# ======================================================
-def evaluate_standing_model(model_path="models/saved_models/best_standing_model.zip", 
-                           n_episodes=10, render=False):
-    """Evaluate a trained standing model."""
-    print(f"Evaluating standing model: {model_path}")
-    setup_colab_environment()
-    
-    config = {
-        'device': 'cuda' if torch.cuda.is_available() else 'cpu',
-        'normalize': True,
-        'log_dir': 'data/logs/eval',
-        'seed': 42,
-    }
-    
-    agent = StandingAgent(config)
-    try:
-        agent.load_model(model_path)
-        results = agent.evaluate(n_episodes=n_episodes, render=render)
-        return results
-    finally:
-        agent.close()
 
 # ======================================================
 # ENTRY POINT
