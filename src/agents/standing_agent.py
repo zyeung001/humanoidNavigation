@@ -34,7 +34,20 @@ except ImportError:
 
 
 def safe_step(env, action):
-    return env.step(action)
+    """Handle both old and new gym API step returns"""
+    result = env.step(action)
+    
+    if len(result) == 4:
+        # Old gym API: obs, reward, done, info
+        obs, reward, done, info = result
+        # Convert to new API format: obs, reward, terminated, truncated, info
+        return obs, reward, done, False, info
+    elif len(result) == 5:
+        # New gymnasium API: obs, reward, terminated, truncated, info
+        return result
+    else:
+        raise ValueError(f"Unexpected step() return format: {len(result)} values")
+
 
 class StandingCallback(BaseCallback):
     """Unified callback for standing task: evaluation + checkpointing + WandB logging."""
