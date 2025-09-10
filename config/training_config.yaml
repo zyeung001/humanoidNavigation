@@ -5,8 +5,8 @@ general:
   seed: 42
   device: "auto" 
   verbose: 1
-  save_freq: 100000    # Save model every 25k steps
-  eval_freq: 25000    # Evaluate every 10k steps
+  save_freq: 100000    # Save model every 100k steps
+  eval_freq: 50000    # Evaluate every 50k steps
   eval_episodes: 5
 
 # Logging
@@ -59,7 +59,7 @@ standing:
   
   env_params:
     task_type: "standing"
-    max_episode_steps: 2000
+    max_episode_steps: 5000
   
   policy_kwargs:
     net_arch:

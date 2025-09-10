@@ -16,16 +16,14 @@ class HumanoidEnv(gym.Wrapper):
         super().__init__(env)
         self.task_type = task_type
         
-        # Task parameters
+        # Task parameters - INCREASED for longer episodes
         self.target_position = None
-        self.max_episode_steps = 1000
+        self.max_episode_steps = 5000  # Much longer episodes for true standing
         self.current_step = 0
         
         # Get observation info to verify indices
         obs_space = env.observation_space
         print(f"Observation space shape: {obs_space.shape}")
-        # For Humanoid-v5: obs[0] = z-position (height), obs[1:3] = x,y position
-        # obs[3:7] = quaternion orientation, obs[8:] = velocities and joint info
     
     def reset(self, seed: Optional[int] = None): 
         observation, info = self.env.reset(seed=seed)
@@ -43,7 +41,7 @@ class HumanoidEnv(gym.Wrapper):
         # Modify reward based on task
         reward = self._compute_task_reward(observation, base_reward, info)
         
-        # Check task-specific termination (less aggressive)
+        # Check task-specific termination
         task_terminated = self._check_task_termination(observation, info)
         terminated = terminated or task_terminated
         
@@ -56,45 +54,58 @@ class HumanoidEnv(gym.Wrapper):
         return observation, reward, terminated, truncated, info
     
     def _compute_task_reward(self, obs, base_reward, info):
+        """Compute task-specific reward"""
         if self.task_type == "standing":
-            # Only focus on height maintenance
-            height = obs[0]  # Verify this is correct
+            height = obs[0]
             target_height = 1.3
             
-            # Simple distance-based reward
+            # Exponentially increasing penalty for height error
             height_error = abs(height - target_height)
-            
-            # Strong reward for being near target height
-            if height_error < 0.1:
-                height_reward = 10.0  # Strong positive reward
-            elif height_error < 0.2:
+            if height_error < 0.05:
+                height_reward = 15.0  # Strong reward for precise height
+            elif height_error < 0.1:
                 height_reward = 5.0
             else:
-                height_reward = -height_error * 10.0  # Strong penalty
+                height_reward = -height_error * 20.0  # Stronger penalty
             
-            # Small penalties for movement (if velocity data available)
+            # Penalize movement more heavily for true standing
             movement_penalty = 0.0
             if len(obs) > 8:
                 velocities = obs[8:11] if len(obs) > 11 else obs[8:10]
-                movement_penalty = -np.sum(np.abs(velocities)) * 0.1
+                movement_penalty = -np.sum(np.abs(velocities)) * 0.5
             
-            # Base survival reward only if upright
-            survival_reward = 1.0 if height > 1.0 else -5.0
+            # Strong survival bonus that increases over time
+            survival_reward = 2.0 if height > 1.0 else -10.0
             
-            total_reward = height_reward + movement_penalty + survival_reward
+            # Time-based bonus for longer standing
+            time_bonus = min(self.current_step * 0.01, 5.0)  # Up to +5 reward for long episodes
             
+            total_reward = height_reward + movement_penalty + survival_reward + time_bonus
             return total_reward
         
+        elif self.task_type == "walking":
+            # Original walking reward logic
+            return base_reward
+        
+        elif self.task_type == "navigation":
+            # Navigation reward logic would go here
+            return base_reward
+            
         return base_reward
     
     def _check_task_termination(self, obs, info):
-        """More aggressive termination for faster learning"""
+        """Check if episode should terminate based on task"""
         height = obs[0]
         
-        # Terminate if clearly fallen
-        if height < 0.9:  # More aggressive than 0.7
-            return True
-            
+        if self.task_type == "standing":
+            # Only terminate if truly fallen (very lenient)
+            if height < 0.7:  # Only terminate if completely down
+                return True
+        else:
+            # More aggressive termination for other tasks
+            if height < 0.9:
+                return True
+        
         return False
     
     def _get_task_info(self, obs):
@@ -121,7 +132,6 @@ class HumanoidEnv(gym.Wrapper):
     
     def _set_random_target(self):
         """Set random target for navigation"""
-        # More reasonable target range
         self.target_position = np.random.uniform(low=[-3, -3], high=[3, 3])
     
     def get_observation_info(self):
@@ -152,7 +162,7 @@ def test_environment():
     print("=" * 40)
     
     # Test with random policy
-    env = make_humanoid_env(task_type="walking", render_mode=None)
+    env = make_humanoid_env(task_type="standing", render_mode=None)
     
     # Show observation info
     env.get_observation_info()
@@ -160,17 +170,17 @@ def test_environment():
     obs, info = env.reset()
     total_reward = 0
     
-    for step in range(100):
+    for step in range(200):  # Test longer episodes
         action = env.action_space.sample()
         obs, reward, terminated, truncated, info = env.step(action)
         total_reward += reward
         
-        if step % 20 == 0:
+        if step % 50 == 0:
             print(f"Step {step}: height={info['height']:.3f}, "
                   f"reward={reward:.3f}, total_reward={total_reward:.2f}")
         
         if terminated or truncated:
-            print(f"Episode ended at step {step}")
+            print(f"Episode ended at step {step} ({'terminated' if terminated else 'truncated'})")
             break
     
     env.close()
