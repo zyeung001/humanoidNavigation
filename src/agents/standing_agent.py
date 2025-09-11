@@ -55,7 +55,7 @@ class StandingCallback(BaseCallback):
     def __init__(
         self,
         eval_env_fn: Optional[Callable[[], DummyVecEnv]] = None,
-        n_eval_episodes: int = 5,
+        n_eval_episodes: int = 10,
         eval_freq: int = 40_000,
         save_freq: int = 200_000,
         log_freq: int = 1000,  # NEW: WandB logging frequency
@@ -769,7 +769,7 @@ class StandingAgent:
 # CONVENIENCE FUNCTIONS FOR COLAB
 # ======================================================
 
-def create_standing_agent(device='auto', use_wandb=True, n_envs=4):
+def create_standing_agent(device='auto', use_wandb=True, n_envs=8):  # Increased n_envs for faster training
     """Quick setup function for Colab notebooks."""
     if device == 'auto':
         import torch
@@ -780,11 +780,15 @@ def create_standing_agent(device='auto', use_wandb=True, n_envs=4):
         'n_envs': n_envs,
         'normalize': True,
         'learning_rate': 3e-4,
-        'batch_size': 128,
+        'batch_size': 4096,  # Aligned with benchmarks
         'n_steps': 2048,
-        'n_epochs': 8,
-        'gamma': 0.995,
-        'target_height': 1.3,
+        'n_epochs': 10,
+        'gamma': 0.99,
+        'gae_lambda': 0.95,
+        'clip_range': 0.2,
+        'ent_coef': 0.02,  # Boosted
+        'vf_coef': 0.5,
+        'target_height': 1.4,
         'target_reward_threshold': 150.0,
         'height_error_threshold': 0.1,
         'height_stability_threshold': 0.2,
@@ -792,7 +796,7 @@ def create_standing_agent(device='auto', use_wandb=True, n_envs=4):
         'seed': 42,
         'policy_kwargs': {
             'net_arch': {'pi': [512, 256, 128], 'vf': [512, 256, 128]},
-            'activation_fn': 'tanh',
+            'activation_fn': 'relu',  # Better for MuJoCo stability
         },
     }
     
