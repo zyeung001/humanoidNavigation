@@ -68,52 +68,41 @@ class HumanoidEnv(gym.Wrapper):
         return observation, reward, terminated, truncated, info
     
     def _compute_task_reward(self, obs, base_reward, info, action):
-        """Compute task-specific reward"""
         if self.task_type == "standing":
-            # For Standup env: obs[0] is z-height (no x/y)
-            height = obs[0]  # Adjusted for Standup obs
-            target_height = 1.4  # Matches standing torso z
+            height = obs[0]
+            target_height = 1.3  # Consistent with callback
             
-            # Blend with Standup defaults: upward vel + alive - costs
-            # Upward reward (from Standup): encourage rising
             upward_vel = (height - self.prev_height) / self.env.unwrapped.dt
-            self.prev_height = height  # Update for next step
-            uph_reward = upward_vel  # Default w=1
+            self.prev_height = height
+            uph_reward = 2.0 * upward_vel  # Increase weight to encourage rising
             
-            # Height bonus for precision and stability
             height_error = abs(height - target_height)
             if height_error < 0.05:
-                height_reward = 50.0  # Strong for perfect stand
+                height_reward = 50.0
             elif height_error < 0.1:
                 height_reward = 25.0
             else:
-                height_reward = -height_error * 2.0  # Mild penalty
+                height_reward = - (height_error ** 2) * 10.0  # Quadratic penalty, stronger for large errors (e.g., -122 for error=1.1)
             
-            # Alive bonus (constant for survival)
-            alive_bonus = 1.0
+            alive_bonus = 2.0 if height > 0.8 else 0.0  # Only give if partially standing (encourages progress)
             
-            # Penalties (boosted for stability)
-            ctrl_cost = -0.1 * np.sum(np.square(action))  # Default from Standup, now using passed action
-            impact_cost = -5e-7 * np.sum(np.square(info.get('cfrc_ext', np.zeros(1))))  # External forces
-            velocities = obs[22:25]  # Linear vel x,y,z (adjusted index for Standup)
-            movement_penalty = -np.sum(np.abs(velocities)) * 0.5  # Heavier for stillness
-            angular_vel = obs[25:28]  # Angular vel
-            angular_penalty = -np.sum(np.abs(angular_vel)) * 0.3  # Reduce wobble
+            ctrl_cost = -0.1 * np.sum(np.square(action))
+            impact_cost = -5e-7 * np.sum(np.square(info.get('cfrc_ext', np.zeros(1))))
+            velocities = obs[22:25]
+            movement_penalty = -np.sum(np.abs(velocities)) * 0.5
+            angular_vel = obs[25:28]
+            angular_penalty = -np.sum(np.abs(angular_vel)) * 0.3
             
-            # Upright bonus
-            quat = obs[1:5]  # Quaternion w,x,y,z
-            upright_bonus = 5.0 * quat[0]  # w~1 when upright
+            quat = obs[1:5]
+            upright_bonus = 5.0 * quat[0]
             
-            # Time bonus for long standing
-            time_bonus = min(self.current_step * 0.01, 30.0)
+            time_bonus = min(self.current_step * 0.01, 30.0) * (height / target_height)  # Scale by height progress (0 if low)
             
             total_reward = (
                 uph_reward + height_reward + alive_bonus + ctrl_cost + 
                 impact_cost + movement_penalty + angular_penalty + upright_bonus + time_bonus
             )
             return total_reward
-            
-        # For other tasks, use base reward with possible adjustments
         return base_reward
     
     def _check_task_termination(self, obs, info):

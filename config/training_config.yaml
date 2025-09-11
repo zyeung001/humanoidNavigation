@@ -46,14 +46,14 @@ walking:
 standing:
   algorithm: "PPO"
   total_timesteps: 5000000  # Increased for robust standing
-  learning_rate: 0.0003
+  learning_rate: 0.00001
   batch_size: 4096  # Larger for stability
   n_steps: 2048
   n_epochs: 10
   gamma: 0.99
   gae_lambda: 0.95
   clip_range: 0.2
-  ent_coef: 0.02  # Boosted for better exploration/balance
+  ent_coef: 0.05
   vf_coef: 0.5
   max_grad_norm: 0.5
   
@@ -65,7 +65,7 @@ standing:
     net_arch:
       pi: [512, 256, 128]
       vf: [512, 256, 128]
-    activation_fn: "relu"  # Switched to ReLU for better convergence in MuJoCo
+    activation_fn: "tanh"
 
 # Navigation task  
 navigation:

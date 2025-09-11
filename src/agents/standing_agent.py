@@ -297,6 +297,29 @@ class StandingCallback(BaseCallback):
                     log_data[f"eval/{key}"] = float(value)
             
             wandb.log(log_data, step=self.num_timesteps)
+
+        self.model.logger.record("eval/mean_reward", mean_reward)
+        self.model.logger.record("eval/std_reward", std_reward)
+        self.model.logger.record("eval/mean_height", mean_height)
+        self.model.logger.record("eval/height_std", height_std)
+        self.model.logger.record("eval/height_error", height_error)
+        self.model.logger.record("eval/height_stability", mean_stability)
+        self.model.logger.record("eval/target_height", self.target_height)
+
+        # Check for improvement and update best (as before)
+        current_score = mean_reward - 10 * height_error - 5 * mean_stability
+        best_score = self.best_mean_reward - 10 * self.best_height_error - 5 * self.best_height_stability
+
+        if current_score > best_score:
+            self.best_mean_reward = mean_reward
+            self.best_height_error = height_error
+            self.best_height_stability = mean_stability
+            self.model.save(self.best_model_path)
+            print(f"New best model saved: {self.best_model_path}")
+            print(f"Improved score: {current_score:.2f} > {best_score:.2f}")
+
+        # Always log the (possibly updated) best_mean_reward AFTER the check
+        self.model.logger.record("eval/best_mean_reward", self.best_mean_reward)
         
         eval_env.close()
 
@@ -784,16 +807,16 @@ def create_standing_agent(device='auto', use_wandb=True, n_envs=8):  # Increased
         'device': device,
         'n_envs': n_envs,
         'normalize': True,
-        'learning_rate': 3e-4,
+        'learning_rate': 1e-5,
         'batch_size': 4096,  # Aligned with benchmarks
         'n_steps': 2048,
         'n_epochs': 10,
         'gamma': 0.99,
         'gae_lambda': 0.95,
         'clip_range': 0.2,
-        'ent_coef': 0.02,  # Boosted
+        'ent_coef': 0.05,  # Boosted
         'vf_coef': 0.5,
-        'target_height': 1.4,
+        'target_height': 1.3,
         'target_reward_threshold': 150.0,
         'height_error_threshold': 0.1,
         'height_stability_threshold': 0.2,
@@ -801,7 +824,7 @@ def create_standing_agent(device='auto', use_wandb=True, n_envs=8):  # Increased
         'seed': 42,
         'policy_kwargs': {
             'net_arch': {'pi': [512, 256, 128], 'vf': [512, 256, 128]},
-            'activation_fn': 'relu',  # Better for MuJoCo stability
+            'activation_fn': 'tanh',  # Better for MuJoCo stability
         },
     }
     
