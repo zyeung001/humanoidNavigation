@@ -42,14 +42,18 @@ class HumanoidEnv(gym.Wrapper):
         if self.task_type == "navigation":
             self._set_random_target()
             
+        # For standing reward tracking
+        if self.task_type == "standing":
+            self.prev_height = observation[0]  # Initial height for upward vel
+        
         return observation, info
     
     def step(self, action):
         observation, base_reward, terminated, truncated, info = self.env.step(action)
         self.current_step += 1
         
-        # Modify reward based on task
-        reward = self._compute_task_reward(observation, base_reward, info)
+        # Modify reward based on task (pass action for ctrl_cost)
+        reward = self._compute_task_reward(observation, base_reward, info, action)
         
         # Check task-specific termination (lenient for standing)
         task_terminated = self._check_task_termination(observation, info)
@@ -63,7 +67,7 @@ class HumanoidEnv(gym.Wrapper):
         
         return observation, reward, terminated, truncated, info
     
-    def _compute_task_reward(self, obs, base_reward, info):
+    def _compute_task_reward(self, obs, base_reward, info, action):
         """Compute task-specific reward"""
         if self.task_type == "standing":
             # For Standup env: obs[0] is z-height (no x/y)
@@ -71,9 +75,9 @@ class HumanoidEnv(gym.Wrapper):
             target_height = 1.4  # Matches standing torso z
             
             # Blend with Standup defaults: upward vel + alive - costs
-            # Upward cost (from Standup): encourage rising
-            upward_vel = (height - self.prev_height if hasattr(self, 'prev_height') else 0) / self.env.unwrapped.dt
-            self.prev_height = height  # Track for next step
+            # Upward reward (from Standup): encourage rising
+            upward_vel = (height - self.prev_height) / self.env.unwrapped.dt
+            self.prev_height = height  # Update for next step
             uph_reward = upward_vel  # Default w=1
             
             # Height bonus for precision and stability
@@ -89,7 +93,7 @@ class HumanoidEnv(gym.Wrapper):
             alive_bonus = 1.0
             
             # Penalties (boosted for stability)
-            ctrl_cost = -0.1 * np.sum(np.square(action))  # Default from Standup
+            ctrl_cost = -0.1 * np.sum(np.square(action))  # Default from Standup, now using passed action
             impact_cost = -5e-7 * np.sum(np.square(info.get('cfrc_ext', np.zeros(1))))  # External forces
             velocities = obs[22:25]  # Linear vel x,y,z (adjusted index for Standup)
             movement_penalty = -np.sum(np.abs(velocities)) * 0.5  # Heavier for stillness
