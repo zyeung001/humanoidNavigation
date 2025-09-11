@@ -61,47 +61,50 @@ class HumanoidEnv(gym.Wrapper):
     def _compute_task_reward(self, obs, base_reward, info):
         """Compute task-specific reward"""
         if self.task_type == "standing":
-            height = obs[2]  # z-position (height) with exclude=False
-            target_height = 1.3  # Restored to original; adjust based on initial reset if needed (typically ~1.25-1.3)
+            height = obs[2]  # z-position
+            target_height = 1.4  # Match default initial height from env docs
             
-            # Softer linear penalty to reduce harsh negative rewards
+            # Height reward: Stronger positive for precision, linear penalty
             height_error = abs(height - target_height)
             if height_error < 0.05:
-                height_reward = 20.0  # Increased positive for precision
+                height_reward = 30.0  # Boosted for near-perfect
             elif height_error < 0.1:
-                height_reward = 10.0
+                height_reward = 15.0
             else:
-                height_reward = -height_error * 5.0  # Linear and less severe (was quadratic *10)
+                height_reward = -height_error * 3.0  # Milder to avoid over-penalizing
             
-            # Movement penalty on torso linear velocities
-            velocities = obs[24:27]  # qvel[0:3] = linear vel x,y,z
-            movement_penalty = -np.sum(np.abs(velocities)) * 0.2  # Reduced weight to allow some adjustment
+            # Zero out forward reward to focus on standing (override base if needed)
+            forward_reward = 0.0  # Explicitly disable movement incentive
             
-            # Drift penalty on x/y position for centered standing
-            xy_drift = np.linalg.norm(obs[0:2])  # Distance from origin in x/y
-            drift_penalty = -xy_drift * 0.05  # Mild penalty to encourage staying put
+            # Stronger movement penalty
+            velocities = obs[24:27]  # Linear vel x,y,z
+            movement_penalty = -np.sum(np.abs(velocities)) * 0.5  # Increased weight
             
-            # Increased survival reward to make standing positive
-            survival_reward = 5.0 if height > 1.0 else -5.0  # Balanced to encourage maintaining height
+            # Drift penalty
+            xy_drift = np.linalg.norm(obs[0:2])
+            drift_penalty = -xy_drift * 0.1
             
-            # Time bonus for sustained standing
-            time_bonus = min(self.current_step * 0.02, 10.0)  # Ramp up faster, cap higher
+            # Survival reward scaled by height quality
+            survival_reward = 10.0 * (height / target_height) if height > 1.0 else -10.0
             
-            # Add mild upright bonus based on torso quaternion (quat_w close to 1 for upright)
-            quat = obs[3:7]  # Quaternion w,x,y,z
-            upright_bonus = 2.0 * quat[0]  # w component ~1 when upright, ~0 when tilted
+            # Time bonus ramps slower for long-term incentive
+            time_bonus = min(self.current_step * 0.005, 20.0)
+            
+            # Enhanced upright bonus + penalize angular velocity
+            quat = obs[3:7]
+            upright_bonus = 5.0 * quat[0]  # Boosted
+            angular_vel = obs[27:30]  # Angular vel x,y,z
+            angular_penalty = -np.sum(np.abs(angular_vel)) * 0.2  # New: Reduce wobbling
+            
+            # Control cost to smooth actions (add if not in base)
+            ctrl_cost = -0.01 * np.sum(np.square(info.get('ctrl', 0.0)))  # Mild, from base if available
             
             total_reward = (
-                height_reward 
-                + movement_penalty 
-                + drift_penalty 
-                + survival_reward 
-                + time_bonus 
-                + upright_bonus
+                height_reward + forward_reward + movement_penalty + drift_penalty +
+                survival_reward + time_bonus + upright_bonus + angular_penalty + ctrl_cost
             )
             return total_reward
-            
-        # For other tasks, use base reward with possible adjustments
+        
         return base_reward
     
     def _check_task_termination(self, obs, info):
@@ -110,7 +113,7 @@ class HumanoidEnv(gym.Wrapper):
         
         if self.task_type == "standing":
             # Lenient termination: only if truly fallen (allows recovery learning)
-            if height < 0.8:  # Lowered threshold to permit more exploration
+            if height < 0.9:  # Lowered threshold to permit more exploration
                 return True
         else:
             if height < 0.9:
