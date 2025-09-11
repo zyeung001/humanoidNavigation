@@ -42,7 +42,7 @@ def setup_colab_environment():
     os.environ.setdefault("MUJOCO_GL", "osmesa")
 
     try:
-        import gymnasium
+        import gymnasium as gym
         import stable_baselines3
     except ImportError:
         print("Installing dependencies...")

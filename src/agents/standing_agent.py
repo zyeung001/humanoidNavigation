@@ -326,6 +326,11 @@ class StandingAgent:
         # Standing-specific parameters
         self.target_height = config.get('target_height', 1.3)
         self.success_threshold = config.get('target_reward_threshold', 150.0)
+        self.n_envs = config.get('n_envs', 1)  # Get from config
+        if self.n_envs > 1:
+            self.train_env = SubprocVecEnv([lambda: make_humanoid_env(task_type="standing") for _ in range(self.n_envs)])
+        else:
+            self.train_env = DummyVecEnv([lambda: make_humanoid_env(task_type="standing")])
 
     # ---------- Env construction ----------
 
@@ -350,7 +355,7 @@ class StandingAgent:
 
     def create_environment(self, render_mode=None):
         """Create vectorized training env, wrap with VecNormalize if requested."""
-        n_envs = int(self.config.get("n_envs", 1))
+        n_envs = int(self.config.get("n_envs", 8))
         seed = int(self.config.get("seed", 42))
 
         if n_envs > 1:
@@ -484,7 +489,7 @@ class StandingAgent:
         os.makedirs("data/checkpoints", exist_ok=True)
         os.makedirs("models/saved_models", exist_ok=True)
 
-        n_envs = getattr(self.env, "num_envs", 1)
+        n_envs = getattr(self.env, "num_envs", 8)
         print(f"Starting standing training for {total_timesteps:,} timesteps (n_envs={n_envs})...")
         
         # Log training start to WandB
