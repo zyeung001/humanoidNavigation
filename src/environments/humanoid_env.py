@@ -67,42 +67,68 @@ class HumanoidEnv(gym.Wrapper):
         
         return observation, reward, terminated, truncated, info
     
+    # def _compute_task_reward(self, obs, base_reward, info, action):
+    #     if self.task_type == "standing":
+    #         height = obs[0]
+    #         target_height = 1.3  # Consistent with callback
+            
+    #         upward_vel = (height - self.prev_height) / self.env.unwrapped.dt
+    #         self.prev_height = height
+    #         uph_reward = 2.0 * upward_vel  # Increase weight to encourage rising
+            
+    #         height_error = abs(height - target_height)
+    #         if height_error < 0.05:
+    #             height_reward = 50.0
+    #         elif height_error < 0.1:
+    #             height_reward = 25.0
+    #         else:
+    #             height_reward = - (height_error ** 2) * 10.0  # Quadratic penalty, stronger for large errors (e.g., -122 for error=1.1)
+            
+    #         alive_bonus = 2.0 if height > 0.8 else 0.0  # Only give if partially standing (encourages progress)
+            
+    #         ctrl_cost = -0.1 * np.sum(np.square(action))
+    #         impact_cost = -5e-7 * np.sum(np.square(info.get('cfrc_ext', np.zeros(1))))
+    #         velocities = obs[22:25]
+    #         movement_penalty = -np.sum(np.abs(velocities)) * 0.5
+    #         angular_vel = obs[25:28]
+    #         angular_penalty = -np.sum(np.abs(angular_vel)) * 0.3
+            
+    #         quat = obs[1:5]
+    #         upright_bonus = 5.0 * quat[0]
+            
+    #         time_bonus = min(self.current_step * 0.01, 30.0) * (height / target_height)  # Scale by height progress (0 if low)
+            
+    #         total_reward = (
+    #             uph_reward + height_reward + alive_bonus + ctrl_cost + 
+    #             impact_cost + movement_penalty + angular_penalty + upright_bonus + time_bonus
+    #         )
+    #         return total_reward
+    #     return base_reward
+
     def _compute_task_reward(self, obs, base_reward, info, action):
         if self.task_type == "standing":
             height = obs[0]
-            target_height = 1.3  # Consistent with callback
+            target_height = 1.3
             
-            upward_vel = (height - self.prev_height) / self.env.unwrapped.dt
-            self.prev_height = height
-            uph_reward = 2.0 * upward_vel  # Increase weight to encourage rising
+            # Track height history
+            if not hasattr(self, 'height_buffer'):
+                self.height_buffer = []
             
-            height_error = abs(height - target_height)
-            if height_error < 0.05:
-                height_reward = 50.0
-            elif height_error < 0.1:
-                height_reward = 25.0
+            self.height_buffer.append(height)
+            if len(self.height_buffer) > 10:  # Keep last 10 timesteps
+                self.height_buffer.pop(0)
+            
+            # Reward stable height near target
+            height_reward = 1.0 - abs(height - target_height)
+            
+            # Penalize variance in recent heights
+            if len(self.height_buffer) >= 5:
+                height_variance = np.var(self.height_buffer)
+                stability_bonus = np.exp(-height_variance * 10)  # Exponential penalty for variance
             else:
-                height_reward = - (height_error ** 2) * 10.0  # Quadratic penalty, stronger for large errors (e.g., -122 for error=1.1)
+                stability_bonus = 0
             
-            alive_bonus = 2.0 if height > 0.8 else 0.0  # Only give if partially standing (encourages progress)
-            
-            ctrl_cost = -0.1 * np.sum(np.square(action))
-            impact_cost = -5e-7 * np.sum(np.square(info.get('cfrc_ext', np.zeros(1))))
-            velocities = obs[22:25]
-            movement_penalty = -np.sum(np.abs(velocities)) * 0.5
-            angular_vel = obs[25:28]
-            angular_penalty = -np.sum(np.abs(angular_vel)) * 0.3
-            
-            quat = obs[1:5]
-            upright_bonus = 5.0 * quat[0]
-            
-            time_bonus = min(self.current_step * 0.01, 30.0) * (height / target_height)  # Scale by height progress (0 if low)
-            
-            total_reward = (
-                uph_reward + height_reward + alive_bonus + ctrl_cost + 
-                impact_cost + movement_penalty + angular_penalty + upright_bonus + time_bonus
-            )
-            return total_reward
+            return height_reward + stability_bonus
         return base_reward
     
     def _check_task_termination(self, obs, info):
