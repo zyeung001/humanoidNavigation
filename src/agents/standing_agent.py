@@ -8,6 +8,7 @@ FIXED: Gym API compatibility issues
 import os
 from typing import Callable, Optional
 
+import cv2
 import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
@@ -47,63 +48,169 @@ def safe_step(env, action):
         return result
     else:
         raise ValueError(f"Unexpected step() return format: {len(result)} values")
+        
+def record_evaluation_video(model, env, n_episodes=1, max_steps_per_episode=400):
+    """Record longer video for stability assessment"""
+    frames = []
+    
+    for episode in range(n_episodes):
+        obs = env.reset()
+        episode_frames = []
+        
+        for step in range(max_steps_per_episode):
+            try:
+                if hasattr(env, 'venv'):
+                    render_env = env.venv.envs[0]
+                elif hasattr(env, 'envs'):
+                    render_env = env.envs[0]
+                else:
+                    render_env = env
+                
+                frame = render_env.render()
+                if frame is not None and hasattr(frame, 'shape') and len(frame.shape) == 3:
+                    # Record every 2nd frame for speed
+                    if step % 2 == 0:
+                        episode_frames.append(frame)
+                    
+            except Exception as e:
+                if step == 0:
+                    print(f"Rendering failed: {e}")
+                break
+            
+            action, _ = model.predict(obs, deterministic=True)
+            obs, reward, terminated, truncated, info = safe_step(env, action)
+            
+            done = bool(terminated[0] if hasattr(terminated, '__len__') else terminated) or \
+                bool(truncated[0] if hasattr(truncated, '__len__') else truncated)
+            
+            if done:
+                break
+        
+        frames.extend(episode_frames[:200])  # Longer videos to show stability
+        
+        if len(frames) >= 300:
+            break
+    
+    return frames
 
 
 class StandingCallback(BaseCallback):
     """Unified callback for standing task: evaluation + checkpointing + WandB logging."""
 
     def __init__(
-        self,
-        eval_env_fn: Optional[Callable[[], DummyVecEnv]] = None,
-        n_eval_episodes: int = 10,
-        eval_freq: int = 40_000,
-        save_freq: int = 200_000,
-        log_freq: int = 1000,  # NEW: WandB logging frequency
-        verbose: int = 1,
-        best_model_path: str = "models/saved_models/best_standing_model.zip",
-        checkpoint_dir: str = "data/checkpoints",
-        checkpoint_prefix: str = "standing_model",
-        wandb_run=None,
-        target_height: float = 1.3,
-        success_threshold: float = 150.0,
-    ):
-        super().__init__(verbose)
-        self.eval_env_fn = eval_env_fn
-        self.n_eval_episodes = n_eval_episodes
-        self.eval_freq = eval_freq
-        self.save_freq = save_freq
-        self.log_freq = log_freq  # NEW
-        self.best_model_path = best_model_path
-        self.checkpoint_dir = checkpoint_dir
-        self.checkpoint_prefix = checkpoint_prefix
-        self.best_mean_reward = -np.inf
-        self.wandb_run = wandb_run
-        self.target_height = target_height
-        self.success_threshold = success_threshold
+            self,
+            config,
+            eval_env_fn: Optional[Callable[[], DummyVecEnv]] = None,
+            wandb_run=None,
+        ):
+            super().__init__(config.get('verbose', 1))
+            
+            # Get all values from config
+            self.eval_env_fn = eval_env_fn
+            self.n_eval_episodes = config.get('n_eval_episodes')
+            self.eval_freq = config.get('eval_freq')
+            self.save_freq = config.get('save_freq')
+            self.log_freq = config.get('wandb_log_freq')
+            self.video_freq = config.get('video_freq')
+            self.best_model_path = config.get('best_model_path')
+            self.checkpoint_dir = config.get('checkpoint_dir')
+            self.checkpoint_prefix = config.get('checkpoint_prefix')
+            self.wandb_run = wandb_run
+            self.target_height = config.get('target_height')
+            self.success_threshold = config.get('target_reward_threshold')
+            
+            # Initialize tracking variables
+            self.best_mean_reward = -np.inf
+            self.best_height_error = np.inf
+            self.best_height_stability = np.inf
+            self.height_data = []
+            
+            # Episode tracking (remove duplicates)
+            self.episode_rewards = []
+            self.episode_lengths = []
+            self._current_episode_heights = []
+            
+            os.makedirs(os.path.dirname(self.best_model_path), exist_ok=True)
+            os.makedirs(self.checkpoint_dir, exist_ok=True)
+
+    def _collect_episode_data(self):
+        """Collect episode data for episode-based logging"""
+        infos = self.locals.get("infos", [])
         
-        # Standing-specific tracking
-        self.best_height_error = np.inf
-        self.best_height_stability = np.inf
-        
-        # NEW: WandB training data tracking (moved from StandingWandBCallback)
-        self.episode_rewards = []
-        self.episode_lengths = []
-        self.height_data = []
-        self.stability_data = []
-        
-        os.makedirs(os.path.dirname(self.best_model_path), exist_ok=True)
-        os.makedirs(self.checkpoint_dir, exist_ok=True)
+        for info in infos:
+            # Check if episode is done (episode stats available)
+            if "episode" in info:
+                episode_reward = info["episode"]["r"]
+                episode_length = info["episode"]["l"]
+                
+                # Store episode data
+                self.episode_rewards.append(episode_reward)
+                self.episode_lengths.append(episode_length)
+                
+                # Get episode-specific height data if available
+                episode_heights = getattr(self, '_current_episode_heights', [])
+                
+                if episode_heights:
+                    episode_height_mean = np.mean(episode_heights)
+                    episode_height_std = np.std(episode_heights)
+                    episode_height_error = abs(episode_height_mean - self.target_height)
+                    
+                    # Log episode-based metrics to WandB
+                    if WANDB_AVAILABLE and wandb.run:
+                        episode_metrics = {
+                            "train_episodes/reward": episode_reward,
+                            "train_episodes/length": episode_length,
+                            "train_episodes/height_mean": episode_height_mean,
+                            "train_episodes/height_std": episode_height_std,
+                            "train_episodes/height_error": episode_height_error,
+                            "train_episodes/episode_count": len(self.episode_rewards),
+                        }
+                        wandb.log(episode_metrics, step=self.num_timesteps)
+                    
+                    # Reset episode height tracking
+                    self._current_episode_heights = []
+                
+                if self.verbose and len(self.episode_rewards) % 10 == 0:
+                    recent_rewards = self.episode_rewards[-10:]
+                    print(f"Episode {len(self.episode_rewards)}: "
+                        f"reward={episode_reward:.2f}, "
+                        f"recent_avg={np.mean(recent_rewards):.2f}")
+            
+            # Collect height data during episode
+            if "height" in info:
+                if not hasattr(self, '_current_episode_heights'):
+                    self._current_episode_heights = []
+                self._current_episode_heights.append(info["height"])
+                self.height_data.append(info["height"])
+
+    def _save_checkpoint(self):
+        """Save model checkpoint"""
+        path = os.path.join(self.checkpoint_dir, f"{self.checkpoint_prefix}_{self.num_timesteps}.zip")
+        self.model.save(path)
+        if self.verbose:
+            print(f"Checkpoint saved: {path}")
+        # Save checkpoint to WandB
+        if WANDB_AVAILABLE and wandb.run:
+            wandb.save(path)
 
     def _on_step(self) -> bool:
         t = self.num_timesteps
 
-        # NEW: WandB training logging (every log_freq steps)
+        # Collect episode data for episode-based logging
+        self._collect_episode_data()
+
+        # WandB training logging (every log_freq steps)
         if self.log_freq > 0 and (t % self.log_freq == 0) and WANDB_AVAILABLE and wandb.run:
             self._log_training_metrics()
 
         # Evaluation (every eval_freq steps)
         if self.eval_env_fn is not None and self.eval_freq > 0 and (t % self.eval_freq == 0):
             self._run_evaluation()
+
+        # Video recording (every video_freq steps)
+        if (self.video_freq > 0 and (t % self.video_freq == 0) and 
+            WANDB_AVAILABLE and wandb.run and self.eval_env_fn is not None):
+            self._record_and_log_video()
 
         # Checkpointing (every save_freq steps)
         if self.save_freq > 0 and (t % self.save_freq == 0):
@@ -176,11 +283,71 @@ class StandingCallback(BaseCallback):
         
         wandb.log(log_dict, step=self.num_timesteps)
 
+    def _record_and_log_video(self):
+        """Fast video recording and logging to WandB"""
+        if self.verbose:
+            print(f"Recording video at step {self.num_timesteps:,}")
+        
+        try:
+            eval_env = self.eval_env_fn()
+            
+            # Record shorter, faster video
+            frames = record_evaluation_video(
+                self.model, 
+                eval_env, 
+                n_episodes=1,
+                max_steps_per_episode=200  # Reduced for speed
+            )
+            
+            if frames and WANDB_AVAILABLE and wandb.run:
+                # Quick performance sample
+                obs = eval_env.reset()
+                quick_rewards = []
+                quick_heights = []
+                
+                for _ in range(20):  # Just 20 steps for metrics
+                    action, _ = self.model.predict(obs, deterministic=True)
+                    obs, reward, terminated, truncated, info = safe_step(eval_env, action)
+                    
+                    quick_rewards.append(reward[0] if hasattr(reward, '__len__') else reward)
+                    if hasattr(info, '__len__') and len(info) > 0 and 'height' in info[0]:
+                        quick_heights.append(info[0]['height'])
+                    
+                    done = bool(terminated[0] if hasattr(terminated, '__len__') else terminated) or \
+                        bool(truncated[0] if hasattr(truncated, '__len__') else truncated)
+                    if done:
+                        break
+                
+                # Create caption
+                mean_height = np.mean(quick_heights) if quick_heights else 0
+                height_error = abs(mean_height - self.target_height) if quick_heights else 0
+                mean_reward = np.mean(quick_rewards) if quick_rewards else 0
+                
+                caption = f"Step {self.num_timesteps//1000}k | H:{mean_height:.2f} | Err:{height_error:.3f}"
+                
+                # Log video
+                video_array = np.array(frames)
+                wandb.log({
+                    "video/training_progress": wandb.Video(
+                        video_array, 
+                        fps=20,  # Lower FPS for speed
+                        format="mp4",
+                        caption=caption
+                    )
+                }, step=self.num_timesteps)
+                
+                if self.verbose:
+                    print(f"Video logged: {len(frames)} frames")
+            
+            eval_env.close()
+            
+        except Exception as e:
+            print(f"Video logging failed: {e}")
+
     def _run_evaluation(self):
-        """Run evaluation and track best models (existing code with minor updates)"""
+        """Run evaluation and track best models"""
         eval_env = self.eval_env_fn()
         
-        # Enhanced evaluation for standing task
         heights = []
         rewards = []
         episode_lengths = []
@@ -194,16 +361,14 @@ class StandingCallback(BaseCallback):
             
             while not done:
                 action, _ = self.model.predict(obs, deterministic=True)
-                
-                # Use safe_step to handle API differences
                 obs, reward, terminated, truncated, info = safe_step(eval_env, action)
                 done = bool(terminated[0] if hasattr(terminated, '__len__') else terminated) or \
-                       bool(truncated[0] if hasattr(truncated, '__len__') else truncated)
+                    bool(truncated[0] if hasattr(truncated, '__len__') else truncated)
                 
                 ep_reward += reward[0] if hasattr(reward, '__len__') else reward
                 ep_length += 1
                 
-                # Extract height from observation or info
+                # Extract height
                 if hasattr(info, '__len__') and len(info) > 0 and 'height' in info[0]:
                     ep_heights.append(info[0]['height'])
                 elif hasattr(obs, '__len__') and len(obs) > 0:
@@ -214,10 +379,10 @@ class StandingCallback(BaseCallback):
             if ep_heights:
                 heights.extend(ep_heights)
         
+        # Calculate metrics
         mean_rew = np.mean(rewards)
         std_rew = np.std(rewards)
         
-        # Calculate standing-specific metrics
         standing_metrics = {}
         if heights:
             mean_height = np.mean(heights)
@@ -233,26 +398,20 @@ class StandingCallback(BaseCallback):
             
             if self.verbose:
                 print(f"[eval] t={self.num_timesteps:,} reward={mean_rew:.2f}±{std_rew:.2f} "
-                      f"height={mean_height:.3f}±{height_stability:.3f} "
-                      f"error={height_error:.3f}")
-        else:
-            if self.verbose:
-                print(f"[eval] t={self.num_timesteps:,} reward={mean_rew:.2f}±{std_rew:.2f}")
+                    f"height={mean_height:.3f}±{height_stability:.3f} error={height_error:.3f}")
         
-        # Track best model (considering both reward and standing metrics)
+        # Track best model
         is_new_best = False
         if mean_rew > self.best_mean_reward:
-            if not standing_metrics or standing_metrics["height_error"] < 0.2:  # Reasonable height error
+            if not standing_metrics or standing_metrics["height_error"] < 0.2:
                 self.best_mean_reward = mean_rew
                 if standing_metrics:
                     self.best_height_error = standing_metrics["height_error"]
                     self.best_height_stability = standing_metrics["height_stability"]
                 is_new_best = True
-        
-        # Also save model if significantly better standing performance
         elif (standing_metrics and 
-              standing_metrics["height_error"] < self.best_height_error * 0.9 and
-              mean_rew > self.success_threshold):
+            standing_metrics["height_error"] < self.best_height_error * 0.9 and
+            mean_rew > self.success_threshold):
             self.best_mean_reward = mean_rew
             self.best_height_error = standing_metrics["height_error"]
             self.best_height_stability = standing_metrics["height_stability"]
@@ -261,10 +420,8 @@ class StandingCallback(BaseCallback):
         if is_new_best:
             self.model.save(self.best_model_path)
             if self.verbose:
-                print(f"New best standing model saved (reward={mean_rew:.2f}, "
-                      f"height_error={standing_metrics.get('height_error', 'N/A'):.3f})")
+                print(f"New best model saved (reward={mean_rew:.2f})")
             
-            # Log to WandB
             if WANDB_AVAILABLE and wandb.run:
                 wandb.save(self.best_model_path)
                 wandb.run.summary["best_mean_reward"] = mean_rew
@@ -272,7 +429,7 @@ class StandingCallback(BaseCallback):
                     wandb.run.summary["best_height_error"] = standing_metrics["height_error"]
                     wandb.run.summary["best_height_stability"] = standing_metrics["height_stability"]
         
-        # Log to tensorboard
+        # Log to tensorboard and WandB
         if hasattr(self.model, "logger") and self.model.logger is not None:
             self.model.logger.record("eval/mean_reward", float(mean_rew))
             self.model.logger.record("eval/std_reward", float(std_rew))
@@ -282,7 +439,6 @@ class StandingCallback(BaseCallback):
                 for key, value in standing_metrics.items():
                     self.model.logger.record(f"eval/{key}", float(value))
         
-        # Log to WandB
         if WANDB_AVAILABLE and wandb.run:
             log_data = {
                 "eval/mean_reward": float(mean_rew),
@@ -297,41 +453,8 @@ class StandingCallback(BaseCallback):
                     log_data[f"eval/{key}"] = float(value)
             
             wandb.log(log_data, step=self.num_timesteps)
-
-        self.model.logger.record("eval/mean_reward", mean_reward)
-        self.model.logger.record("eval/std_reward", std_reward)
-        self.model.logger.record("eval/mean_height", mean_height)
-        self.model.logger.record("eval/height_std", height_std)
-        self.model.logger.record("eval/height_error", height_error)
-        self.model.logger.record("eval/height_stability", mean_stability)
-        self.model.logger.record("eval/target_height", self.target_height)
-
-        # Check for improvement and update best (as before)
-        current_score = mean_reward - 10 * height_error - 5 * mean_stability
-        best_score = self.best_mean_reward - 10 * self.best_height_error - 5 * self.best_height_stability
-
-        if current_score > best_score:
-            self.best_mean_reward = mean_reward
-            self.best_height_error = height_error
-            self.best_height_stability = mean_stability
-            self.model.save(self.best_model_path)
-            print(f"New best model saved: {self.best_model_path}")
-            print(f"Improved score: {current_score:.2f} > {best_score:.2f}")
-
-        # Always log the (possibly updated) best_mean_reward AFTER the check
-        self.model.logger.record("eval/best_mean_reward", self.best_mean_reward)
         
         eval_env.close()
-
-    def _save_checkpoint(self):
-        """Save model checkpoint"""
-        path = os.path.join(self.checkpoint_dir, f"{self.checkpoint_prefix}_{self.num_timesteps}.zip")
-        self.model.save(path)
-        if self.verbose:
-            print(f"Checkpoint saved: {path}")
-        # Save checkpoint to WandB
-        if WANDB_AVAILABLE and wandb.run:
-            wandb.save(path)
 
 
 class StandingAgent:
@@ -340,20 +463,15 @@ class StandingAgent:
     def __init__(self, config):
         self.config = config
         self.model: Optional[PPO] = None
-        self.env = None  # VecEnv (possibly VecNormalize)
-        self.vecnormalize_path = self.config.get(
-            "vecnormalize_path", "models/saved_models/vecnorm_standing.pkl"
-        )
+        self.env = None
+        self.vecnormalize_path = self.config.get("vecnormalize_path")
         self.wandb_run = config.get('wandb_run', None)
         
         # Standing-specific parameters
-        self.target_height = config.get('target_height', 1.3)
-        self.success_threshold = config.get('target_reward_threshold', 150.0)
-        self.n_envs = config.get('n_envs', 1)  # Get from config
-        if self.n_envs > 1:
-            self.train_env = SubprocVecEnv([lambda: make_humanoid_env(task_type="standing") for _ in range(self.n_envs)])
-        else:
-            self.train_env = DummyVecEnv([lambda: make_humanoid_env(task_type="standing")])
+        self.target_height = config.get('target_height')
+        self.success_threshold = config.get('target_reward_threshold')
+        self.n_envs = config.get('n_envs')
+
 
     # ---------- Env construction ----------
 
@@ -473,35 +591,30 @@ class StandingAgent:
         return eval_vec
 
     def train(self, total_timesteps=None, callback=None):
-        """Train the standing agent with periodic eval/checkpoints and save VecNormalize stats."""
         if self.model is None:
             self.create_model()
         if total_timesteps is None:
-            total_timesteps = int(self.config.get("total_timesteps", 1_500_000))  # Less training needed for standing
+            total_timesteps = int(self.config.get("total_timesteps"))
 
-        # Prepare eval env factory that uses current normalization stats
         def eval_env_fn():
-            # Save current stats so eval can load the latest normalization
             if isinstance(self.env, VecNormalize):
                 os.makedirs(os.path.dirname(self.vecnormalize_path), exist_ok=True)
                 self.env.save(self.vecnormalize_path)
             return self._build_eval_env()
 
-        # Create callbacks list
+        # Create callbacks
         callbacks = [
             StandingCallback(
+                config=self.config,
                 eval_env_fn=eval_env_fn,
-                n_eval_episodes=self.config.get("n_eval_episodes", 5),
-                eval_freq=self.config.get("eval_freq", 40_000),
-                save_freq=self.config.get("save_freq", 200_000),
-                log_freq=self.config.get("wandb_log_freq", 1000),  # NEW PARAMETER
-                verbose=self.config.get("verbose", 1),
-                wandb_run=self.wandb_run,  # Pass WandB run
-                best_model_path=self.config.get("best_model_path", "models/saved_models/best_standing_model.zip"),
-                checkpoint_dir=self.config.get("checkpoint_dir", "data/checkpoints"),
-                checkpoint_prefix=self.config.get("checkpoint_prefix", "standing_model"),
-                target_height=self.target_height,
-                success_threshold=self.success_threshold,
+                wandb_run=self.wandb_run,
+            ),
+            EarlyStoppingCallback(
+                check_freq=20000,
+                target_reward=250,
+                target_height_error=0.08,
+                target_stability=0.12,
+                patience=2
             )
         ]
         
@@ -512,7 +625,7 @@ class StandingAgent:
         os.makedirs("data/checkpoints", exist_ok=True)
         os.makedirs("models/saved_models", exist_ok=True)
 
-        n_envs = getattr(self.env, "num_envs", 8)
+        n_envs = getattr(self.env, "num_envs", 4)
         print(f"Starting standing training for {total_timesteps:,} timesteps (n_envs={n_envs})...")
         
         # Log training start to WandB
@@ -797,39 +910,80 @@ class StandingAgent:
 # CONVENIENCE FUNCTIONS FOR COLAB
 # ======================================================
 
-def create_standing_agent(device='auto', use_wandb=True, n_envs=8):  # Increased n_envs for faster training
-    """Quick setup function for Colab notebooks."""
+def create_standing_agent(config_path='config/training_config.yaml', device='auto', use_wandb=True):
+    """Quick setup function that uses YAML config."""
+    import yaml
+    
+    # Load config from YAML
+    with open(config_path, 'r') as f:
+        full_config = yaml.safe_load(f)
+    
+    config = full_config['standing'].copy()
+    
+    # Only override device if specified
     if device == 'auto':
         import torch
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    config['device'] = device
     
-    config = {
-        'device': device,
-        'n_envs': n_envs,
-        'normalize': True,
-        'learning_rate': 1e-5,
-        'batch_size': 4096,  # Aligned with benchmarks
-        'n_steps': 2048,
-        'n_epochs': 10,
-        'gamma': 0.99,
-        'gae_lambda': 0.95,
-        'clip_range': 0.2,
-        'ent_coef': 0.05,  # Boosted
-        'vf_coef': 0.5,
-        'target_height': 1.3,
-        'target_reward_threshold': 150.0,
-        'height_error_threshold': 0.1,
-        'height_stability_threshold': 0.2,
-        'verbose': 1,
-        'seed': 42,
-        'policy_kwargs': {
-            'net_arch': {'pi': [512, 256, 128], 'vf': [512, 256, 128]},
-            'activation_fn': 'tanh',  # Better for MuJoCo stability
-        },
-    }
-    
-    if use_wandb:
-        config['use_wandb'] = True
-        config['wandb_project'] = 'humanoid-standing'
+    # Only override wandb if specified
+    if not use_wandb:
+        config['use_wandb'] = False
     
     return StandingAgent(config)
+
+
+class EarlyStoppingCallback(BaseCallback):
+    """Stop training when standing is mastered"""
+    
+    def __init__(self, check_freq=20000, target_reward=300, target_height_error=0.05, 
+                 target_stability=0.1, patience=3):
+        super().__init__()
+        self.check_freq = check_freq
+        self.target_reward = target_reward
+        self.target_height_error = target_height_error
+        self.target_stability = target_stability
+        self.patience = patience
+        self.success_count = 0
+        
+    def _on_step(self):
+        if self.num_timesteps % self.check_freq == 0:
+            # Quick stability test
+            eval_env = self.training_env
+            obs = eval_env.reset()
+            rewards = []
+            heights = []
+            
+            for _ in range(200):  # 200 step test
+                action, _ = self.model.predict(obs, deterministic=True)
+                obs, reward, done, info = eval_env.step(action)
+                rewards.append(reward[0] if hasattr(reward, '__len__') else reward)
+                
+                if hasattr(info, '__len__') and len(info) > 0 and 'height' in info[0]:
+                    heights.append(info[0]['height'])
+                
+                if any(done) if hasattr(done, '__len__') else done:
+                    break
+            
+            if heights:
+                mean_reward = np.mean(rewards)
+                mean_height = np.mean(heights)
+                height_error = abs(mean_height - 1.3)
+                height_stability = np.std(heights)
+                
+                success = (mean_reward > self.target_reward and 
+                          height_error < self.target_height_error and
+                          height_stability < self.target_stability)
+                
+                if success:
+                    self.success_count += 1
+                    print(f"Standing success {self.success_count}/{self.patience} "
+                          f"(reward={mean_reward:.1f}, error={height_error:.3f})")
+                    
+                    if self.success_count >= self.patience:
+                        print("Standing mastered! Stopping training early.")
+                        return False  # Stop training
+                else:
+                    self.success_count = 0
+        
+        return True

@@ -16,6 +16,7 @@ import yaml
 from datetime import datetime
 import torch
 torch.set_num_threads(1)
+from stable_baselines3.common.callbacks import BaseCallback
 
 # WandB import
 try:
@@ -64,55 +65,16 @@ def setup_colab_environment():
 
 
 def load_config():
-    """Load or create default standing training config."""
+    """Load config from YAML file only"""
     config_path = 'config/training_config.yaml'
-    if os.path.exists(config_path):
-        with open(config_path, 'r') as f:
-            config = yaml.safe_load(f)
-        print(f"Loaded config from {config_path}")
-    else:
-        print("Using default standing configuration")
-        config = {
-            'standing': {
-                # PPO / Training parameters (optimized for standing)
-                'total_timesteps': 100_000,  # Less timesteps needed for standing
-                'learning_rate': 5e-5,         # Lower LR for stability
-                'batch_size': 64,             # Smaller batches
-                'n_steps': 2048,               # per-env; total rollout = n_steps * n_envs
-                'n_epochs': 4,                 # Fewer epochs for stability
-                'clip_range': 0.1,            # Slightly more conservative
-                'ent_coef': 0.01,             # Higher entropy for exploration
-                'vf_coef': 0.8,                # Higher value function weight
-                'gamma': 0.99,                # Higher gamma for long-term stability
-                'gae_lambda': 0.98,
-                'max_grad_norm': 0.3,          # More aggressive gradient clipping
-                'save_freq': 200_000,
-                'eval_freq': 40_000,           # More frequent evaluation
-                'verbose': 1,
-                'seed': 42,
-                'n_envs': 2,                   # Colab typically has 2 vCPUs
-                'normalize': True,             # VecNormalize obs+reward
-                
-                # Standing-specific parameters
-                'target_reward_threshold': 150.0,    # Lower threshold for standing success
-                'height_stability_threshold': 0.2,   # Maximum acceptable height variation
-                'height_error_threshold': 0.1,       # Maximum acceptable height error
-                'early_stopping': True,              # Stop when standing is mastered
-                
-                # WandB configuration
-                'use_wandb': True,
-                'wandb_project': 'humanoid-standing',
-                'wandb_entity': None,  # Set to your wandb username/team
-                'wandb_tags': ['ppo', 'humanoid', 'standing', 'colab'],
-                'wandb_notes': 'PPO training for humanoid standing task - stability focused',
-                
-                # Model architecture (optimized for standing)
-                'policy_kwargs': {
-                    'net_arch': {'pi': [512, 256, 128], 'vf': [512, 256, 128]},
-                    'activation_fn': 'tanh',  # Better for control tasks
-                },
-            }
-        }
+    
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    print(f"Loaded config from {config_path}")
     return config
 
 # ======================================================
@@ -139,7 +101,7 @@ def main():
     standing_config['log_dir'] = f"data/logs/{experiment_name}"
     os.makedirs(standing_config['log_dir'], exist_ok=True)
 
-    # Initialize WandB
+    # Initialize WandB with enhanced configuration
     use_wandb = standing_config.get('use_wandb', True)
     if use_wandb:
         wandb_run = wandb.init(
@@ -149,18 +111,27 @@ def main():
             config=standing_config,
             tags=standing_config.get('wandb_tags', ['ppo', 'humanoid', 'standing']),
             notes=standing_config.get('wandb_notes', ''),
-            sync_tensorboard=True,  # Auto-sync tensorboard logs
-            monitor_gym=True,        # Log gym episode stats
-            save_code=True,          # Save code to wandb
+            sync_tensorboard=True,
+            monitor_gym=True,
+            save_code=True,
         )
         standing_config['wandb_run'] = wandb_run
         
-        # Log standing-specific metrics to track
-        wandb.define_metric("train/height_mean", summary="last")
-        wandb.define_metric("train/height_error", summary="min")
-        wandb.define_metric("train/height_std", summary="min")
+        # Define custom metrics for better visualization
+        wandb.define_metric("train_episodes/episode_count")
+        wandb.define_metric("train_episodes/*", step_metric="train_episodes/episode_count")
+        wandb.define_metric("train/timesteps")
+        wandb.define_metric("train/*", step_metric="train/timesteps")
+        wandb.define_metric("eval/*", step_metric="train/timesteps")
+        
+        # Custom summaries for key metrics
+        wandb.define_metric("train_episodes/height_mean", summary="last")
+        wandb.define_metric("train_episodes/height_error", summary="min")
+        wandb.define_metric("train_episodes/height_stability", summary="min")
         wandb.define_metric("eval/height_stability", summary="min")
         wandb.define_metric("eval/height_error", summary="min")
+        
+        print(f"WandB initialized with video logging every {standing_config.get('video_freq', 40_000):,} timesteps")
     else:
         standing_config['wandb_run'] = None
 
@@ -170,6 +141,7 @@ def main():
     print(f"Learning Rate: {standing_config['learning_rate']}")
     print(f"Architecture: {standing_config['policy_kwargs']['net_arch']}")
     print(f"Log dir: {standing_config['log_dir']}")
+    print(f"Estimated training time: {standing_config['total_timesteps'] / standing_config.get('n_envs', 4) / 400:.1f} minutes")
     if use_wandb:
         print(f"WandB run: {wandb.run.url if wandb.run else 'N/A'}")
 
@@ -183,18 +155,18 @@ def main():
 
         # Check if standing was successfully learned
         success_criteria = {
-            'reward': results.get('mean_reward', 0) > standing_config.get('target_reward_threshold', 150),
-            'height_error': results.get('height_error', float('inf')) < standing_config.get('height_error_threshold', 0.1),
-            'height_stability': results.get('height_stability', float('inf')) < standing_config.get('height_stability_threshold', 0.2),
+            'reward': results.get('mean_reward', 0) > standing_config.get('target_reward_threshold', 200),
+            'height_error': results.get('height_error', float('inf')) < standing_config.get('height_error_threshold', 0.08),
+            'height_stability': results.get('height_stability', float('inf')) < standing_config.get('height_stability_threshold', 0.15),
         }
         
         standing_success = all(success_criteria.values())
         
         print(f"\n=== Standing Learning Assessment ===")
-        print(f"Mean Reward: {results.get('mean_reward', 0):.2f} (threshold: {standing_config.get('target_reward_threshold', 150)}) {'✓' if success_criteria['reward'] else '✗'}")
+        print(f"Mean Reward: {results.get('mean_reward', 0):.2f} (threshold: {standing_config.get('target_reward_threshold', 200)}) {'✓' if success_criteria['reward'] else '✗'}")
         if 'height_error' in results:
-            print(f"Height Error: {results['height_error']:.3f} (threshold: {standing_config.get('height_error_threshold', 0.1)}) {'✓' if success_criteria['height_error'] else '✗'}")
-            print(f"Height Stability: {results['height_stability']:.3f} (threshold: {standing_config.get('height_stability_threshold', 0.2)}) {'✓' if success_criteria['height_stability'] else '✗'}")
+            print(f"Height Error: {results['height_error']:.3f} (threshold: {standing_config.get('height_error_threshold', 0.08)}) {'✓' if success_criteria['height_error'] else '✗'}")
+            print(f"Height Stability: {results['height_stability']:.3f} (threshold: {standing_config.get('height_stability_threshold', 0.15)}) {'✓' if success_criteria['height_stability'] else '✗'}")
         print(f"Overall Standing Success: {'✓ PASSED' if standing_success else '✗ NEEDS MORE TRAINING'}")
 
         # Log final results to WandB
@@ -220,12 +192,12 @@ def main():
             # Create a summary table for the run
             summary_table = wandb.Table(columns=["Metric", "Value", "Threshold", "Success"])
             summary_table.add_data("Mean Reward", f"{results['mean_reward']:.2f}", 
-                                 standing_config.get('target_reward_threshold', 150), success_criteria['reward'])
+                                 standing_config.get('target_reward_threshold', 200), success_criteria['reward'])
             if 'height_error' in results:
                 summary_table.add_data("Height Error", f"{results['height_error']:.3f}", 
-                                     standing_config.get('height_error_threshold', 0.1), success_criteria['height_error'])
+                                     standing_config.get('height_error_threshold', 0.08), success_criteria['height_error'])
                 summary_table.add_data("Height Stability", f"{results['height_stability']:.3f}", 
-                                     standing_config.get('height_stability_threshold', 0.2), success_criteria['height_stability'])
+                                     standing_config.get('height_stability_threshold', 0.15), success_criteria['height_stability'])
             
             wandb.log({"final/success_summary": summary_table})
             
@@ -279,9 +251,7 @@ def main():
                 if file.endswith(('.csv', '.txt', '.json')):
                     wandb.save(os.path.join(root, file))
 
-# ======================================================
-# ENTRY POINT
-# ======================================================
+
 if __name__ == "__main__":
     import argparse
     
@@ -298,3 +268,31 @@ if __name__ == "__main__":
         evaluate_standing_model(args.eval, render=args.render)
     else:
         main()
+
+
+
+
+
+def quick_test():
+    """Quick environment test"""
+    from src.environments.humanoid_env import test_environment
+    test_environment()
+
+def evaluate_standing_model(model_path, render=False):
+    """Evaluate a trained standing model"""
+    config = load_config()
+    standing_config = config['standing'].copy()
+    standing_config['device'] = 'cuda' if torch.cuda.is_available() else 'cpu'
+    
+    agent = StandingAgent(standing_config)
+    agent.load_model(model_path)
+    results = agent.evaluate(n_episodes=10, render=render)
+    
+    print("\n=== Model Evaluation Results ===")
+    print(f"Mean Reward: {results['mean_reward']:.2f}")
+    if 'height_error' in results:
+        print(f"Height Error: {results['height_error']:.3f}")
+        print(f"Height Stability: {results['height_stability']:.3f}")
+    
+    agent.close()
+    return results
