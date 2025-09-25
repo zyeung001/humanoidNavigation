@@ -7,6 +7,12 @@ Colab-optimised for headless MuJoCo + T4 GPU with WandB logging
 # EARLY ENVIRONMENT CONFIGURATION (before any Mujoco/Gym imports)
 # ======================================================
 import os
+import warnings
+# Suppress WandB system messages
+os.environ["WANDB_SILENT"] = "true"
+os.environ["WANDB__SERVICE_WAIT"] = "300"
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 os.environ.setdefault("MUJOCO_GL", "egl")       # Headless rendering backend
 os.environ.setdefault("OMP_NUM_THREADS", "1")   # Limit CPU threading
 os.environ.setdefault("MKL_NUM_THREADS", "1")

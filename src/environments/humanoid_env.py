@@ -67,99 +67,44 @@ class HumanoidEnv(gym.Wrapper):
         
         return observation, reward, terminated, truncated, info
     
-    # def _compute_task_reward(self, obs, base_reward, info, action):
-    #     if self.task_type == "standing":
-    #         height = obs[0]
-    #         target_height = 1.3  # Consistent with callback
-            
-    #         upward_vel = (height - self.prev_height) / self.env.unwrapped.dt
-    #         self.prev_height = height
-    #         uph_reward = 2.0 * upward_vel  # Increase weight to encourage rising
-            
-    #         height_error = abs(height - target_height)
-    #         if height_error < 0.05:
-    #             height_reward = 50.0
-    #         elif height_error < 0.1:
-    #             height_reward = 25.0
-    #         else:
-    #             height_reward = - (height_error ** 2) * 10.0  # Quadratic penalty, stronger for large errors (e.g., -122 for error=1.1)
-            
-    #         alive_bonus = 2.0 if height > 0.8 else 0.0  # Only give if partially standing (encourages progress)
-            
-    #         ctrl_cost = -0.1 * np.sum(np.square(action))
-    #         impact_cost = -5e-7 * np.sum(np.square(info.get('cfrc_ext', np.zeros(1))))
-    #         velocities = obs[22:25]
-    #         movement_penalty = -np.sum(np.abs(velocities)) * 0.5
-    #         angular_vel = obs[25:28]
-    #         angular_penalty = -np.sum(np.abs(angular_vel)) * 0.3
-            
-    #         quat = obs[1:5]
-    #         upright_bonus = 5.0 * quat[0]
-            
-    #         time_bonus = min(self.current_step * 0.01, 30.0) * (height / target_height)  # Scale by height progress (0 if low)
-            
-    #         total_reward = (
-    #             uph_reward + height_reward + alive_bonus + ctrl_cost + 
-    #             impact_cost + movement_penalty + angular_penalty + upright_bonus + time_bonus
-    #         )
-    #         return total_reward
-    #     return base_reward
-
     def _compute_task_reward(self, obs, base_reward, info, action):
         if self.task_type == "standing":
             height = obs[0]
             target_height = 1.3
             
-            # Height reward with wider tolerance for stability
+            height_reward = 100.0 * (height / target_height) 
+            
+            # height target bonus
             height_error = abs(height - target_height)
             if height_error < 0.1:
-                height_reward = 100.0  # Perfect standing
-            elif height_error < 0.2:
-                height_reward = 50.0 * (0.2 - height_error) / 0.1
+                height_bonus = 200.0 * (0.1 - height_error) / 0.1
             else:
-                height_reward = -height_error * 15.0
+                height_bonus = 0.0
             
-            # Velocity penalty for stability (discourage oscillation)
-            height_vel = obs[24]  # z-velocity
-            vel_penalty = -abs(height_vel) * 10.0
+            # Z-velocity penalty (so it doesnt start jumping)
+            z_velocity = obs[24]  # z-velocity
+            z_vel_penalty = -abs(z_velocity) * 5.0
             
-            # Angular velocity penalty for stability
-            angular_vels = obs[25:28]  # Angular velocities
-            angular_penalty = -np.sum(np.abs(angular_vels)) * 2.0
+            # XY velocity penalty (stay in place)
+            xy_velocities = obs[22:24]  # x,y velocities
+            xy_penalty = -np.sum(np.abs(xy_velocities)) * 2.0
             
-            # Upright orientation bonus
-            quat = obs[1:5]
-            upright_bonus = 10.0 * max(0, quat[0])  # w component
-            
-            # Action smoothness (prevent jittery actions)
-            if hasattr(self, 'prev_action'):
-                action_change = np.sum(np.abs(action - self.prev_action))
-                smoothness_bonus = -action_change * 0.5
-            else:
-                smoothness_bonus = 0.0
-            self.prev_action = action.copy()
-            
-            # Long-term stability bonus
-            time_bonus = min(self.current_step * 0.05, 50.0)  # Rewards longer episodes
-            
-            # Alive bonus with better threshold
-            alive_bonus = 15.0 if height > 0.9 else -20.0
-            
-            # Minimal control cost
             ctrl_cost = -0.01 * np.sum(np.square(action))
             
-            return (height_reward + vel_penalty + angular_penalty + upright_bonus + 
-                    smoothness_bonus + time_bonus + alive_bonus + ctrl_cost)
+            return height_reward + height_bonus + z_vel_penalty + xy_penalty + ctrl_cost
+        
         return base_reward
     
     def _check_task_termination(self, obs, info):
         """Check if episode should terminate based on task"""
-        height = obs[0] if self.task_type == "standing" else obs[2]  # Adjust for Standup
-        
         if self.task_type == "standing":
-            # No termination for falls (inherit from Standup)
+            height = obs[0]
+            # Only terminate if completely fallen (very lenient)
+            if height < 0.3:
+                return True
             return False
         else:
+            height = obs[2]
             if height < 0.9:
                 return True
         

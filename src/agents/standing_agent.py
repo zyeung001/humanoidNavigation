@@ -138,6 +138,13 @@ class StandingCallback(BaseCallback):
         infos = self.locals.get("infos", [])
         
         for info in infos:
+            # Collect height data during episode (step-level)
+            if "height" in info:
+                if not hasattr(self, '_current_episode_heights'):
+                    self._current_episode_heights = []
+                self._current_episode_heights.append(info["height"])
+                self.height_data.append(info["height"])
+            
             # Check if episode is done (episode stats available)
             if "episode" in info:
                 episode_reward = info["episode"]["r"]
@@ -147,12 +154,10 @@ class StandingCallback(BaseCallback):
                 self.episode_rewards.append(episode_reward)
                 self.episode_lengths.append(episode_length)
                 
-                # Get episode-specific height data if available
-                episode_heights = getattr(self, '_current_episode_heights', [])
-                
-                if episode_heights:
-                    episode_height_mean = np.mean(episode_heights)
-                    episode_height_std = np.std(episode_heights)
+                # Calculate episode height statistics
+                if hasattr(self, '_current_episode_heights') and self._current_episode_heights:
+                    episode_height_mean = np.mean(self._current_episode_heights)
+                    episode_height_std = np.std(self._current_episode_heights)
                     episode_height_error = abs(episode_height_mean - self.target_height)
                     
                     # Log episode-based metrics to WandB
@@ -167,7 +172,7 @@ class StandingCallback(BaseCallback):
                         }
                         wandb.log(episode_metrics, step=self.num_timesteps)
                     
-                    # Reset episode height tracking
+                    # Reset for next episode
                     self._current_episode_heights = []
                 
                 if self.verbose and len(self.episode_rewards) % 10 == 0:
@@ -289,57 +294,46 @@ class StandingCallback(BaseCallback):
             print(f"Recording video at step {self.num_timesteps:,}")
         
         try:
-            eval_env = self.eval_env_fn()
+            # Create a special rendering environment
+            from src.environments.humanoid_env import make_humanoid_env
+            render_env = make_humanoid_env("standing", render_mode="rgb_array")
             
-            # Record shorter, faster video
-            frames = record_evaluation_video(
-                self.model, 
-                eval_env, 
-                n_episodes=1,
-                max_steps_per_episode=200  # Reduced for speed
-            )
+            frames = []
+            obs, _ = render_env.reset()
+            
+            for step in range(200):  # 200 steps for video
+                action, _ = self.model.predict(obs, deterministic=True)
+                obs, reward, terminated, truncated, info = render_env.step(action)
+                
+                # Get frame
+                frame = render_env.render()
+                if frame is not None:
+                    frames.append(frame)
+                
+                if terminated or truncated:
+                    break
+            
+            render_env.close()
             
             if frames and WANDB_AVAILABLE and wandb.run:
-                # Quick performance sample
-                obs = eval_env.reset()
-                quick_rewards = []
-                quick_heights = []
+                # Quick performance metrics
+                height = info.get('height', 0) if isinstance(info, dict) else 0
+                height_error = abs(height - self.target_height)
                 
-                for _ in range(20):  # Just 20 steps for metrics
-                    action, _ = self.model.predict(obs, deterministic=True)
-                    obs, reward, terminated, truncated, info = safe_step(eval_env, action)
-                    
-                    quick_rewards.append(reward[0] if hasattr(reward, '__len__') else reward)
-                    if hasattr(info, '__len__') and len(info) > 0 and 'height' in info[0]:
-                        quick_heights.append(info[0]['height'])
-                    
-                    done = bool(terminated[0] if hasattr(terminated, '__len__') else terminated) or \
-                        bool(truncated[0] if hasattr(truncated, '__len__') else truncated)
-                    if done:
-                        break
-                
-                # Create caption
-                mean_height = np.mean(quick_heights) if quick_heights else 0
-                height_error = abs(mean_height - self.target_height) if quick_heights else 0
-                mean_reward = np.mean(quick_rewards) if quick_rewards else 0
-                
-                caption = f"Step {self.num_timesteps//1000}k | H:{mean_height:.2f} | Err:{height_error:.3f}"
+                caption = f"Step {self.num_timesteps//1000}k | Height:{height:.2f} | Error:{height_error:.3f}"
                 
                 # Log video
                 video_array = np.array(frames)
                 wandb.log({
                     "video/training_progress": wandb.Video(
                         video_array, 
-                        fps=20,  # Lower FPS for speed
+                        fps=15,
                         format="mp4",
                         caption=caption
                     )
                 }, step=self.num_timesteps)
                 
-                if self.verbose:
-                    print(f"Video logged: {len(frames)} frames")
-            
-            eval_env.close()
+                print(f"Video logged: {len(frames)} frames")
             
         except Exception as e:
             print(f"Video logging failed: {e}")

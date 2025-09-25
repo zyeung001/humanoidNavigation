@@ -5,8 +5,8 @@ general:
   seed: 42
   device: "auto" 
   verbose: 1
-  save_freq: 20000
-  eval_freq: 20000   
+  save_freq: 25000
+  eval_freq: 25000  
   eval_episodes: 10   # More for better averages
 
 # Logging
@@ -18,16 +18,16 @@ logging:
 # Standing task
 standing:
   algorithm: "PPO"
-  total_timesteps: 400000
-  learning_rate: 0.0002
-  batch_size: 1024
-  n_steps: 1024
-  n_epochs: 8
-  gamma: 0.99
-  gae_lambda: 0.95
-  clip_range: 0.2
-  ent_coef: 0.05
-  vf_coef: 0.5
+  total_timesteps: 600000
+  learning_rate: 0.0003
+  batch_size: 512
+  n_steps: 2048
+  n_epochs: 10
+  gamma: 0.995
+  gae_lambda: 0.98
+  clip_range: 0.15
+  ent_coef: 0.02
+  vf_coef: 0.8
   max_grad_norm: 0.5
 
   n_eval_episodes: 5
@@ -49,17 +49,17 @@ standing:
   wandb_entity: null
   wandb_tags: ["ppo", "humanoid", "standing", "colab"]
   wandb_notes: "Optimized standing training with simplified reward"
-  wandb_log_freq: 2000
+  wandb_log_freq: 5000
   
   # Video logging
-  video_freq: 40000
+  video_freq: 50000
   video_n_episodes: 2
   video_max_steps: 500
   
   # Standing thresholds
-  target_reward_threshold: 200.0
-  height_stability_threshold: 0.15
-  height_error_threshold: 0.08
+  target_reward_threshold: 500.0
+  height_stability_threshold: 0.2
+  height_error_threshold: 0.15
   
   # Paths
   best_model_path: "models/saved_models/best_standing_model.zip"
