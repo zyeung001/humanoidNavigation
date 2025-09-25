@@ -265,6 +265,7 @@ if __name__ == "__main__":
     parser.add_argument("--test", action="store_true", help="Run quick environment test")
     parser.add_argument("--eval", type=str, help="Evaluate model at path")
     parser.add_argument("--render", action="store_true", help="Render during evaluation")
+    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
     
     args = parser.parse_args()
     
@@ -272,6 +273,17 @@ if __name__ == "__main__":
         quick_test()
     elif args.eval:
         evaluate_standing_model(args.eval, render=args.render)
+    elif args.resume:
+        print(f"Resuming from checkpoint: {args.resume}")
+
+        model = PPO.load(args.resume, env=agent.train_env, device=standing_config['device'])
+
+        model.learn(
+            total_timesteps=standing_config['total_timesteps'],  
+            callback=agent.callbacks,  
+            reset_num_timesteps=False
+        )
+        agent.model = model
     else:
         main()
 

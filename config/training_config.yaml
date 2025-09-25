@@ -5,8 +5,8 @@ general:
   seed: 42
   device: "auto" 
   verbose: 1
-  save_freq: 25000
-  eval_freq: 25000  
+  save_freq: 100000
+  eval_freq: 100000 
   eval_episodes: 10   # More for better averages
 
 # Logging
@@ -18,15 +18,15 @@ logging:
 # Standing task
 standing:
   algorithm: "PPO"
-  total_timesteps: 600000
-  learning_rate: 0.001
+  total_timesteps: 1000000
+  learning_rate: 0.0003
   batch_size: 256
-  n_steps: 1024
-  n_epochs: 20
+  n_steps: 2048
+  n_epochs: 10
   gamma: 0.99
   gae_lambda: 0.95
   clip_range: 0.2
-  ent_coef: 0.01
+  ent_coef: 0.0
   vf_coef: 0.5
   max_grad_norm: 1.0
 
@@ -48,8 +48,8 @@ standing:
   height_stability_threshold: 0.5
   height_error_threshold: 0.3
   
-  normalize: false
-  n_envs: 2
+  normalize: true
+  n_envs: 8
   
   video_n_episodes: 2
   video_max_steps: 500

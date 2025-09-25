@@ -13,7 +13,10 @@ class HumanoidEnv(gym.Wrapper):
     
     def __init__(self, task_type: str = "walking", render_mode: Optional[str] = None):
         # Use Standup for standing task; regular Humanoid for others
-        env_id = "Humanoid-v5"
+        if task_type == "standing":
+            env_id = "HumanoidStandup-v5"
+        else:
+            env_id = "Humanoid-v5"
         
         env = gym.make(
             env_id, 
@@ -66,43 +69,37 @@ class HumanoidEnv(gym.Wrapper):
     
     def _compute_task_reward(self, obs, base_reward, info, action):
         if self.task_type == "standing":
-            height = obs[2]  # Height at index 2 in regular Humanoid-v5
+            height_idx = 0 if self.task_type == "standing" else 2  
+            height = obs[height_idx]
             target_height = 1.3
-            
-            # Main height reward (0 to 100 points)
-            height_ratio = min(height / target_height, 1.5)
-            height_reward = 100.0 * height_ratio
-            
-            # Bonus for being close to target (0 to 100 points)
+
+            # height reward (scaled down to balance penalties)
+            height_ratio = min(height / target_height, 1.0)  
+            height_reward = 50.0 * height_ratio  
+
+            # Precision bonus
             height_error = abs(height - target_height)
-            if height_error < 0.2:
-                precision_bonus = 100.0 * (0.2 - height_error) / 0.2
-            else:
-                precision_bonus = 0.0
+            precision_bonus = 50.0 * max(0, (0.2 - height_error) / 0.2) 
+
+            # stronger velocity penalty (include angular vel for torso stability)
+            lin_vel = obs[22:25] if self.task_type == "standing" else obs[24:27]  
+            ang_vel = obs[25:28] if self.task_type == "standing" else obs[27:30]
+            velocity_penalty = -1.0 * (np.sum(np.abs(lin_vel)) + 0.5 * np.sum(np.abs(ang_vel))) 
             
-            # Small penalties for movement
-            z_velocity = obs[26]  # z-velocity at index 26
-            xy_velocities = obs[24:26]  # x,y velocities
-            velocity_penalty = -0.5 * (abs(z_velocity) + np.sum(np.abs(xy_velocities)))
-            
-            # Tiny control penalty
-            ctrl_penalty = -0.001 * np.sum(np.square(action))
-            
-            total_reward = height_reward + precision_bonus + velocity_penalty + ctrl_penalty
+            ctrl_penalty = -0.1 * np.sum(np.square(action))
+
+            # survival bonus to encourage longer episodes
+            survival_bonus = 10.0 
+
+            total_reward = height_reward + precision_bonus + velocity_penalty + ctrl_penalty + survival_bonus
             return total_reward
-        
-        return base_reward
     
     def _check_task_termination(self, obs, info):
         """Check if episode should terminate based on task"""
         height = obs[2]  # Height at index 2 for regular Humanoid-v5
         
         if self.task_type == "standing":
-            # Only terminate if completely fallen
-            if height < 0.3:
-                return True
-        else:
-            if height < 0.9:
+            if height < 1.0:
                 return True
         
         return False
