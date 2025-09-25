@@ -13,10 +13,7 @@ class HumanoidEnv(gym.Wrapper):
     
     def __init__(self, task_type: str = "walking", render_mode: Optional[str] = None):
         # Use Standup for standing task; regular Humanoid for others
-        if task_type == "standing":
-            env_id = "HumanoidStandup-v5"
-        else:
-            env_id = "Humanoid-v5"
+        env_id = "Humanoid-v5"
         
         env = gym.make(
             env_id, 
@@ -69,42 +66,42 @@ class HumanoidEnv(gym.Wrapper):
     
     def _compute_task_reward(self, obs, base_reward, info, action):
         if self.task_type == "standing":
-            height = obs[0]
+            height = obs[2]  # Height at index 2 in regular Humanoid-v5
             target_height = 1.3
             
-            height_reward = 100.0 * (height / target_height) 
+            # Main height reward (0 to 100 points)
+            height_ratio = min(height / target_height, 1.5)
+            height_reward = 100.0 * height_ratio
             
-            # height target bonus
+            # Bonus for being close to target (0 to 100 points)
             height_error = abs(height - target_height)
-            if height_error < 0.1:
-                height_bonus = 200.0 * (0.1 - height_error) / 0.1
+            if height_error < 0.2:
+                precision_bonus = 100.0 * (0.2 - height_error) / 0.2
             else:
-                height_bonus = 0.0
+                precision_bonus = 0.0
             
-            # Z-velocity penalty (so it doesnt start jumping)
-            z_velocity = obs[24]  # z-velocity
-            z_vel_penalty = -abs(z_velocity) * 5.0
+            # Small penalties for movement
+            z_velocity = obs[26]  # z-velocity at index 26
+            xy_velocities = obs[24:26]  # x,y velocities
+            velocity_penalty = -0.5 * (abs(z_velocity) + np.sum(np.abs(xy_velocities)))
             
-            # XY velocity penalty (stay in place)
-            xy_velocities = obs[22:24]  # x,y velocities
-            xy_penalty = -np.sum(np.abs(xy_velocities)) * 2.0
+            # Tiny control penalty
+            ctrl_penalty = -0.001 * np.sum(np.square(action))
             
-            ctrl_cost = -0.01 * np.sum(np.square(action))
-            
-            return height_reward + height_bonus + z_vel_penalty + xy_penalty + ctrl_cost
+            total_reward = height_reward + precision_bonus + velocity_penalty + ctrl_penalty
+            return total_reward
         
         return base_reward
     
     def _check_task_termination(self, obs, info):
         """Check if episode should terminate based on task"""
+        height = obs[2]  # Height at index 2 for regular Humanoid-v5
+        
         if self.task_type == "standing":
-            height = obs[0]
-            # Only terminate if completely fallen (very lenient)
+            # Only terminate if completely fallen
             if height < 0.3:
                 return True
-            return False
         else:
-            height = obs[2]
             if height < 0.9:
                 return True
         
@@ -112,28 +109,28 @@ class HumanoidEnv(gym.Wrapper):
     
     def _get_task_info(self, obs):
         """Get task-specific information (using raw obs values)"""
-        height_idx = 0 if self.task_type == "standing" else 2
-        x_idx = -1 if self.task_type == "standing" else 0  # No x/y in Standup
-        y_idx = -1 if self.task_type == "standing" else 1
-        vel_start = 22 if self.task_type == "standing" else 24  # Adjust vel indices
+        height_idx = 2  # Height at index 2 in regular Humanoid-v5
+        x_idx = 0       # x position
+        y_idx = 1       # y position
+        vel_start = 24  # Linear velocities start at index 24
         
         info = {
             'task_type': self.task_type,
             'step': self.current_step,
             'height': obs[height_idx],
-            'x_position': obs[x_idx] if x_idx >= 0 else 0.0,
-            'y_position': obs[y_idx] if y_idx >= 0 else 0.0,
+            'x_position': obs[x_idx],
+            'y_position': obs[y_idx],
         }
         
-        # Add velocities
-        info['x_velocity'] = obs[vel_start]
-        info['y_velocity'] = obs[vel_start + 1]
-        info['z_velocity'] = obs[vel_start + 2]
-        
-        if self.task_type == "navigation" and self.target_position is not None:
-            current_pos = obs[0:2]
-            info['distance_to_target'] = np.linalg.norm(current_pos - self.target_position)
-            info['target_position'] = self.target_position.copy()
+        # Add velocities with bounds checking
+        if len(obs) > vel_start + 2:
+            info['x_velocity'] = obs[vel_start]
+            info['y_velocity'] = obs[vel_start + 1]
+            info['z_velocity'] = obs[vel_start + 2]
+        else:
+            info['x_velocity'] = 0.0
+            info['y_velocity'] = 0.0
+            info['z_velocity'] = 0.0
         
         return info
     

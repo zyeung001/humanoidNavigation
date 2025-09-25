@@ -19,57 +19,46 @@ logging:
 standing:
   algorithm: "PPO"
   total_timesteps: 600000
-  learning_rate: 0.0003
-  batch_size: 512
-  n_steps: 2048
-  n_epochs: 10
-  gamma: 0.995
-  gae_lambda: 0.98
-  clip_range: 0.15
-  ent_coef: 0.02
-  vf_coef: 0.8
-  max_grad_norm: 0.5
+  learning_rate: 0.001
+  batch_size: 256
+  n_steps: 1024
+  n_epochs: 20
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 1.0
 
   n_eval_episodes: 5
   target_height: 1.3 
-  use_tensorboard: true
-  
-  env_params:
-    task_type: "standing"
-    max_episode_steps: 1000
   
   policy_kwargs:
     net_arch:
-      pi: [512, 256]
-      vf: [512, 256]
-    activation_fn: "tanh"
+      pi: [256, 256]
+      vf: [256, 256]
+    activation_fn: "relu"
   
   use_wandb: true
-  wandb_project: "humanoid-standing-optimized"
-  wandb_entity: null
-  wandb_tags: ["ppo", "humanoid", "standing", "colab"]
-  wandb_notes: "Optimized standing training with simplified reward"
-  wandb_log_freq: 5000
+  wandb_project: "humanoid-standing-fixed"
+  wandb_log_freq: 2000
+  video_freq: 30000
   
-  # Video logging
-  video_freq: 50000
+  target_reward_threshold: 50.0
+  height_stability_threshold: 0.5
+  height_error_threshold: 0.3
+  
+  normalize: false
+  n_envs: 2
+  
   video_n_episodes: 2
   video_max_steps: 500
-  
-  # Standing thresholds
-  target_reward_threshold: 500.0
-  height_stability_threshold: 0.2
-  height_error_threshold: 0.15
   
   # Paths
   best_model_path: "models/saved_models/best_standing_model.zip"
   checkpoint_dir: "data/checkpoints" 
   checkpoint_prefix: "standing_model"
   vecnormalize_path: "models/saved_models/vecnorm_standing.pkl"
-  
-  # Environment
-  normalize: true
-  n_envs: 4
 
 
 # Model saving
