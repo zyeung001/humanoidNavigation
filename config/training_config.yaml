@@ -53,6 +53,8 @@ standing:
   
   video_n_episodes: 2
   video_max_steps: 500
+
+  episode_print_freq: 1000
   
   # Paths
   best_model_path: "models/saved_models/best_standing_model.zip"

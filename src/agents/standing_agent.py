@@ -175,7 +175,7 @@ class StandingCallback(BaseCallback):
                     # Reset for next episode
                     self._current_episode_heights = []
                 
-                if self.verbose and len(self.episode_rewards) % 10 == 0:
+                if self.verbose and len(self.episode_rewards) % self.episode_print_freq == 0:
                     recent_rewards = self.episode_rewards[-10:]
                     print(f"Episode {len(self.episode_rewards)}: "
                         f"reward={episode_reward:.2f}, "
@@ -289,54 +289,73 @@ class StandingCallback(BaseCallback):
         wandb.log(log_dict, step=self.num_timesteps)
 
     def _record_and_log_video(self):
-        """Fast video recording and logging to WandB"""
         if self.verbose:
             print(f"Recording video at step {self.num_timesteps:,}")
         
         try:
-            # Create a special rendering environment
-            from src.environments.humanoid_env import make_humanoid_env
+            # FIXED: Create environment with proper render mode for headless
             render_env = make_humanoid_env("standing", render_mode="rgb_array")
             
             frames = []
             obs, _ = render_env.reset()
             
-            for step in range(200):  # 200 steps for video
+            # Record longer episodes for better video
+            for step in range(400):
                 action, _ = self.model.predict(obs, deterministic=True)
                 obs, reward, terminated, truncated, info = render_env.step(action)
                 
-                # Get frame
-                frame = render_env.render()
-                if frame is not None:
-                    frames.append(frame)
+                # FIXED: Get frame with error handling
+                try:
+                    frame = render_env.render()
+                    if frame is not None and hasattr(frame, 'shape'):
+                        # Convert to uint8 if needed
+                        if frame.dtype != np.uint8:
+                            frame = (frame * 255).astype(np.uint8) if frame.max() <= 1.0 else frame.astype(np.uint8)
+                        frames.append(frame)
+                except Exception as e:
+                    if step == 0:  # Only print on first frame failure
+                        print(f"Frame capture failed at step {step}: {e}")
+                    break
                 
                 if terminated or truncated:
                     break
             
             render_env.close()
             
-            if frames and WANDB_AVAILABLE and wandb.run:
-                # Quick performance metrics
-                height = info.get('height', 0) if isinstance(info, dict) else 0
-                height_error = abs(height - self.target_height)
-                
-                caption = f"Step {self.num_timesteps//1000}k | Height:{height:.2f} | Error:{height_error:.3f}"
-                
-                # Log video
-                video_array = np.array(frames)
-                wandb.log({
-                    "video/training_progress": wandb.Video(
-                        video_array, 
-                        fps=15,
-                        format="mp4",
-                        caption=caption
-                    )
-                }, step=self.num_timesteps)
-                
-                print(f"Video logged: {len(frames)} frames")
+            # FIXED: Better video logging with validation
+            if len(frames) > 10 and WANDB_AVAILABLE and wandb.run:  # Need at least 10 frames
+                try:
+                    # Performance metrics from last info
+                    height = info.get('height', 0) if isinstance(info, dict) else 0
+                    height_error = abs(height - self.target_height)
+                    
+                    caption = f"Step {self.num_timesteps//1000}k | Height:{height:.2f} | Error:{height_error:.3f}"
+                    
+                    # Convert frames to proper format
+                    video_array = np.array(frames)
+                    
+                    # FIXED: Ensure proper video format
+                    if len(video_array.shape) == 4 and video_array.shape[-1] == 3:  # (frames, height, width, channels)
+                        wandb.log({
+                            "video/training_progress": wandb.Video(
+                                video_array, 
+                                fps=30,  # Increased FPS for smoother video
+                                format="mp4",
+                                caption=caption
+                            )
+                        }, step=self.num_timesteps)
+                        
+                        print(f"Video logged successfully: {len(frames)} frames, shape {video_array.shape}")
+                    else:
+                        print(f"Invalid video array shape: {video_array.shape}")
+                        
+                except Exception as e:
+                    print(f"Video upload failed: {e}")
+            else:
+                print(f"Insufficient frames for video: {len(frames)} frames captured")
             
         except Exception as e:
-            print(f"Video logging failed: {e}")
+            print(f"Video recording failed: {e}")
 
     def _run_evaluation(self):
         """Run evaluation and track best models"""
@@ -464,12 +483,13 @@ class StandingAgent:
         # Standing-specific parameters
         self.target_height = config.get('target_height')
         self.success_threshold = config.get('target_reward_threshold')
+        self.episode_print_freq = config.get('episode_print_freq')
         self.n_envs = config.get('n_envs')
 
 
     # ---------- Env construction ----------
 
-    def _make_single_env(self, seed: int, rank: int, render_mode=None) -> Callable:
+    def _make_single_env(self, seed: int, rank: int, render_mode="rgb_array") -> Callable:
         """Factory that returns a thunk creating one monitored env with seeding."""
         def _init():
             os.environ.setdefault("MUJOCO_GL", "egl")

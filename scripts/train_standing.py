@@ -46,7 +46,7 @@ from src.agents.standing_agent import StandingAgent  # <-- use the parallel VecE
 # ======================================================
 def setup_colab_environment():
     """Quick setup for Colab runtime."""
-    os.environ.setdefault("MUJOCO_GL", "osmesa")
+    os.environ.setdefault("MUJOCO_GL", "egl")
 
     try:
         import gymnasium as gym
