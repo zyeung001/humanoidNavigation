@@ -71,50 +71,46 @@ class HumanoidEnv(gym.Wrapper):
     
     def _compute_task_reward(self, obs, base_reward, info, action):
         if self.task_type == "standing":
-            # DEBUG: Print all observation values to find correct height index
+            # CRITICAL DEBUG: Print first 20 values every 100 steps
             if self.current_step % 100 == 0:
-                print(f"Step {self.current_step}: obs shape = {obs.shape}")
-                print(f"obs[0:10]: {obs[:10]}")  # First 10 values
-                print(f"Looking for height around 0.8-1.5...")
-                
-                # Check multiple indices for reasonable height values
-                for i in range(min(10, len(obs))):
-                    if 0.5 < abs(obs[i]) < 2.0:  # Reasonable height range
-                        print(f"Candidate height at obs[{i}]: {obs[i]:.3f}")
+                print(f"\n=== STEP {self.current_step} DEBUG ===")
+                print(f"obs.shape: {obs.shape}")
+                print(f"First 20 values:")
+                for i in range(min(20, len(obs))):
+                    print(f"  obs[{i:2d}]: {obs[i]:8.4f}")
+                print("Looking for height values (should be ~0.8-1.5)...")
             
-            # TEMPORARY: Try different indices until we find the right one
-            # Test common height indices
-            height_candidates = [0, 1, 2]  # Common positions for height
-            height = obs[0]  # Start with index 0, but we'll debug this
+            # Don't use abs() - we need to see negative values
+            height_candidates = [0, 1, 2, 3, 4, 5]  # Check more indices
+            height = obs[0]  # Default
+            selected_idx = 0
             
-            # Find the index with values in reasonable height range
+            # Find reasonable height without abs()
             for idx in height_candidates:
-                if idx < len(obs) and 0.5 <= abs(obs[idx]) <= 2.0:
-                    height = abs(obs[idx])  # Use absolute value for now
-                    if self.current_step % 100 == 0:
-                        print(f"Using height from obs[{idx}]: {height:.3f}")
+                if idx < len(obs) and 0.7 <= obs[idx] <= 2.0:  # Positive values only
+                    height = obs[idx]
+                    selected_idx = idx
                     break
             
+            if self.current_step % 100 == 0:
+                print(f"Selected height from obs[{selected_idx}]: {height:.4f}")
+            
             target_height = 1.3
-
+            
+            # Rest of reward calculation...
             height_ratio = min(height / target_height, 1.0)  
             height_reward = 50.0 * height_ratio  
             
-            height_error = abs(height - target_height)
-            precision_bonus = 50.0 * max(0, (0.2 - height_error) / 0.2) 
-            
-            # Use safer velocity indices
-            vel_start = max(0, len(obs) - 10)  # Last 10 elements often contain velocities
-            lin_vel = obs[vel_start:vel_start+3] if len(obs) > vel_start + 2 else [0, 0, 0]
-            velocity_penalty = -1.0 * np.sum(np.abs(lin_vel))
-            
+            # Simplified reward for debugging
+            velocity_penalty = -1.0 * np.sum(np.abs(obs[-10:-7])) if len(obs) > 10 else 0
             ctrl_penalty = -0.1 * np.sum(np.square(action))
             survival_bonus = 10.0 
 
-            total_reward = height_reward + precision_bonus + velocity_penalty + ctrl_penalty + survival_bonus
+            total_reward = height_reward + velocity_penalty + ctrl_penalty + survival_bonus
             
             if self.current_step % 100 == 0:
-                print(f"Height: {height:.3f}, Height_reward: {height_reward:.2f}, Total: {total_reward:.2f}")
+                print(f"Rewards: height={height_reward:.2f}, vel={velocity_penalty:.2f}, ctrl={ctrl_penalty:.2f}, total={total_reward:.2f}")
+                print("=== END DEBUG ===\n")
             
             return total_reward
         
