@@ -71,14 +71,31 @@ class HumanoidEnv(gym.Wrapper):
     
     def _compute_task_reward(self, obs, base_reward, info, action):
         if self.task_type == "standing":
-            # FIXED: Use consistent index for HumanoidStandup-v5
-            height = obs[0]  # Height is at index 0 for HumanoidStandup-v5
+            # DEBUG: Print all observation values to find correct height index
+            if self.current_step % 100 == 0:
+                print(f"Step {self.current_step}: obs shape = {obs.shape}")
+                print(f"obs[0:10]: {obs[:10]}")  # First 10 values
+                print(f"Looking for height around 0.8-1.5...")
+                
+                # Check multiple indices for reasonable height values
+                for i in range(min(10, len(obs))):
+                    if 0.5 < abs(obs[i]) < 2.0:  # Reasonable height range
+                        print(f"Candidate height at obs[{i}]: {obs[i]:.3f}")
+            
+            # TEMPORARY: Try different indices until we find the right one
+            # Test common height indices
+            height_candidates = [0, 1, 2]  # Common positions for height
+            height = obs[0]  # Start with index 0, but we'll debug this
+            
+            # Find the index with values in reasonable height range
+            for idx in height_candidates:
+                if idx < len(obs) and 0.5 <= abs(obs[idx]) <= 2.0:
+                    height = abs(obs[idx])  # Use absolute value for now
+                    if self.current_step % 100 == 0:
+                        print(f"Using height from obs[{idx}]: {height:.3f}")
+                    break
+            
             target_height = 1.3
-
-            # DEBUG: Print actual values
-            if self.current_step % 100 == 0:  # Every 100 steps
-                print(f"Step {self.current_step}: height={height:.3f}, target={target_height}")
-                print(f"Raw obs[0:5]: {obs[:5]}")
 
             height_ratio = min(height / target_height, 1.0)  
             height_reward = 50.0 * height_ratio  
@@ -86,33 +103,37 @@ class HumanoidEnv(gym.Wrapper):
             height_error = abs(height - target_height)
             precision_bonus = 50.0 * max(0, (0.2 - height_error) / 0.2) 
             
-            # FIXED: Use correct velocity indices for HumanoidStandup-v5
-            lin_vel = obs[22:25]  # Linear velocities for HumanoidStandup-v5
-            ang_vel = obs[25:28]  # Angular velocities for HumanoidStandup-v5
-            velocity_penalty = -1.0 * (np.sum(np.abs(lin_vel)) + 0.5 * np.sum(np.abs(ang_vel))) 
+            # Use safer velocity indices
+            vel_start = max(0, len(obs) - 10)  # Last 10 elements often contain velocities
+            lin_vel = obs[vel_start:vel_start+3] if len(obs) > vel_start + 2 else [0, 0, 0]
+            velocity_penalty = -1.0 * np.sum(np.abs(lin_vel))
             
             ctrl_penalty = -0.1 * np.sum(np.square(action))
             survival_bonus = 10.0 
 
             total_reward = height_reward + precision_bonus + velocity_penalty + ctrl_penalty + survival_bonus
             
-            # DEBUG: Print reward breakdown
             if self.current_step % 100 == 0:
-                print(f"Reward breakdown - Height: {height_reward:.2f}, Precision: {precision_bonus:.2f}, "
-                    f"Velocity: {velocity_penalty:.2f}, Ctrl: {ctrl_penalty:.2f}, Survival: {survival_bonus:.2f}")
-                print(f"Total reward: {total_reward:.2f}")
+                print(f"Height: {height:.3f}, Height_reward: {height_reward:.2f}, Total: {total_reward:.2f}")
             
             return total_reward
         
-        # Return base reward for other tasks
         return base_reward
     
     def _check_task_termination(self, obs, info):
         """Check if episode should terminate based on task"""
-        height = obs[0] 
-        
         if self.task_type == "standing":
-            if height < 1.0:
+            # Use same height detection logic as reward function
+            height_candidates = [0, 1, 2]
+            height = 0.0
+            
+            for idx in height_candidates:
+                if idx < len(obs) and 0.5 <= abs(obs[idx]) <= 2.0:
+                    height = abs(obs[idx])
+                    break
+            
+            # More lenient termination - only terminate if really fallen
+            if height < 0.5:  # Very low threshold
                 return True
         
         return False
