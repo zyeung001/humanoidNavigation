@@ -118,6 +118,7 @@ class StandingCallback(BaseCallback):
             self.wandb_run = wandb_run
             self.target_height = config.get('target_height')
             self.success_threshold = config.get('target_reward_threshold')
+            self.episode_print_freq = config.get('episode_print_freq',1000)
             
             # Initialize tracking variables
             self.best_mean_reward = -np.inf
@@ -483,7 +484,6 @@ class StandingAgent:
         # Standing-specific parameters
         self.target_height = config.get('target_height')
         self.success_threshold = config.get('target_reward_threshold')
-        self.episode_print_freq = config.get('episode_print_freq',1000)
         self.n_envs = config.get('n_envs')
 
 
