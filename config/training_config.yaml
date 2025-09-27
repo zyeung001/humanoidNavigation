@@ -5,8 +5,8 @@ general:
   seed: 42
   device: "auto" 
   verbose: 1
-  save_freq: 100000
-  eval_freq: 100000 
+  save_freq: 50000
+  eval_freq: 50000
   eval_episodes: 10   # More for better averages
 
 # Logging
@@ -42,7 +42,7 @@ standing:
   use_wandb: true
   wandb_project: "humanoid-standing-fixed"
   wandb_log_freq: 2000
-  video_freq: 30000
+  video_freq: 100000
   
   target_reward_threshold: 50.0
   height_stability_threshold: 0.5

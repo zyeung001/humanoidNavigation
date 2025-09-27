@@ -15,8 +15,10 @@ class HumanoidEnv(gym.Wrapper):
         # Use Standup for standing task; regular Humanoid for others
         if task_type == "standing":
             env_id = "HumanoidStandup-v5"
+            print(f"Using HumanoidStandup-v5 for standing task")
         else:
             env_id = "Humanoid-v5"
+            print(f"Creating Humanoid-v5 for {task_type} task")
         
         env = gym.make(
             env_id, 
@@ -69,34 +71,45 @@ class HumanoidEnv(gym.Wrapper):
     
     def _compute_task_reward(self, obs, base_reward, info, action):
         if self.task_type == "standing":
-            height_idx = 0 if self.task_type == "standing" else 2  
-            height = obs[height_idx]
+            # FIXED: Use consistent index for HumanoidStandup-v5
+            height = obs[0]  # Height is at index 0 for HumanoidStandup-v5
             target_height = 1.3
 
-            # height reward (scaled down to balance penalties)
+            # DEBUG: Print actual values
+            if self.current_step % 100 == 0:  # Every 100 steps
+                print(f"Step {self.current_step}: height={height:.3f}, target={target_height}")
+                print(f"Raw obs[0:5]: {obs[:5]}")
+
             height_ratio = min(height / target_height, 1.0)  
             height_reward = 50.0 * height_ratio  
-
-            # Precision bonus
+            
             height_error = abs(height - target_height)
             precision_bonus = 50.0 * max(0, (0.2 - height_error) / 0.2) 
-
-            # stronger velocity penalty (include angular vel for torso stability)
-            lin_vel = obs[22:25] if self.task_type == "standing" else obs[24:27]  
-            ang_vel = obs[25:28] if self.task_type == "standing" else obs[27:30]
+            
+            # FIXED: Use correct velocity indices for HumanoidStandup-v5
+            lin_vel = obs[22:25]  # Linear velocities for HumanoidStandup-v5
+            ang_vel = obs[25:28]  # Angular velocities for HumanoidStandup-v5
             velocity_penalty = -1.0 * (np.sum(np.abs(lin_vel)) + 0.5 * np.sum(np.abs(ang_vel))) 
             
             ctrl_penalty = -0.1 * np.sum(np.square(action))
-
-            # survival bonus to encourage longer episodes
             survival_bonus = 10.0 
 
             total_reward = height_reward + precision_bonus + velocity_penalty + ctrl_penalty + survival_bonus
+            
+            # DEBUG: Print reward breakdown
+            if self.current_step % 100 == 0:
+                print(f"Reward breakdown - Height: {height_reward:.2f}, Precision: {precision_bonus:.2f}, "
+                    f"Velocity: {velocity_penalty:.2f}, Ctrl: {ctrl_penalty:.2f}, Survival: {survival_bonus:.2f}")
+                print(f"Total reward: {total_reward:.2f}")
+            
             return total_reward
+        
+        # Return base reward for other tasks
+        return base_reward
     
     def _check_task_termination(self, obs, info):
         """Check if episode should terminate based on task"""
-        height = obs[2]  # Height at index 2 for regular Humanoid-v5
+        height = obs[0] 
         
         if self.task_type == "standing":
             if height < 1.0:
@@ -106,31 +119,55 @@ class HumanoidEnv(gym.Wrapper):
     
     def _get_task_info(self, obs):
         """Get task-specific information (using raw obs values)"""
-        height_idx = 2  # Height at index 2 in regular Humanoid-v5
-        x_idx = 0       # x position
-        y_idx = 1       # y position
-        vel_start = 24  # Linear velocities start at index 24
-        
-        info = {
-            'task_type': self.task_type,
-            'step': self.current_step,
-            'height': obs[height_idx],
-            'x_position': obs[x_idx],
-            'y_position': obs[y_idx],
-        }
-        
-        # Add velocities with bounds checking
-        if len(obs) > vel_start + 2:
-            info['x_velocity'] = obs[vel_start]
-            info['y_velocity'] = obs[vel_start + 1]
-            info['z_velocity'] = obs[vel_start + 2]
+        if self.task_type == "standing":
+            # FIXED: Correct indices for HumanoidStandup-v5
+            height_idx = 0       # Height at index 0 for HumanoidStandup-v5
+            vel_start = 22       # Linear velocities start at index 22
+            
+            info = {
+                'task_type': self.task_type,
+                'step': self.current_step,
+                'height': obs[height_idx],
+                'x_position': 0.0,   # Not available in HumanoidStandup-v5
+                'y_position': 0.0,   # Not available in HumanoidStandup-v5
+            }
+            
+            # Add velocities with bounds checking
+            if len(obs) > vel_start + 2:
+                info['x_velocity'] = obs[vel_start]
+                info['y_velocity'] = obs[vel_start + 1]
+                info['z_velocity'] = obs[vel_start + 2]
+            else:
+                info['x_velocity'] = 0.0
+                info['y_velocity'] = 0.0
+                info['z_velocity'] = 0.0
+                
         else:
-            info['x_velocity'] = 0.0
-            info['y_velocity'] = 0.0
-            info['z_velocity'] = 0.0
-        
+            # For regular Humanoid-v5
+            height_idx = 2
+            x_idx = 0
+            y_idx = 1
+            vel_start = 24
+            
+            info = {
+                'task_type': self.task_type,
+                'step': self.current_step,
+                'height': obs[height_idx],
+                'x_position': obs[x_idx],
+                'y_position': obs[y_idx],
+            }
+            
+            if len(obs) > vel_start + 2:
+                info['x_velocity'] = obs[vel_start]
+                info['y_velocity'] = obs[vel_start + 1]
+                info['z_velocity'] = obs[vel_start + 2]
+            else:
+                info['x_velocity'] = 0.0
+                info['y_velocity'] = 0.0
+                info['z_velocity'] = 0.0
+            
         return info
-    
+        
     def _set_random_target(self):
         """Set random target for navigation"""
         self.target_position = np.random.uniform(low=[-3, -3], high=[3, 3])
