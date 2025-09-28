@@ -3,6 +3,8 @@ Standing agent for humanoid using PPO
 Parallel VecEnvs + VecNormalize, Colab-friendly with WandB logging
 Optimized for stability and balance tasks
 FIXED: Gym API compatibility issues
+
+standing_agent.py
 """
 
 import os
@@ -182,12 +184,6 @@ class StandingCallback(BaseCallback):
                         f"reward={episode_reward:.2f}, "
                         f"recent_avg={np.mean(recent_rewards):.2f}")
             
-            # Collect height data during episode
-            if "height" in info:
-                if not hasattr(self, '_current_episode_heights'):
-                    self._current_episode_heights = []
-                self._current_episode_heights.append(info["height"])
-                self.height_data.append(info["height"])
 
     def _save_checkpoint(self):
         """Save model checkpoint"""

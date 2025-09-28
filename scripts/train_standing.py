@@ -1,6 +1,8 @@
 """
 Humanoid standing PPO training with parallel VecEnvs and reward shaping
 Colab-optimised for headless MuJoCo + T4 GPU with WandB logging
+
+train_standing.py
 """
 
 # ======================================================

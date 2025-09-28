@@ -1,6 +1,8 @@
 """
 Fixed Humanoid environment wrapper for MuJoCo Humanoid-v5 and Standup-v5
 Improved reward structure for better learning of walking, standing, and navigation tasks
+
+humanoid_env.py
 """
 
 import gymnasium as gym
@@ -71,29 +73,14 @@ class HumanoidEnv(gym.Wrapper):
     
     def _compute_task_reward(self, obs, base_reward, info, action):
         if self.task_type == "standing":
-            # CRITICAL DEBUG: Print first 20 values every 100 steps
+            # For HumanoidStandup-v5, obs[0] is z-coordinate relative to initial position
+            # The humanoid starts at about 1.0m height, so we add this base height
+            height_z = obs[0]  # This is z-coordinate relative to initial position
+            base_height = 1.0  # Approximate standing height for humanoid
+            height = base_height + height_z  # Actual height above ground
+
             if self.current_step % 100 == 0:
-                print(f"\n=== STEP {self.current_step} DEBUG ===")
-                print(f"obs.shape: {obs.shape}")
-                print(f"First 20 values:")
-                for i in range(min(20, len(obs))):
-                    print(f"  obs[{i:2d}]: {obs[i]:8.4f}")
-                print("Looking for height values (should be ~0.8-1.5)...")
-            
-            # Don't use abs() - we need to see negative values
-            height_candidates = [0, 1, 2, 3, 4, 5]  # Check more indices
-            height = obs[0]  # Default
-            selected_idx = 0
-            
-            # Find reasonable height without abs()
-            for idx in height_candidates:
-                if idx < len(obs) and 0.7 <= obs[idx] <= 2.0:  # Positive values only
-                    height = obs[idx]
-                    selected_idx = idx
-                    break
-            
-            if self.current_step % 100 == 0:
-                print(f"Selected height from obs[{selected_idx}]: {height:.4f}")
+                print(f"Height: obs[0]={height_z:.4f}, total_height={height:.4f}")
             
             target_height = 1.3
             
@@ -110,7 +97,6 @@ class HumanoidEnv(gym.Wrapper):
             
             if self.current_step % 100 == 0:
                 print(f"Rewards: height={height_reward:.2f}, vel={velocity_penalty:.2f}, ctrl={ctrl_penalty:.2f}, total={total_reward:.2f}")
-                print("=== END DEBUG ===\n")
             
             return total_reward
         
@@ -119,17 +105,15 @@ class HumanoidEnv(gym.Wrapper):
     def _check_task_termination(self, obs, info):
         """Check if episode should terminate based on task"""
         if self.task_type == "standing":
-            # Use same height detection logic as reward function
-            height_candidates = [0, 1, 2]
-            height = 0.0
+            height_z = obs[0]
+            base_height = 1.0
+            height = base_height + height_z
             
-            for idx in height_candidates:
-                if idx < len(obs) and 0.5 <= abs(obs[idx]) <= 2.0:
-                    height = abs(obs[idx])
-                    break
-            
-            # More lenient termination - only terminate if really fallen
-            if height < 0.5:  # Very low threshold
+            # Only terminate if humanoid has fallen significantly
+            # Normal standing height is ~1.3m, so terminate if below 0.3m
+            if height < 0.3:
+                if self.current_step % 100 == 0:
+                    print(f"Episode terminated: height={height:.3f} < 0.3")
                 return True
         
         return False
@@ -144,7 +128,7 @@ class HumanoidEnv(gym.Wrapper):
             info = {
                 'task_type': self.task_type,
                 'step': self.current_step,
-                'height': obs[height_idx],
+                'height': 1.0 + obs[height_idx],
                 'x_position': 0.0,   # Not available in HumanoidStandup-v5
                 'y_position': 0.0,   # Not available in HumanoidStandup-v5
             }

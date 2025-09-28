@@ -1,15 +1,18 @@
-# src/utils/visualization.py
+"""
+Visualization utilities for humanoid training
+"""
+import os
+import numpy as np
 
 def setup_display():
-    import os
+    """Setup headless display for Colab/server environments"""
     os.environ.setdefault("MUJOCO_GL", "egl")
     print(f"[visualization] MUJOCO_GL={os.environ['MUJOCO_GL']}")
     return True
 
 def test_environment(env) -> bool:
+    """Test if environment can render properly"""
     try:
-        import numpy as np
-
         # Reset and render one frame
         obs, info = env.reset()
         frame = env.render()
