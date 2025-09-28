@@ -73,30 +73,45 @@ class HumanoidEnv(gym.Wrapper):
     
     def _compute_task_reward(self, obs, base_reward, info, action):
         if self.task_type == "standing":
-            # For HumanoidStandup-v5, obs[0] is z-coordinate relative to initial position
-            # The humanoid starts at about 1.0m height, so we add this base height
-            height_z = obs[0]  # This is z-coordinate relative to initial position
-            base_height = 1.0  # Approximate standing height for humanoid
-            height = base_height + height_z  # Actual height above ground
-
-            if self.current_step % 100 == 0:
-                print(f"Height: obs[0]={height_z:.4f}, total_height={height:.4f}")
-            
+            # For HumanoidStandup-v5, obs[0] is the z-coordinate
+            # The initial spawn height is around 1.05m, obs[0] starts near 0
+            height = 1.05 + obs[0]  # More accurate base height
             target_height = 1.3
             
-            # Rest of reward calculation...
-            height_ratio = min(height / target_height, 1.0)  
-            height_reward = 50.0 * height_ratio  
+            # Height reward (main component)
+            height_error = abs(height - target_height)
+            if height_error < 0.1:
+                height_reward = 50.0
+            else:
+                height_reward = max(0, 50.0 * (1.0 - height_error / 0.5))
             
-            # Simplified reward for debugging
-            velocity_penalty = -1.0 * np.sum(np.abs(obs[-10:-7])) if len(obs) > 10 else 0
-            ctrl_penalty = -0.1 * np.sum(np.square(action))
-            survival_bonus = 10.0 
-
-            total_reward = height_reward + velocity_penalty + ctrl_penalty + survival_bonus
+            # Stability rewards (keep the humanoid stable)
+            # Use center-of-mass velocities (indices 22-24 for HumanoidStandup-v5)
+            if len(obs) >= 25:
+                linear_vel = obs[22:25]  # x, y, z velocities
+                velocity_penalty = -0.1 * np.sum(np.square(linear_vel))
+            else:
+                velocity_penalty = 0
             
-            if self.current_step % 100 == 0:
-                print(f"Rewards: height={height_reward:.2f}, vel={velocity_penalty:.2f}, ctrl={ctrl_penalty:.2f}, total={total_reward:.2f}")
+            # Control effort
+            ctrl_penalty = -0.01 * np.sum(np.square(action))
+            
+            # Survival bonus
+            survival_bonus = 5.0
+            
+            # Uprightness reward (quaternion w-component at index 1)
+            if len(obs) > 1:
+                quat_w = abs(obs[1])  # w-component of root quaternion
+                upright_bonus = 5.0 * quat_w  # Reward being upright
+            else:
+                upright_bonus = 0
+            
+            total_reward = height_reward + velocity_penalty + ctrl_penalty + survival_bonus + upright_bonus
+            
+            # Debug less frequently
+            if self.current_step % 200 == 0:
+                print(f"Step {self.current_step}: height={height:.3f} (target={target_height}), "
+                    f"reward={total_reward:.2f} (h={height_reward:.1f}, v={velocity_penalty:.1f})")
             
             return total_reward
         
@@ -105,16 +120,17 @@ class HumanoidEnv(gym.Wrapper):
     def _check_task_termination(self, obs, info):
         """Check if episode should terminate based on task"""
         if self.task_type == "standing":
-            height_z = obs[0]
-            base_height = 1.0
-            height = base_height + height_z
+            height = 1.05 + obs[0]
             
-            # Only terminate if humanoid has fallen significantly
-            # Normal standing height is ~1.3m, so terminate if below 0.3m
-            if height < 0.3:
-                if self.current_step % 100 == 0:
-                    print(f"Episode terminated: height={height:.3f} < 0.3")
+            # Only terminate if completely fallen (very low threshold)
+            if height < 0.2:  # Much lower threshold
                 return True
+            
+            # Also check if humanoid is completely upside down
+            if len(obs) > 1:
+                quat_w = abs(obs[1])  # w-component of quaternion
+                if quat_w < 0.1:  # Completely inverted
+                    return True
         
         return False
     
@@ -128,7 +144,7 @@ class HumanoidEnv(gym.Wrapper):
             info = {
                 'task_type': self.task_type,
                 'step': self.current_step,
-                'height': 1.0 + obs[height_idx],
+                'height': 1.05 + obs[height_idx],
                 'x_position': 0.0,   # Not available in HumanoidStandup-v5
                 'y_position': 0.0,   # Not available in HumanoidStandup-v5
             }
