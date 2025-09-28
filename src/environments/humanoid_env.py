@@ -15,12 +15,8 @@ class HumanoidEnv(gym.Wrapper):
     
     def __init__(self, task_type: str = "walking", render_mode: Optional[str] = None):
         # Use Standup for standing task; regular Humanoid for others
-        if task_type == "standing":
-            env_id = "HumanoidStandup-v5"
-            print(f"Using HumanoidStandup-v5 for standing task")
-        else:
-            env_id = "Humanoid-v5"
-            print(f"Creating Humanoid-v5 for {task_type} task")
+        env_id = "Humanoid-v5"
+        print(f"Creating Humanoid-v5 for {task_type} task")
         
         env = gym.make(
             env_id, 
