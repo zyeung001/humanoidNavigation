@@ -14,14 +14,15 @@ class HumanoidEnv(gym.Wrapper):
     """Fixed wrapper for MuJoCo Humanoid environment with improved reward design"""
     
     def __init__(self, task_type: str = "walking", render_mode: Optional[str] = None):
-        # Use Standup for standing task; regular Humanoid for others
+
         env_id = "Humanoid-v5"
-        print(f"Creating Humanoid-v5 for {task_type} task")
+
+        print(f"Using {env_id} for {task_type} task")
         
         env = gym.make(
             env_id, 
             render_mode=render_mode,
-            exclude_current_positions_from_observation=False  # Include x,y for consistency in non-standup
+            exclude_current_positions_from_observation=True  # Default for Humanoid-v5; excludes x/y
         )
         super().__init__(env)
         self.task_type = task_type
@@ -31,7 +32,7 @@ class HumanoidEnv(gym.Wrapper):
         self.max_episode_steps = 1000  # Matches Standup default for fair comparison
         self.current_step = 0
         
-        # Verify observation space (348 for Standup, 378 for Humanoid with x/y)
+        # Verify observation space (should be 376 for Humanoid-v5)
         obs_space = env.observation_space
         print(f"Observation space shape for {task_type}: {obs_space.shape}")
     
@@ -44,7 +45,7 @@ class HumanoidEnv(gym.Wrapper):
             
         # For standing reward tracking
         if self.task_type == "standing":
-            self.prev_height = observation[0]  # Initial height for upward vel
+            self.prev_height = self.env.data.qpos[2]  # Initial height for upward vel
         
         return observation, info
     
@@ -55,7 +56,7 @@ class HumanoidEnv(gym.Wrapper):
         # Modify reward based on task (pass action for ctrl_cost)
         reward = self._compute_task_reward(observation, base_reward, info, action)
         
-        # Check task-specific termination (lenient for standing)
+        # Check task-specific termination (removed for standing to allow longer episodes)
         task_terminated = self._check_task_termination(observation, info)
         terminated = terminated or task_terminated
         
@@ -69,45 +70,40 @@ class HumanoidEnv(gym.Wrapper):
     
     def _compute_task_reward(self, obs, base_reward, info, action):
         if self.task_type == "standing":
-            # For HumanoidStandup-v5, obs[0] is the z-coordinate
-            # The initial spawn height is around 1.05m, obs[0] starts near 0
-            height = 1.05 + obs[0]  # More accurate base height
+            # Use direct mjData access for accuracy (z-pos at qpos[2])
+            height = self.env.data.qpos[2]
             target_height = 1.3
             
-            # Height reward (main component)
+            # Height reward (main component, increased scale for stronger signal)
             height_error = abs(height - target_height)
             if height_error < 0.1:
-                height_reward = 50.0
+                height_reward = 60.0  # Increased max
             else:
-                height_reward = max(0, 50.0 * (1.0 - height_error / 0.5))
+                height_reward = max(0, 60.0 * (1.0 - height_error / 0.4))  # Taper over 0.4 error
             
             # Stability rewards (keep the humanoid stable)
-            # Use center-of-mass velocities (indices 22-24 for HumanoidStandup-v5)
-            if len(obs) >= 25:
-                linear_vel = obs[22:25]  # x, y, z velocities
-                velocity_penalty = -0.1 * np.sum(np.square(linear_vel))
-            else:
-                velocity_penalty = 0
+            linear_vel = self.env.data.qvel[0:3]  # Root linear velocities (x, y, z)
+            velocity_penalty = -0.1 * np.sum(np.square(linear_vel))
             
             # Control effort
             ctrl_penalty = -0.01 * np.sum(np.square(action))
             
-            # Survival bonus
-            survival_bonus = 5.0
+            # Survival bonus (increased to encourage longer episodes)
+            survival_bonus = 10.0
             
-            # Uprightness reward (quaternion w-component at index 1)
-            if len(obs) > 1:
-                quat_w = abs(obs[1])  # w-component of root quaternion
-                upright_bonus = 5.0 * quat_w  # Reward being upright
-            else:
-                upright_bonus = 0
+            # Uprightness reward (quaternion w-component at qpos[3])
+            quat_w = abs(self.env.data.qpos[3])
+            upright_bonus = 10.0 * quat_w  # Increased
             
-            total_reward = height_reward + velocity_penalty + ctrl_penalty + survival_bonus + upright_bonus
+            # Small bonus for upward velocity (encourage standing taller)
+            upward_vel_bonus = 2.0 * max(0, self.env.data.qvel[2])  # z-velocity positive
+            
+            total_reward = height_reward + velocity_penalty + ctrl_penalty + survival_bonus + upright_bonus + upward_vel_bonus
             
             # Debug less frequently
             if self.current_step % 200 == 0:
                 print(f"Step {self.current_step}: height={height:.3f} (target={target_height}), "
-                    f"reward={total_reward:.2f} (h={height_reward:.1f}, v={velocity_penalty:.1f})")
+                      f"reward={total_reward:.2f} (h={height_reward:.1f}, v={velocity_penalty:.1f})")
             
             return total_reward
         
@@ -116,69 +112,25 @@ class HumanoidEnv(gym.Wrapper):
     def _check_task_termination(self, obs, info):
         """Check if episode should terminate based on task"""
         if self.task_type == "standing":
-            height = 1.05 + obs[0]
-            
-            # Only terminate if completely fallen (very low threshold)
-            if height < 0.2:  # Much lower threshold
-                return True
-            
-            # Also check if humanoid is completely upside down
-            if len(obs) > 1:
-                quat_w = abs(obs[1])  # w-component of quaternion
-                if quat_w < 0.1:  # Completely inverted
-                    return True
+            # Removed custom termination for standing - rely on env's (height <1.0)
+            # This allows longer episodes to learn balance
+            return False
         
-        return False
+        return False  # For other tasks, add if needed
     
     def _get_task_info(self, obs):
-        """Get task-specific information (using raw obs values)"""
-        if self.task_type == "standing":
-            # FIXED: Correct indices for HumanoidStandup-v5
-            height_idx = 0       # Height at index 0 for HumanoidStandup-v5
-            vel_start = 22       # Linear velocities start at index 22
-            
-            info = {
-                'task_type': self.task_type,
-                'step': self.current_step,
-                'height': 1.05 + obs[height_idx],
-                'x_position': 0.0,   # Not available in HumanoidStandup-v5
-                'y_position': 0.0,   # Not available in HumanoidStandup-v5
-            }
-            
-            # Add velocities with bounds checking
-            if len(obs) > vel_start + 2:
-                info['x_velocity'] = obs[vel_start]
-                info['y_velocity'] = obs[vel_start + 1]
-                info['z_velocity'] = obs[vel_start + 2]
-            else:
-                info['x_velocity'] = 0.0
-                info['y_velocity'] = 0.0
-                info['z_velocity'] = 0.0
-                
-        else:
-            # For regular Humanoid-v5
-            height_idx = 2
-            x_idx = 0
-            y_idx = 1
-            vel_start = 24
-            
-            info = {
-                'task_type': self.task_type,
-                'step': self.current_step,
-                'height': obs[height_idx],
-                'x_position': obs[x_idx],
-                'y_position': obs[y_idx],
-            }
-            
-            if len(obs) > vel_start + 2:
-                info['x_velocity'] = obs[vel_start]
-                info['y_velocity'] = obs[vel_start + 1]
-                info['z_velocity'] = obs[vel_start + 2]
-            else:
-                info['x_velocity'] = 0.0
-                info['y_velocity'] = 0.0
-                info['z_velocity'] = 0.0
-            
+        """Get task-specific information using mjData"""
+        height = self.env.data.qpos[2]
+        info = {
+            'task_type': self.task_type,
+            'step': self.current_step,
+            'height': height,
+            'x_position': self.env.data.qpos[0],
+            'y_position': self.env.data.qpos[1],
+            'x_velocity': self.env.data.qvel[0],
+            'y_velocity': self.env.data.qvel[1],
+            'z_velocity': self.env.data.qvel[2],
+        }
         return info
         
     def _set_random_target(self):
@@ -190,15 +142,9 @@ class HumanoidEnv(gym.Wrapper):
         obs, _ = self.env.reset()
         print("\nObservation Analysis:")
         print(f"Total observation size: {len(obs)}")
-        height_idx = 0 if self.task_type == "standing" else 2
-        quat_start = 1 if self.task_type == "standing" else 3
-        vel_start = 22 if self.task_type == "standing" else 24
-        ang_start = 25 if self.task_type == "standing" else 27
-        print(f"obs[{height_idx}] (z/height pos): {obs[height_idx]}")
-        print(f"obs[{quat_start}:{quat_start+4}] (root quaternion w,x,y,z): {obs[quat_start:quat_start+4]}")
-        print(f"obs[{vel_start}:{vel_start+3}] (linear vel x,y,z): {obs[vel_start:vel_start+3]}")
-        print(f"obs[{ang_start}:{ang_start+3}] (angular vel x,y,z): {obs[ang_start:ang_start+3]}")
-        print("...")
+        print(f"Actual height (qpos[2]): {self.env.data.qpos[2]}")
+        print(f"Root quaternion w (qpos[3]): {self.env.data.qpos[3]}")
+        print(f"Linear vel x,y,z (qvel[0:3]): {self.env.data.qvel[0:3]}")
         return obs
 
 

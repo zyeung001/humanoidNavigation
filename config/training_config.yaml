@@ -26,8 +26,8 @@ standing:
   n_epochs: 6
   gamma: 0.995
   gae_lambda: 0.98
-  clip_range: 0.1
-  ent_coef: 0.01
+  clip_range: 0.2
+  ent_coef: 0.005
   vf_coef: 0.8
   max_grad_norm: 0.3
 
@@ -39,6 +39,7 @@ standing:
       pi: [512, 256, 128]
       vf: [512, 256, 128]
     activation_fn: "tanh"
+    log_std_init: -1.5
   
   use_wandb: true
   wandb_project: "humanoid-standing-fixed"
@@ -47,10 +48,10 @@ standing:
   
   target_reward_threshold: 45.0
   height_stability_threshold: 0.2
-  height_error_threshold: 0.2
+  height_error_threshold: 0.1
   
   normalize: true
-  n_envs: 8
+  n_envs: 16
   
   video_n_episodes: 2
   video_max_steps: 500

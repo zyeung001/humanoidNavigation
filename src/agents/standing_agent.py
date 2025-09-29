@@ -536,26 +536,23 @@ class StandingAgent:
 
         # Standing-optimized parameters
         model_params = {
-            "learning_rate": self.config.get("learning_rate", 5e-5),
-            "n_steps": self.config.get("n_steps", 2048),
-            "batch_size": self.config.get("batch_size", 128),
-            "n_epochs": self.config.get("n_epochs", 6),
-            "gamma": self.config.get("gamma", 0.995),
-            "gae_lambda": self.config.get("gae_lambda", 0.98),
-            "clip_range": self.config.get("clip_range", 0.1),
-            "ent_coef": self.config.get("ent_coef", 0.01),
-            "vf_coef": self.config.get("vf_coef", 0.8),
-            "max_grad_norm": self.config.get("max_grad_norm", 0.3),
-            "verbose": self.config.get("verbose", 1),
-            "seed": self.config.get("seed", 42),
-            "device": self.config.get("device", "cuda"),
+            "learning_rate": self.config.get("learning_rate"),
+            "n_steps": self.config.get("n_steps"),
+            "batch_size": self.config.get("batch_size"),
+            "n_epochs": self.config.get("n_epochs"),
+            "gamma": self.config.get("gamma"),
+            "gae_lambda": self.config.get("gae_lambda"),
+            "clip_range": self.config.get("clip_range"),
+            "ent_coef": self.config.get("ent_coef"),
+            "vf_coef": self.config.get("vf_coef"),
+            "max_grad_norm": self.config.get("max_grad_norm"),
+            "verbose": self.config.get("verbose"),
+            "seed": self.config.get("seed"),
+            "device": self.config.get("device"),
         }
 
         # Standing-optimized architecture (deeper for fine control)
-        policy_kwargs = self.config.get("policy_kwargs", {
-            "net_arch": {"pi": [512, 256, 128], "vf": [512, 256, 128]},
-            "activation_fn": "tanh"  # Better for control tasks
-        })
+        policy_kwargs = self.config.get("policy_kwargs")
 
         # Optional: map string activation names to torch.nn modules
         import torch.nn as nn
