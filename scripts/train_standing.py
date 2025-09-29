@@ -264,6 +264,30 @@ def main():
                 if file.endswith(('.csv', '.txt', '.json')):
                     wandb.save(os.path.join(root, file))
 
+def quick_test():
+    """Quick environment test"""
+    from src.environments.humanoid_env import test_environment
+    test_environment()
+
+def evaluate_standing_model(model_path, render=False):
+    """Evaluate a trained standing model"""
+    config = load_config()
+    standing_config = config['standing'].copy()
+    standing_config['device'] = 'cuda' if torch.cuda.is_available() else 'cpu'
+    
+    agent = StandingAgent(standing_config)
+    agent.load_model(model_path)
+    results = agent.evaluate(n_episodes=10, render=render)
+    
+    print("\n=== Model Evaluation Results ===")
+    print(f"Mean Reward: {results['mean_reward']:.2f}")
+    if 'height_error' in results:
+        print(f"Height Error: {results['height_error']:.3f}")
+        print(f"Height Stability: {results['height_stability']:.3f}")
+    
+    agent.close()
+    return results
+
 
 if __name__ == "__main__":
     import argparse
@@ -294,30 +318,3 @@ if __name__ == "__main__":
     else:
         main()
 
-
-
-
-
-def quick_test():
-    """Quick environment test"""
-    from src.environments.humanoid_env import test_environment
-    test_environment()
-
-def evaluate_standing_model(model_path, render=False):
-    """Evaluate a trained standing model"""
-    config = load_config()
-    standing_config = config['standing'].copy()
-    standing_config['device'] = 'cuda' if torch.cuda.is_available() else 'cpu'
-    
-    agent = StandingAgent(standing_config)
-    agent.load_model(model_path)
-    results = agent.evaluate(n_episodes=10, render=render)
-    
-    print("\n=== Model Evaluation Results ===")
-    print(f"Mean Reward: {results['mean_reward']:.2f}")
-    if 'height_error' in results:
-        print(f"Height Error: {results['height_error']:.3f}")
-        print(f"Height Stability: {results['height_stability']:.3f}")
-    
-    agent.close()
-    return results
