@@ -15,6 +15,11 @@ os.environ["WANDB_SILENT"] = "true"
 os.environ["WANDB__SERVICE_WAIT"] = "300"
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+# Suppress Gym and TensorFlow warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)  
+warnings.filterwarnings("ignore", message="Gym has been unmaintained")  
+warnings.filterwarnings("ignore", category=UserWarning, module="tensorflow")  
+
 os.environ.setdefault("MUJOCO_GL", "egl")       # Headless rendering backend
 os.environ.setdefault("OMP_NUM_THREADS", "1")   # Limit CPU threading
 os.environ.setdefault("MKL_NUM_THREADS", "1")
@@ -156,7 +161,7 @@ def main():
     try:
         # Create and train agent
         agent = StandingAgent(standing_config)
-        model = agent.train()
+        model = agent.train(tb_log_name=log_dir)  # Already there; ensure checkpoints every save_freq
 
         # Extended evaluation for standing task
         results = agent.evaluate(n_episodes=10, render=False)

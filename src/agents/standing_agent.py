@@ -943,8 +943,8 @@ def create_standing_agent(config_path='config/training_config.yaml', device='aut
 class EarlyStoppingCallback(BaseCallback):
     """Stop training when standing is mastered"""
     
-    def __init__(self, check_freq=20000, target_reward=300, target_height_error=0.05, 
-                 target_stability=0.1, patience=3):
+    def __init__(self, check_freq=20000, target_reward=50, target_height_error=0.1, 
+                 target_stability=0.05, patience=3):
         super().__init__()
         self.check_freq = check_freq
         self.target_reward = target_reward

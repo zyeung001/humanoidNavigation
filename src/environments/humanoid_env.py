@@ -32,7 +32,7 @@ class HumanoidEnv(gym.Wrapper):
         self.max_episode_steps = 1000  # Matches Standup default for fair comparison
         self.current_step = 0
         
-        # Verify observation space (should be 376 for Humanoid-v5)
+        # Verify observation space (should be 348 for Humanoid-v5)
         obs_space = env.observation_space
         print(f"Observation space shape for {task_type}: {obs_space.shape}")
     
@@ -45,7 +45,8 @@ class HumanoidEnv(gym.Wrapper):
             
         # For standing reward tracking
         if self.task_type == "standing":
-            self.prev_height = self.env.data.qpos[2]  # Initial height for upward vel
+            self.prev_height = self.env.unwrapped.data.qpos[2]  # Initial height for upward vel
+
         
         return observation, info
     
@@ -71,7 +72,7 @@ class HumanoidEnv(gym.Wrapper):
     def _compute_task_reward(self, obs, base_reward, info, action):
         if self.task_type == "standing":
             # Use direct mjData access for accuracy (z-pos at qpos[2])
-            height = self.env.data.qpos[2]
+            height = self.env.unwrapped.data.qpos[2]
             target_height = 1.3
             
             # Height reward (main component, increased scale for stronger signal)
@@ -82,7 +83,7 @@ class HumanoidEnv(gym.Wrapper):
                 height_reward = max(0, 60.0 * (1.0 - height_error / 0.4))  # Taper over 0.4 error
             
             # Stability rewards (keep the humanoid stable)
-            linear_vel = self.env.data.qvel[0:3]  # Root linear velocities (x, y, z)
+            linear_vel = self.env.unwrapped.data.qvel[0:3]  # Root linear velocities (x, y, z)
             velocity_penalty = -0.1 * np.sum(np.square(linear_vel))
             
             # Control effort
@@ -92,13 +93,17 @@ class HumanoidEnv(gym.Wrapper):
             survival_bonus = 10.0
             
             # Uprightness reward (quaternion w-component at qpos[3])
-            quat_w = abs(self.env.data.qpos[3])
+            quat_w = abs(self.env.unwrapped.data.qpos[3])
             upright_bonus = 10.0 * quat_w  # Increased
             
             # Small bonus for upward velocity (encourage standing taller)
-            upward_vel_bonus = 2.0 * max(0, self.env.data.qvel[2])  # z-velocity positive
+            upward_vel_bonus = 2.0 * max(0, self.env.unwrapped.data.qvel[2])  # z-velocity positive
             
-            total_reward = height_reward + velocity_penalty + ctrl_penalty + survival_bonus + upright_bonus + upward_vel_bonus
+            # Bonus for increasing height (use prev_height)
+            height_delta_bonus = 5.0 * max(0, height - self.prev_height)
+            self.prev_height = height  # Update for next step
+
+            total_reward = height_reward + velocity_penalty + ctrl_penalty + survival_bonus + upright_bonus + upward_vel_bonus + height_delta_bonus
             
             # Debug less frequently
             if self.current_step % 200 == 0:
@@ -120,16 +125,16 @@ class HumanoidEnv(gym.Wrapper):
     
     def _get_task_info(self, obs):
         """Get task-specific information using mjData"""
-        height = self.env.data.qpos[2]
+        height = self.env.unwrapped.data.qpos[2]
         info = {
             'task_type': self.task_type,
             'step': self.current_step,
             'height': height,
-            'x_position': self.env.data.qpos[0],
-            'y_position': self.env.data.qpos[1],
-            'x_velocity': self.env.data.qvel[0],
-            'y_velocity': self.env.data.qvel[1],
-            'z_velocity': self.env.data.qvel[2],
+            'x_position': self.env.unwrapped.data.qpos[0],
+            'y_position': self.env.unwrapped.data.qpos[1],
+            'x_velocity': self.env.unwrapped.data.qvel[0],
+            'y_velocity': self.env.unwrapped.data.qvel[1],
+            'z_velocity': self.env.unwrapped.data.qvel[2],
         }
         return info
         
@@ -142,9 +147,9 @@ class HumanoidEnv(gym.Wrapper):
         obs, _ = self.env.reset()
         print("\nObservation Analysis:")
         print(f"Total observation size: {len(obs)}")
-        print(f"Actual height (qpos[2]): {self.env.data.qpos[2]}")
-        print(f"Root quaternion w (qpos[3]): {self.env.data.qpos[3]}")
-        print(f"Linear vel x,y,z (qvel[0:3]): {self.env.data.qvel[0:3]}")
+        print(f"Actual height (qpos[2]): {self.env.unwrapped.data.qpos[2]}")
+        print(f"Root quaternion w (qpos[3]): {self.env.unwrapped.data.qpos[3]}")
+        print(f"Linear vel x,y,z (qvel[0:3]): {self.env.unwrapped.data.qvel[0:3]}")
         return obs
 
 

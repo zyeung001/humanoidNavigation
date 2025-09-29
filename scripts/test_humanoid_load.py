@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# test_humanoid_load.py
 """
 Fixed humanoid loading script with better error handling and reliability
 """
@@ -52,7 +53,7 @@ def get_default_config():
     """Default configuration if YAML file is missing"""
     return {
         'environment': {
-            'name': 'Humanoid-v4',  # v4 is more stable than v5
+            'name': 'Humanoid-v5', 
             'render_mode': 'rgb_array',
             'max_episode_steps': 1000
         },

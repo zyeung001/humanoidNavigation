@@ -1,3 +1,4 @@
+# environment_config.yaml
 environment:
   name: "Humanoid-v5"
   render_mode: "rgb_array"

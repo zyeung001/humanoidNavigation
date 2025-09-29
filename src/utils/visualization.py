@@ -6,9 +6,14 @@ import numpy as np
 
 def setup_display():
     """Setup headless display for Colab/server environments"""
-    os.environ.setdefault("MUJOCO_GL", "egl")
-    print(f"[visualization] MUJOCO_GL={os.environ['MUJOCO_GL']}")
-    return True
+    try:
+        os.environ.setdefault("MUJOCO_GL", "egl")
+        print(f"[visualization] MUJOCO_GL={os.environ['MUJOCO_GL']}")
+        return True
+    except Exception as e:
+        print(f"EGL failed: {e}. Falling back to osmesa.")
+        os.environ["MUJOCO_GL"] = "osmesa"
+        return True
 
 def test_environment(env) -> bool:
     """Test if environment can render properly"""
