@@ -78,3 +78,8 @@ evaluation:
   record_video: true
   video_dir: "data/videos"
   video_length: 1000
+
+simulation:
+  max_steps: 500
+  reset_on_done: true
+  save_frames: true
