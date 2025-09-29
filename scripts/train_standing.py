@@ -161,7 +161,7 @@ def main():
     try:
         # Create and train agent
         agent = StandingAgent(standing_config)
-        model = agent.train(tb_log_name=log_dir)  # Already there; ensure checkpoints every save_freq
+        model = agent.train()
 
         # Extended evaluation for standing task
         results = agent.evaluate(n_episodes=10, render=False)
