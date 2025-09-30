@@ -24,6 +24,7 @@ os.environ.setdefault("MUJOCO_GL", "egl")       # Headless rendering backend
 os.environ.setdefault("OMP_NUM_THREADS", "1")   # Limit CPU threading
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 
+
 import sys
 import yaml
 from datetime import datetime
@@ -47,6 +48,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from src.agents.standing_agent import StandingAgent  # <-- use the parallel VecEnv + VecNormalize version
+from stable_baselines3 import PPO
 
 # ======================================================
 # SETUP HELPERS
