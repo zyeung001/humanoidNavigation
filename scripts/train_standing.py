@@ -51,6 +51,7 @@ from src.agents.standing_agent import StandingAgent  # <-- use the parallel VecE
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 from src.environments.humanoid_env import make_humanoid_env
+from datetime import datetime
 
 # ======================================================
 # SETUP HELPERS
@@ -320,15 +321,47 @@ if __name__ == "__main__":
         standing_config['device'] = device
         agent = StandingAgent(standing_config)
         
-        # Manually create the training environment (adapt from your standing_agent.py setup)
+        # Manually create the training environment
         def make_env():
             return make_humanoid_env(task_type="standing")
         train_env = SubprocVecEnv([make_env for _ in range(standing_config['n_envs'])])
         if standing_config['normalize']:
             train_env = VecNormalize(train_env)
-        
-        # Set it on the agent if needed
         agent.train_env = train_env
+        
+        # Re-init WandB if enabled
+        wandb_run = None
+        if standing_config['use_wandb']:
+            import wandb
+            timestamp = datetime.now().strftime("%m%d_%H%M")
+            exp_name = f"standing_resume_{timestamp}"
+            wandb_run = wandb.init(
+                project=standing_config['wandb_project'],
+                name=exp_name,
+                config=standing_config,
+                dir=standing_config.get('log_dir', "data/logs"),
+                resume="allow"
+            )
+        
+        # Setup eval_env_fn
+        from stable_baselines3.common.vec_env import DummyVecEnv
+        def eval_env_fn():
+            return DummyVecEnv([lambda: make_humanoid_env(task_type="standing", render_mode="rgb_array")])
+        
+        # Create callbacks (adapt from StandingAgent logic)
+        from src.agents.standing_agent import StandingCallback, EarlyStoppingCallback
+        callbacks = [
+            StandingCallback(config=standing_config, eval_env_fn=eval_env_fn, wandb_run=wandb_run),
+            EarlyStoppingCallback(
+                check_freq=20000,
+                target_reward=standing_config['target_reward_threshold'],
+                target_height_error=standing_config['height_error_threshold'],
+                target_stability=standing_config['height_stability_threshold'],
+                target_length=900,  # Add if using length check
+                patience=3
+            )
+        ]
+        agent.callbacks = callbacks
         
         print(f"Resuming from checkpoint: {args.resume}")
         agent.model = PPO.load(args.resume, env=train_env, device=standing_config['device'])
