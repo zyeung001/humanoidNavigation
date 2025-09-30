@@ -49,6 +49,8 @@ if project_root not in sys.path:
 
 from src.agents.standing_agent import StandingAgent  # <-- use the parallel VecEnv + VecNormalize version
 from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
+from src.environments.humanoid_env import make_humanoid_env
 
 # ======================================================
 # SETUP HELPERS
@@ -317,8 +319,19 @@ if __name__ == "__main__":
                 standing_config[key] = general_config[key]
         standing_config['device'] = device
         agent = StandingAgent(standing_config)
+        
+        # Manually create the training environment (adapt from your standing_agent.py setup)
+        def make_env():
+            return make_humanoid_env(task_type="standing")
+        train_env = SubprocVecEnv([make_env for _ in range(standing_config['n_envs'])])
+        if standing_config['normalize']:
+            train_env = VecNormalize(train_env)
+        
+        # Set it on the agent if needed
+        agent.train_env = train_env
+        
         print(f"Resuming from checkpoint: {args.resume}")
-        agent.model = PPO.load(args.resume, env=agent.train_env, device=standing_config['device'])
+        agent.model = PPO.load(args.resume, env=train_env, device=standing_config['device'])
         agent.model.learn(
             total_timesteps=standing_config['total_timesteps'],
             callback=agent.callbacks,
