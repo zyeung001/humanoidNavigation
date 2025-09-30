@@ -305,16 +305,26 @@ if __name__ == "__main__":
     elif args.eval:
         evaluate_standing_model(args.eval, render=args.render)
     elif args.resume:
+        print("=== Resuming Humanoid Standing Training ===")
+        device = setup_colab_environment()
+        config = load_config()
+        standing_config = config.get('standing', {}).copy()
+        general_config = config.get('general', {})
+        for key in ['save_freq', 'eval_freq', 'eval_episodes', 'seed', 'device', 'verbose']:
+            if key in general_config and key not in standing_config:
+                standing_config[key] = general_config[key]
+        standing_config['device'] = device
+        agent = StandingAgent(standing_config)
         print(f"Resuming from checkpoint: {args.resume}")
-
-        model = PPO.load(args.resume, env=agent.train_env, device=standing_config['device'])
-
-        model.learn(
-            total_timesteps=standing_config['total_timesteps'],  
-            callback=agent.callbacks,  
+        agent.model = PPO.load(args.resume, env=agent.train_env, device=standing_config['device'])
+        agent.model.learn(
+            total_timesteps=standing_config['total_timesteps'],
+            callback=agent.callbacks,
             reset_num_timesteps=False
         )
-        agent.model = model
+        agent.save_final_model()
+        agent.close()
+        print("Resumed training complete.")
     else:
         main()
 
