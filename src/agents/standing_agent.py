@@ -51,9 +51,12 @@ def safe_step(env, action):
     else:
         raise ValueError(f"Unexpected step() return format: {len(result)} values")
         
-def record_evaluation_video(model, env, n_episodes=1, max_steps_per_episode=400):
+def record_evaluation_video(model, env, n_episodes=1, max_steps_per_episode=1000):
     """Record longer video for stability assessment"""
-    frames = []
+    frame = render_env.render()
+    if frame is None:
+        print("Render returned None - check render_mode")
+        return []  # Early exit
     
     for episode in range(n_episodes):
         obs = env.reset()
@@ -121,6 +124,7 @@ class StandingCallback(BaseCallback):
             self.target_height = config.get('target_height')
             self.success_threshold = config.get('target_reward_threshold')
             self.episode_print_freq = config.get('episode_print_freq',1000)
+            self.vecnormalize_path = config.get('vecnormalize_path')
             
             # Initialize tracking variables
             self.best_mean_reward = -np.inf
@@ -184,16 +188,25 @@ class StandingCallback(BaseCallback):
                         f"reward={episode_reward:.2f}, "
                         f"recent_avg={np.mean(recent_rewards):.2f}")
             
-
     def _save_checkpoint(self):
-        """Save model checkpoint"""
+        """Save model checkpoint AND VecNormalize"""
         path = os.path.join(self.checkpoint_dir, f"{self.checkpoint_prefix}_{self.num_timesteps}.zip")
         self.model.save(path)
-        if self.verbose:
+        
+        # ALSO save VecNormalize at checkpoints
+        if isinstance(self.model.get_env(), VecNormalize):
+            vecnorm_checkpoint = path.replace('.zip', '_vecnorm.pkl')
+            self.model.get_env().save(vecnorm_checkpoint)
+            if self.verbose:
+                print(f"Checkpoint + VecNormalize saved: {path}")
+        elif self.verbose:
             print(f"Checkpoint saved: {path}")
-        # Save checkpoint to WandB
+        
+        # Save to WandB
         if WANDB_AVAILABLE and wandb.run:
             wandb.save(path)
+            if isinstance(self.model.get_env(), VecNormalize):
+                wandb.save(vecnorm_checkpoint)
 
     def _on_step(self) -> bool:
         t = self.num_timesteps
@@ -355,7 +368,14 @@ class StandingCallback(BaseCallback):
             print(f"Video recording failed: {e}")
 
     def _run_evaluation(self):
-        """Run evaluation and track best models"""
+        # SAVE VecNormalize BEFORE evaluation
+        if isinstance(self.model.get_env(), VecNormalize):
+            try:
+                self.model.get_env().save(self.vecnormalize_path)
+                print(f"✓ VecNormalize stats saved to {self.vecnormalize_path}")
+            except Exception as e:
+                print(f"✗ WARNING: VecNormalize save failed: {e}")
+        
         eval_env = self.eval_env_fn()
         
         heights = []
@@ -607,7 +627,7 @@ class StandingAgent:
             if isinstance(self.env, VecNormalize):
                 os.makedirs(os.path.dirname(self.vecnormalize_path), exist_ok=True)
                 self.env.save(self.vecnormalize_path)
-            return self._build_eval_env()
+            return DummyVecEnv([lambda: make_humanoid_env(task_type="standing", render_mode="rgb_array")])
 
         # Create callbacks
         callbacks = [

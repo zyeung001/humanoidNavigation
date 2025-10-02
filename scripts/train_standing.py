@@ -168,6 +168,26 @@ def main():
         agent = StandingAgent(standing_config)
         model = agent.train()
 
+        # Verify files were saved correctly
+        print("\n=== Verifying Saved Files ===")
+        import os.path as osp
+
+        files_to_check = [
+            "models/saved_models/best_standing_model.zip",
+            "models/saved_models/final_standing_model.zip", 
+            "models/saved_models/vecnorm_standing.pkl"
+        ]
+
+        for filepath in files_to_check:
+            if osp.exists(filepath):
+                size = osp.getsize(filepath)
+                print(f"✓ {filepath} ({size:,} bytes)")
+                if 'vecnorm' in filepath and size < 100:
+                    print(f"  ⚠️  WARNING: VecNormalize file suspiciously small!")
+            else:
+                print(f"✗ {filepath} NOT FOUND")
+
+
         # Extended evaluation for standing task
         results = agent.evaluate(n_episodes=10, render=False)
 

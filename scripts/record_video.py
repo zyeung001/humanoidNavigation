@@ -39,40 +39,39 @@ def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnor
     env = None
     vec_env = None
     
-    # Try custom environment first if task_type is specified
-    if task_type and CUSTOM_ENV_AVAILABLE:
-        try:
-            print(f"Creating custom {task_type} environment...")
-            env = make_humanoid_env(task_type=task_type, render_mode=render_mode)
+    # ALWAYS use custom environment for standing task
+    if task_type == "standing":
+        if not CUSTOM_ENV_AVAILABLE:
+            raise ImportError("Custom environment required for standing task")
+        
+        print(f"Creating custom {task_type} environment...")
+        # Create the base custom environment
+        base_env = make_humanoid_env(task_type=task_type, render_mode=render_mode)
+        
+        # Wrap in VecEnv
+        vec_env = DummyVecEnv([lambda: base_env])
+        
+        # CRITICAL: Load VecNormalize stats if available
+        if vecnorm_path and os.path.exists(vecnorm_path):
+            print(f"Loading VecNormalize from {vecnorm_path}")
+            try:
+                vec_env = VecNormalize.load(vecnorm_path, vec_env)
+                vec_env.training = False  # IMPORTANT: Set to eval mode
+                vec_env.norm_reward = False  # Don't normalize rewards during inference
+                print(f"✓ VecNormalize loaded and configured for inference")
+            except Exception as e:
+                print(f"✗ VecNormalize loading failed: {e}")
+                raise
+        else:
+            print(f"⚠ WARNING: No VecNormalize file found at {vecnorm_path}")
+            print("Model will likely fail without normalization!")
             
-            # Wrap in VecEnv for SB3 compatibility
-            vec_env = DummyVecEnv([lambda: env])
-            
-            # Load VecNormalize if available
-            if vecnorm_path and os.path.exists(vecnorm_path):
-                print(f"Loading VecNormalize from {vecnorm_path}")
-                try:
-                    vec_env = VecNormalize.load(vecnorm_path, vec_env)
-                    vec_env.training = False
-                    vec_env.norm_reward = False
-                    print("VecNormalize loaded successfully")
-                except Exception as e:
-                    print(f"VecNormalize loading failed: {e}")
-            
-            return vec_env, True  # Return (env, is_vectorized)
-            
-        except Exception as e:
-            print(f"Custom environment creation failed: {e}")
-            print("Falling back to standard Gymnasium environment...")
+        return vec_env, True  # Return (env, is_vectorized)
     
-    # Standard Gymnasium environment
-    try:
-        print(f"Creating standard environment: {env_name}")
-        env = gym.make(env_name, render_mode=render_mode)
-        return env, False  # Return (env, is_vectorized)
-    except Exception as e:
-        print(f"Failed to create environment: {e}")
-        return None, False
+    # Standard environment fallback for other tasks
+    print(f"Creating standard environment: {env_name}")
+    env = gym.make(env_name, render_mode=render_mode)
+    return env, False
 
 
 def load_model(model_path, env, algo, is_vectorized=False):
@@ -253,44 +252,51 @@ def record_video(env, model, args, is_vectorized=False):
         record_frames_only(env, model, args, is_vectorized)
         return
 
-    # Record video
     print("Starting video recording...")
     total_steps = 0
-
+    total_frames = 0
+    max_frames = args.episodes * args.steps  # Total budget
+    
     for episode in range(args.episodes):
         print(f"Recording episode {episode + 1}/{args.episodes}")
         
-        if is_vectorized:
-            obs = env.reset()
-        else:
-            obs, info = env.reset()
-
-        for step in range(args.steps):
-            action = get_action(model, obs, env, is_vectorized)
+        obs = env.reset()
+        episode_steps = 0
+        
+        while episode_steps < args.steps and total_frames < max_frames:
+            action, _ = model.predict(obs, deterministic=True)
             obs, reward, done, info = safe_step(env, action, is_vectorized)
-
+            
+            # Render frame
             try:
                 frame = safe_render(env, is_vectorized)
                 if frame is not None:
                     frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                     frame_resized = cv2.resize(frame_bgr, (args.width, args.height))
                     out.write(frame_resized)
-                    total_steps += 1
-
+                    total_frames += 1
+                    episode_steps += 1
             except Exception as e:
-                print(f"Rendering error at episode {episode}, step {step}: {e}")
+                print(f"Frame error: {e}")
                 break
-
-            if (is_vectorized and done[0]) or (not is_vectorized and done):
+            
+            # Check termination
+            is_done = (is_vectorized and done[0]) or (not is_vectorized and done)
+            
+            if is_done:
+                # Print why it failed
+                if is_vectorized and len(info) > 0:
+                    height = info[0].get('height', 'unknown')
+                    print(f"  ✗ Episode terminated at step {episode_steps}, height={height}")
                 break
-
-            if total_steps % 100 == 0:
-                print(f"Recorded {total_steps} frames...")
-
-        print(f"Episode {episode + 1} complete: {step + 1} steps")
-
+        
+        if episode_steps >= args.steps:
+            print(f"  ✓ Episode {episode + 1} SUCCESS: {episode_steps} steps")
+        
+        print(f"  Recorded {episode_steps} steps, total frames: {total_frames}")
+    
     out.release()
-    print(f"Video saved as '{args.output}'")
+    print(f"Video saved: {args.output} ({total_frames} frames, {total_frames/args.fps:.1f}s)")
 
 
 def parse_arguments():
