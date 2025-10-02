@@ -71,48 +71,38 @@ class HumanoidEnv(gym.Wrapper):
     
     def _compute_task_reward(self, obs, base_reward, info, action):
         if self.task_type == "standing":
-            # Use direct mjData access for accuracy (z-pos at qpos[2])
             height = self.env.unwrapped.data.qpos[2]
             target_height = 1.3
             
-            # Height reward (main component, increased scale for stronger signal)
+            # Stricter height reward - must be close to target
             height_error = abs(height - target_height)
-            if height_error < 0.1:
-                height_reward = 60.0  # Increased max
-            else:
-                height_reward = max(0, 60.0 * (1.0 - height_error / 0.4))  # Taper over 0.4 error
+            if height_error < 0.05:  # Very close
+                height_reward = 50.0
+            elif height_error < 0.15:  # Close enough
+                height_reward = 30.0 * (1.0 - height_error / 0.15)
+            else:  # Too far
+                height_reward = 0.0
             
-            # Stability rewards (keep the humanoid stable)
-            linear_vel = self.env.unwrapped.data.qvel[0:3]  # Root linear velocities (x, y, z)
-            velocity_penalty = -0.1 * np.sum(np.square(linear_vel))
+            # STRONG penalty for movement (stay still!)
+            linear_vel = self.env.unwrapped.data.qvel[0:3]
+            velocity_penalty = -2.0 * np.sum(np.square(linear_vel))  # Increased from -0.1
             
-            # Control effort
-            ctrl_penalty = -0.01 * np.sum(np.square(action))
+            # Control penalty (smooth movements)
+            ctrl_penalty = -0.02 * np.sum(np.square(action))
             
-            # Survival bonus (increased to encourage longer episodes)
-            survival_bonus = 10.0
+            # Reduce survival bonus (make falling hurt more)
+            survival_bonus = 2.0  # Reduced from 10.0
             
-            # Uprightness reward (quaternion w-component at qpos[3])
-            quat_w = abs(self.env.unwrapped.data.qpos[3])
-            upright_bonus = 10.0 * quat_w  # Increased
+            # Uprightness (must be very upright)
+            quat_w = self.env.unwrapped.data.qpos[3]
+            upright_bonus = 5.0 * max(0, quat_w - 0.9)  # Only reward if VERY upright
             
-            # Small bonus for upward velocity (encourage standing taller)
-            upward_vel_bonus = 2.0 * max(0, self.env.unwrapped.data.qvel[2])  # z-velocity positive
+            # NO upward velocity bonus - we want stillness
+            # NO height delta bonus - we want stability, not climbing
             
-            # Bonus for increasing height (use prev_height)
-            height_delta_bonus = 5.0 * max(0, height - self.prev_height)
-            self.prev_height = height  # Update for next step
-
-            total_reward = height_reward + velocity_penalty + ctrl_penalty + survival_bonus + upright_bonus + upward_vel_bonus + height_delta_bonus
-            
-            # Debug less frequently
-            if self.current_step % 200 == 0:
-                print(f"Step {self.current_step}: height={height:.3f} (target={target_height}), "
-                      f"reward={total_reward:.2f} (h={height_reward:.1f}, v={velocity_penalty:.1f})")
+            total_reward = height_reward + velocity_penalty + ctrl_penalty + survival_bonus + upright_bonus
             
             return total_reward
-        
-        return base_reward
     
     def _check_task_termination(self, obs, info):
         """Check if episode should terminate based on task"""
