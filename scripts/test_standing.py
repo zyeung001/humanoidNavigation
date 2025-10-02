@@ -12,6 +12,7 @@ from src.environments.humanoid_env import make_humanoid_env
 def test_standing(model_path, vecnorm_path, n_steps=1000):
     """Test standing without video"""
     print("Creating environment...")
+    model_path = "models/saved_models/final_standing_model.zip"
     env = make_humanoid_env(task_type="standing", render_mode=None)
     vec_env = DummyVecEnv([lambda: env])
     
