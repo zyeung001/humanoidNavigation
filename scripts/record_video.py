@@ -1,10 +1,3 @@
-"""
-Universal video recording script for humanoid agents.
-Enhanced to work with both standard Gymnasium and custom HumanoidEnv setups.
-
-record_video.py
-"""
-
 import argparse
 import os
 import sys
@@ -33,16 +26,22 @@ try:
 except Exception:
     CUSTOM_ENV_AVAILABLE = False
 
+# Suppress Gymnasium warnings
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnorm_path=None):
     """Create environment - handles both standard and custom setups"""
     env = None
     vec_env = None
     
-    # ALWAYS use custom environment for standing task
+    # ALWAYS use custom environment for standing task if available
     if task_type == "standing":
         if not CUSTOM_ENV_AVAILABLE:
-            raise ImportError("Custom environment required for standing task")
+            print("WARNING: Custom environment for standing task not found. Falling back to standard environment.")
+            print(f"Creating standard environment: {env_name}")
+            env = gym.make(env_name, render_mode=render_mode)
+            return env, False
         
         print(f"Creating custom {task_type} environment...")
         # Create the base custom environment
@@ -72,7 +71,6 @@ def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnor
     print(f"Creating standard environment: {env_name}")
     env = gym.make(env_name, render_mode=render_mode)
     return env, False
-
 
 def load_model(model_path, env, algo, is_vectorized=False):
     """Load a Stable-Baselines3 model from .zip."""
@@ -112,7 +110,6 @@ def load_model(model_path, env, algo, is_vectorized=False):
             print(f"Complete model loading failure: {e2}")
             return None
 
-
 def get_action(model, observation, env, is_vectorized=False):
     """Get action from SB3 model or random policy."""
     if model is None:
@@ -128,7 +125,6 @@ def get_action(model, observation, env, is_vectorized=False):
         if is_vectorized:
             return [env.action_space.sample()]
         return env.action_space.sample()
-
 
 def safe_step(env, action, is_vectorized=False):
     """Handle step with different return formats"""
@@ -155,7 +151,6 @@ def safe_step(env, action, is_vectorized=False):
         else:
             raise ValueError(f"Unexpected step() return format: {len(result)} values")
 
-
 def safe_render(env, is_vectorized=False):
     """Handle rendering for different environment types"""
     try:
@@ -169,7 +164,6 @@ def safe_render(env, is_vectorized=False):
     except Exception as e:
         print(f"Render error: {e}")
         return None
-
 
 def setup_video_writer(output_path, fps, width, height):
     """Setup video writer with codec fallback"""
@@ -190,7 +184,6 @@ def setup_video_writer(output_path, fps, width, height):
 
     print("ERROR: Could not initialize any video codec!")
     return None
-
 
 def record_frames_only(env, model, args, is_vectorized=False):
     """Fallback: save frames as individual images"""
@@ -232,7 +225,6 @@ def record_frames_only(env, model, args, is_vectorized=False):
         print(f"Episode {episode + 1} complete: {step + 1} steps")
 
     print(f"Frames saved to {frames_dir}")
-
 
 def record_video(env, model, args, is_vectorized=False):
     """Record video with proper codec handling"""
@@ -298,7 +290,6 @@ def record_video(env, model, args, is_vectorized=False):
     out.release()
     print(f"Video saved: {args.output} ({total_frames} frames, {total_frames/args.fps:.1f}s)")
 
-
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Record videos with trained SB3 model or random policy.")
     parser.add_argument("--env", type=str, default="Humanoid-v5", help="Gymnasium environment id")
@@ -320,7 +311,6 @@ def parse_arguments():
     parser.add_argument("--vecnorm", type=str, help="Path to VecNormalize stats (.pkl file)")
     
     return parser.parse_args()
-
 
 def main():
     args = parse_arguments()
@@ -370,7 +360,6 @@ def main():
     print("=" * 50)
 
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

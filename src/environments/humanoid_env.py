@@ -74,35 +74,42 @@ class HumanoidEnv(gym.Wrapper):
             height = self.env.unwrapped.data.qpos[2]
             target_height = 1.3
             
-            # Stricter height reward - must be close to target
+            # Softer height reward: Gaussian for smooth gradients (peaks at 50 at target, decays fast)
             height_error = abs(height - target_height)
-            if height_error < 0.05:  # Very close
-                height_reward = 50.0
-            elif height_error < 0.15:  # Close enough
-                height_reward = 30.0 * (1.0 - height_error / 0.15)
-            else:  # Too far
-                height_reward = 0.0
+            height_reward = 50.0 * np.exp(-10 * height_error**2)  # e^{-10*e^2}: full at 0 error, ~0 at 0.2m
             
             # STRONG penalty for movement (stay still!)
             linear_vel = self.env.unwrapped.data.qvel[0:3]
-            velocity_penalty = -2.0 * np.sum(np.square(linear_vel))  # Increased from -0.1
+            velocity_penalty = -2.0 * np.sum(np.square(linear_vel))
             
             # Control penalty (smooth movements)
             ctrl_penalty = -0.02 * np.sum(np.square(action))
             
             # Reduce survival bonus (make falling hurt more)
-            survival_bonus = 2.0  # Reduced from 10.0
+            survival_bonus = 2.0
             
-            # Uprightness (must be very upright)
-            quat_w = self.env.unwrapped.data.qpos[3]
-            upright_bonus = 5.0 * max(0, quat_w - 0.9)  # Only reward if VERY upright
+            # Uprightness (must be very upright) + tilt penalty
+            quat_w = abs(self.env.unwrapped.data.qpos[3])  # Abs for robustness
+            upright_bonus = 5.0 * max(0, quat_w - 0.9)
+            tilt_penalty = -1.0 * (1.0 - quat_w)  # Extra cost for any tilt
             
-            # NO upward velocity bonus - we want stillness
-            # NO height delta bonus - we want stability, not climbing
+            # NEW: Position penalty - prevent drift from origin
+            root_x, root_y = self.env.unwrapped.data.qpos[0:2]
+            pos_penalty = -1.0 * (root_x**2 + root_y**2)  # Quadratic cost on distance
             
-            total_reward = height_reward + velocity_penalty + ctrl_penalty + survival_bonus + upright_bonus
+            # NO upward velocity or height delta bonuses - pure stability
+            
+            total_reward = (height_reward + velocity_penalty + ctrl_penalty + 
+                        survival_bonus + upright_bonus + tilt_penalty + pos_penalty)
+            
+            # Debug every 200 steps (as in your old code)
+            if self.current_step % 200 == 0:
+                print(f"Step {self.current_step}: height={height:.3f} (target={target_height}), "
+                    f"reward={total_reward:.2f} (h={height_reward:.1f}, pos={pos_penalty:.2f}, v={velocity_penalty:.2f})")
             
             return total_reward
+        
+        return base_reward  # Fallback for other tasks
     
     def _check_task_termination(self, obs, info):
         """Check if episode should terminate based on task"""
