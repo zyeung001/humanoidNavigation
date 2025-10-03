@@ -21,7 +21,7 @@ except Exception:
 
 # Try to import custom environment
 try:
-    from src.environments.humanoid_env import make_humanoid_env
+    from src.environments.standing_env import make_humanoid_env
     CUSTOM_ENV_AVAILABLE = True
 except Exception:
     CUSTOM_ENV_AVAILABLE = False

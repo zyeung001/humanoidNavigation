@@ -65,6 +65,9 @@ standing:
   vecnormalize_path: "models/saved_models/vecnorm_standing.pkl"
 
 
+  max_episode_steps: 5000
+
+
 # Model saving
 checkpointing:
   save_best: true
@@ -83,3 +86,7 @@ simulation:
   max_steps: 500
   reset_on_done: true
   save_frames: true
+
+early_stop:
+  target_length: 4000  # Stop if mean length exceeds this
+  patience: 5          # Number of consecutive successes before stopping

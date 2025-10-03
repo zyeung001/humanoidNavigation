@@ -29,11 +29,11 @@ except ImportError:
 
 # Import the environment (adjust path for Colab)
 try:
-    from src.environments.humanoid_env import make_humanoid_env
+    from src.environments.standing_env import make_humanoid_env
 except ImportError:
     import sys
     sys.path.append('/content')
-    from src.environments.humanoid_env import make_humanoid_env
+    from src.environments.standing_env import make_humanoid_env
 
 
 def safe_step(env, action):

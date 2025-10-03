@@ -50,7 +50,7 @@ if project_root not in sys.path:
 from src.agents.standing_agent import StandingAgent  # <-- use the parallel VecEnv + VecNormalize version
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
-from src.environments.humanoid_env import make_humanoid_env
+from src.environments.standing_env import make_standing_env
 from datetime import datetime
 
 # ======================================================
@@ -193,7 +193,7 @@ def main():
 
         # Check if standing was successfully learned
         success_criteria = {
-            'reward': results.get('mean_reward', 0) > standing_config.get('target_reward_threshold', 200),
+            'reward': results.get('mean_reward') > standing_config.get('target_reward_threshold', 200),
             'height_error': results.get('height_error', float('inf')) < standing_config.get('height_error_threshold', 0.08),
             'height_stability': results.get('height_stability', float('inf')) < standing_config.get('height_stability_threshold', 0.15),
         }
@@ -201,9 +201,9 @@ def main():
         standing_success = all(success_criteria.values())
         
         print(f"\n=== Standing Learning Assessment ===")
-        print(f"Mean Reward: {results.get('mean_reward', 0):.2f} (threshold: {standing_config.get('target_reward_threshold', 200)}) {'✓' if success_criteria['reward'] else '✗'}")
+        print(f"Mean Reward: {results.get('mean_reward'):.2f} (threshold: {standing_config.get('target_reward_threshold')}) {'✓' if success_criteria['reward'] else '✗'}")
         if 'height_error' in results:
-            print(f"Height Error: {results['height_error']:.3f} (threshold: {standing_config.get('height_error_threshold', 0.08)}) {'✓' if success_criteria['height_error'] else '✗'}")
+            print(f"Height Error: {results['height_error']:.3f} (threshold: {standing_config.get('height_error_threshold')}) {'✓' if success_criteria['height_error'] else '✗'}")
             print(f"Height Stability: {results['height_stability']:.3f} (threshold: {standing_config.get('height_stability_threshold', 0.15)}) {'✓' if success_criteria['height_stability'] else '✗'}")
         print(f"Overall Standing Success: {'✓ PASSED' if standing_success else '✗ NEEDS MORE TRAINING'}")
 
@@ -230,12 +230,12 @@ def main():
             # Create a summary table for the run
             summary_table = wandb.Table(columns=["Metric", "Value", "Threshold", "Success"])
             summary_table.add_data("Mean Reward", f"{results['mean_reward']:.2f}", 
-                                 standing_config.get('target_reward_threshold', 200), success_criteria['reward'])
+                                 standing_config.get('target_reward_threshold'), success_criteria['reward'])
             if 'height_error' in results:
                 summary_table.add_data("Height Error", f"{results['height_error']:.3f}", 
-                                     standing_config.get('height_error_threshold', 0.08), success_criteria['height_error'])
+                                     standing_config.get('height_error_threshold'), success_criteria['height_error'])
                 summary_table.add_data("Height Stability", f"{results['height_stability']:.3f}", 
-                                     standing_config.get('height_stability_threshold', 0.15), success_criteria['height_stability'])
+                                     standing_config.get('height_stability_threshold'), success_criteria['height_stability'])
             
             wandb.log({"final/success_summary": summary_table})
             
@@ -291,7 +291,7 @@ def main():
 
 def quick_test():
     """Quick environment test"""
-    from src.environments.humanoid_env import test_environment
+    from src.environments.standing_env import test_environment
     test_environment()
 
 def evaluate_standing_model(model_path, render=False):
@@ -343,7 +343,7 @@ if __name__ == "__main__":
         
         # Manually create the training environment
         def make_env():
-            return make_humanoid_env(task_type="standing")
+            return make_standing_env(task_type="standing")
         train_env = SubprocVecEnv([make_env for _ in range(standing_config['n_envs'])])
         if standing_config['normalize']:
             train_env = VecNormalize(train_env)
@@ -366,7 +366,7 @@ if __name__ == "__main__":
         # Setup eval_env_fn
         from stable_baselines3.common.vec_env import DummyVecEnv
         def eval_env_fn():
-            return DummyVecEnv([lambda: make_humanoid_env(task_type="standing", render_mode="rgb_array")])
+            return DummyVecEnv([lambda: make_standing_env(task_type="standing", render_mode="rgb_array")])
         
         # Create callbacks (adapt from StandingAgent logic)
         from src.agents.standing_agent import StandingCallback, EarlyStoppingCallback
