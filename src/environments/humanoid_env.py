@@ -74,9 +74,16 @@ class HumanoidEnv(gym.Wrapper):
             height = self.env.unwrapped.data.qpos[2]
             target_height = 1.3
             
-            # Softer height reward: Gaussian for smooth gradients (peaks at 50 at target, decays fast)
+            # Hybrid height: Tiered base + Gaussian fine-tune
             height_error = abs(height - target_height)
-            height_reward = 50.0 * np.exp(-10 * height_error**2)  # e^{-10*e^2}: full at 0 error, ~0 at 0.2m
+            if height_error < 0.05:
+                height_reward = 50.0
+            elif height_error < 0.15:
+                height_reward = 30.0 * (1.0 - height_error / 0.15)
+            else:
+                height_reward = 0.0
+            # Add Gaussian for smoother gradients within tiers
+            height_reward += 5.0 * np.exp(-20 * height_error**2)  # Small boost near target
             
             # STRONG penalty for movement (stay still!)
             linear_vel = self.env.unwrapped.data.qvel[0:3]
@@ -88,28 +95,38 @@ class HumanoidEnv(gym.Wrapper):
             # Reduce survival bonus (make falling hurt more)
             survival_bonus = 2.0
             
-            # Uprightness (must be very upright) + tilt penalty
-            quat_w = abs(self.env.unwrapped.data.qpos[3])  # Abs for robustness
+            # Uprightness (must be very upright)
+            quat_w = abs(self.env.unwrapped.data.qpos[3])
             upright_bonus = 5.0 * max(0, quat_w - 0.9)
-            tilt_penalty = -1.0 * (1.0 - quat_w)  # Extra cost for any tilt
             
-            # NEW: Position penalty - prevent drift from origin
+            # Mild tilt penalty only for significant tilt
+            tilt_penalty = -0.5 * max(0, 0.9 - quat_w)  # Only penalize below 0.9, milder
+            
+            # Milder position penalty - prevent drift but allow recovery
             root_x, root_y = self.env.unwrapped.data.qpos[0:2]
-            pos_penalty = -1.0 * (root_x**2 + root_y**2)  # Quadratic cost on distance
+            pos_penalty = -0.5 * (root_x**2 + root_y**2)  # Halved from -1.0
+            
+            # NEW: Angular velocity penalty for rotational stability
+            angular_vel = self.env.unwrapped.data.qvel[3:6]  # Root angular velocities
+            ang_vel_penalty = -0.5 * np.sum(np.square(angular_vel))  # Control spin
             
             # NO upward velocity or height delta bonuses - pure stability
             
             total_reward = (height_reward + velocity_penalty + ctrl_penalty + 
-                        survival_bonus + upright_bonus + tilt_penalty + pos_penalty)
+                        survival_bonus + upright_bonus + tilt_penalty + 
+                        pos_penalty + ang_vel_penalty)
             
-            # Debug every 200 steps (as in your old code)
+            # Debug every 200 steps
             if self.current_step % 200 == 0:
-                print(f"Step {self.current_step}: height={height:.3f} (target={target_height}), "
-                    f"reward={total_reward:.2f} (h={height_reward:.1f}, pos={pos_penalty:.2f}, v={velocity_penalty:.2f})")
+                dist = np.sqrt(root_x**2 + root_y**2)
+                print(f"Step {self.current_step}: height={height:.3f} (error={height_error:.3f}), "
+                    f"dist={dist:.3f}, quat_w={quat_w:.3f}, "
+                    f"reward={total_reward:.2f} (h={height_reward:.1f}, pos={pos_penalty:.2f}, "
+                    f"v={velocity_penalty:.2f}, ang_v={ang_vel_penalty:.2f})")
             
             return total_reward
         
-        return base_reward  # Fallback for other tasks
+        return base_reward
     
     def _check_task_termination(self, obs, info):
         """Check if episode should terminate based on task"""
