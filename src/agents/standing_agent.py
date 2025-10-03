@@ -17,6 +17,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 from stable_baselines3.common.evaluation import evaluate_policy
+from stable_baselines3.common.utils import linear_schedule
 
 # Try to import wandb
 try:
@@ -29,11 +30,11 @@ except ImportError:
 
 # Import the environment (adjust path for Colab)
 try:
-    from src.environments.standing_env import make_humanoid_env
+    from src.environments.standing_env import make_standing_env
 except ImportError:
     import sys
     sys.path.append('/content')
-    from src.environments.standing_env import make_humanoid_env
+    from src.environments.standing_env import make_standing_env
 
 
 def safe_step(env, action):
@@ -304,7 +305,7 @@ class StandingCallback(BaseCallback):
         
         try:
             # FIXED: Create environment with proper render mode for headless
-            render_env = make_humanoid_env("standing", render_mode="rgb_array")
+            render_env = make_standing_env(render_mode="rgb_array")
             
             frames = []
             obs, _ = render_env.reset()
@@ -509,7 +510,7 @@ class StandingAgent:
         """Factory that returns a thunk creating one monitored env with seeding."""
         def _init():
             os.environ.setdefault("MUJOCO_GL", "egl")
-            env = make_humanoid_env("standing", render_mode=render_mode)
+            env = make_standing_env(render_mode=render_mode)
             log_dir = self.config.get("log_dir", "data/logs")
             os.makedirs(log_dir, exist_ok=True)
             env = Monitor(env, filename=os.path.join(log_dir, f"train_env_{rank}.csv"))
@@ -556,7 +557,7 @@ class StandingAgent:
 
         # Standing-optimized parameters
         model_params = {
-            "learning_rate": self.config.get("learning_rate"),
+            "learning_rate": linear_schedule(0.0003),
             "n_steps": self.config.get("n_steps"),
             "batch_size": self.config.get("batch_size"),
             "n_epochs": self.config.get("n_epochs"),
@@ -627,7 +628,7 @@ class StandingAgent:
             if isinstance(self.env, VecNormalize):
                 os.makedirs(os.path.dirname(self.vecnormalize_path), exist_ok=True)
                 self.env.save(self.vecnormalize_path)
-            return DummyVecEnv([lambda: make_humanoid_env(task_type="standing", render_mode="rgb_array")])
+            return DummyVecEnv([lambda: make_standing_env(render_mode="rgb_array")])
 
         # Create callbacks
         callbacks = [

@@ -343,7 +343,7 @@ if __name__ == "__main__":
         
         # Manually create the training environment
         def make_env():
-            return make_standing_env(task_type="standing")
+            return make_standing_env()
         train_env = SubprocVecEnv([make_env for _ in range(standing_config['n_envs'])])
         if standing_config['normalize']:
             train_env = VecNormalize(train_env)
@@ -366,7 +366,7 @@ if __name__ == "__main__":
         # Setup eval_env_fn
         from stable_baselines3.common.vec_env import DummyVecEnv
         def eval_env_fn():
-            return DummyVecEnv([lambda: make_standing_env(task_type="standing", render_mode="rgb_array")])
+            return DummyVecEnv([lambda: make_standing_env(render_mode="rgb_array")])
         
         # Create callbacks (adapt from StandingAgent logic)
         from src.agents.standing_agent import StandingCallback, EarlyStoppingCallback

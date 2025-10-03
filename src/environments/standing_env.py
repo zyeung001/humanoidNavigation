@@ -58,50 +58,80 @@ class StandingEnv(gym.Wrapper):
         return observation, reward, terminated, truncated, info
     
     def _compute_task_reward(self, obs, base_reward, info, action):
+        """Reward function for stable, indefinite standing at target height."""
+        
+        # === State extraction ===
         height = self.env.unwrapped.data.qpos[2]
-        target_height = 1.3
-        
-        # Softer Gaussian height with tiered base for strong signal
-        height_error = abs(height - target_height)
-        height_reward = 50.0 * np.exp(-15 * height_error**2)  # Milder decay for broader basin
-        
-        # STRONG velocity penalty
-        linear_vel = self.env.unwrapped.data.qvel[0:3]
-        velocity_penalty = -3.0 * np.sum(np.square(linear_vel))  # Increased from -2.0
-        
-        # Control penalty
-        ctrl_penalty = -0.02 * np.sum(np.square(action))
-        
-        # Survival bonus
-        survival_bonus = 2.0
-        
-        # Uprightness
-        quat_w = abs(self.env.unwrapped.data.qpos[3])
-        upright_bonus = 5.0 * max(0, quat_w - 0.95)  # Stricter threshold (0.95 vs 0.9)
-        
-        # Tilt penalty
-        tilt_penalty = -1.0 * (1.0 - quat_w)  # Stronger from -0.5
-        
-        # Stronger position penalty
         root_x, root_y = self.env.unwrapped.data.qpos[0:2]
-        pos_penalty = -1.5 * (root_x**2 + root_y**2)  # Increased from -0.5
+        quat_w = self.env.unwrapped.data.qpos[3]
         
-        # Angular velocity penalty
+        linear_vel = self.env.unwrapped.data.qvel[0:3]
         angular_vel = self.env.unwrapped.data.qvel[3:6]
-        ang_vel_penalty = -1.0 * np.sum(np.square(angular_vel))  # Increased from -0.5
+
+        com_pos = self.env.unwrapped.data.com  # COM position (array [x,y,z])
+        # Assume feet sites; need to define in model or approximate
+        left_foot_pos = self.env.unwrapped.data.site_xpos[self.env.unwrapped.model.site_name2id('left_foot')]  # Example; add site IDs if needed
+        right_foot_pos = self.env.unwrapped.data.site_xpos[self.env.unwrapped.model.site_name2id('right_foot')]
+        support_center = (left_foot_pos[:2] + right_foot_pos[:2]) / 2  # x/y average
+        com_error = np.linalg.norm(com_pos[:2] - support_center)
+        com_penalty = -5.0 * com_error**2  # Add to total_reward
         
-        total_reward = (height_reward + velocity_penalty + ctrl_penalty + 
-                        survival_bonus + upright_bonus + tilt_penalty + 
-                        pos_penalty + ang_vel_penalty)
+        # === Primary objectives (standing at target) ===
+        # 1. Height target - tight basin for precise standing
+        target_height = 1.3
+        height_error = abs(height - target_height)
+        height_reward = 100.0 * np.exp(-20.0 * height_error**2)
         
-        # Debug every 200 steps
-        if self.current_step % 200 == 0:
-            dist = np.sqrt(root_x**2 + root_y**2)
-            print(f"Step {self.current_step}: height={height:.3f} (error={height_error:.3f}), "
-                  f"dist={dist:.3f}, quat_w={quat_w:.3f}, reward={total_reward:.2f} "
-                  f"(h={height_reward:.1f}, pos={pos_penalty:.2f}, v={velocity_penalty:.2f}, ang_v={ang_vel_penalty:.2f})")
+        # 2. Uprightness - must stay vertical
+        upright_reward = 30.0 * np.exp(-10.0 * (1.0 - abs(quat_w))**2)
         
-        return total_reward
+        # === Stability constraints (zero motion ideal) ===
+        # 3. Position stability - stay near origin
+        position_error = np.sqrt(root_x**2 + root_y**2)
+        position_penalty = -5.0 * position_error**2
+        
+        # 4. Linear velocity - penalize any translational motion
+        linear_vel_penalty = -3.0 * np.sum(np.square(linear_vel))
+        
+        # 5. Angular velocity - penalize any rotational motion
+        angular_vel_penalty = -2.0 * np.sum(np.square(angular_vel))
+        
+        # === Efficiency ===
+        # 6. Control cost - encourage minimal corrections
+        control_penalty = -0.01 * np.sum(np.square(action))
+        
+        # 7. Small survival bonus - rewards each timestep of successful standing
+        survival_bonus = 1.0
+            
+        # === Total reward ===
+        total_reward = (
+            height_reward +
+            upright_reward +
+            position_penalty +
+            linear_vel_penalty +
+            angular_vel_penalty +
+            control_penalty +
+            survival_bonus
+        )
+        
+        # === Termination check (optional - only end on catastrophic failure) ===
+        # You can add early termination if robot falls completely
+        terminate = False
+        if height < 0.5 or abs(quat_w) < 0.3:  # Catastrophic failure
+            terminate = True
+            total_reward = -100.0  # Large penalty for falling
+        
+        # === Debug logging ===
+        if self.current_step % 1000 == 0:
+            print(f"Step {self.current_step:4d} | "
+                f"Total: {total_reward:6.1f} | "
+                f"H: {height:5.2f} ({height_reward:5.1f}) | "
+                f"Up: {quat_w:4.2f} ({upright_reward:5.1f}) | "
+                f"Pos: {position_error:5.2f} ({position_penalty:6.1f}) | "
+                f"V: {linear_vel_penalty:6.1f} | "
+                f"AngV: {angular_vel_penalty:6.1f}")
+        
+        return total_reward, terminate
     
     def _get_task_info(self):
         """Get task-specific information"""

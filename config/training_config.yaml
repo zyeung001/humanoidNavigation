@@ -19,7 +19,7 @@ logging:
 # Standing task
 standing:
   algorithm: "PPO"
-  total_timesteps: 1500000 
+  total_timesteps: 2000000 
   learning_rate: 0.0003
   batch_size: 128
   n_steps: 2048
@@ -88,5 +88,5 @@ simulation:
   save_frames: true
 
 early_stop:
-  target_length: 4000  # Stop if mean length exceeds this
+  target_length: 10000  # Stop if mean length exceeds this
   patience: 5          # Number of consecutive successes before stopping

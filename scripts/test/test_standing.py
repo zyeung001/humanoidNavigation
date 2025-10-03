@@ -8,11 +8,11 @@ sys.path.insert(0, project_root)
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
-from src.environments.standing_env import make_humanoid_env
+from src.environments.standing_env import make_standing_env
 
 def test_standing(model_path, vecnorm_path, n_steps=2000):  # Longer for "forever"
     print("Creating environment...")
-    env = make_humanoid_env(task_type="standing", render_mode=None)
+    env = make_standing_env(render_mode=None)
     vec_env = DummyVecEnv([lambda: env])
     
     print(f"Loading VecNormalize from {vecnorm_path}...")

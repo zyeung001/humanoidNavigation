@@ -21,7 +21,7 @@ except Exception:
 
 # Try to import custom environment
 try:
-    from src.environments.standing_env import make_humanoid_env
+    from src.environments.standing_env import make_standing_env
     CUSTOM_ENV_AVAILABLE = True
 except Exception:
     CUSTOM_ENV_AVAILABLE = False
@@ -45,7 +45,7 @@ def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnor
         
         print(f"Creating custom {task_type} environment...")
         # Create the base custom environment
-        base_env = make_humanoid_env(task_type=task_type, render_mode=render_mode)
+        base_env = make_standing_env(task_type=task_type, render_mode=render_mode)
         
         # Wrap in VecEnv
         vec_env = DummyVecEnv([lambda: base_env])
