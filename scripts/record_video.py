@@ -252,12 +252,21 @@ def record_video(env, model, args, is_vectorized=False):
     for episode in range(args.episodes):
         print(f"Recording episode {episode + 1}/{args.episodes}")
         
-        obs = env.reset()
+        # Reset environment correctly based on vectorization
+        if is_vectorized:
+            obs = env.reset()  # Returns NumPy array for VecEnv
+        else:
+            obs, _ = env.reset()  # Returns (obs, info) tuple for Gym env
+        
         episode_steps = 0
         
         while episode_steps < args.steps and total_frames < max_frames:
+            # Get action using the correct observation
             action, _ = model.predict(obs, deterministic=True)
-            obs, reward, done, info = safe_step(env, action, is_vectorized)
+            if is_vectorized:
+                obs, reward, done, info = safe_step(env, action, is_vectorized)
+            else:
+                obs, reward, done, _ = safe_step(env, action, is_vectorized)  # Ignore info if not needed
             
             # Render frame
             try:
