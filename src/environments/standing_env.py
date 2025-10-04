@@ -55,9 +55,6 @@ class StandingEnv(gym.Wrapper):
                 self.rand_friction_range[0], self.rand_friction_range[1],
                 size=self.env.unwrapped.model.geom_friction.shape[0]
             )
-            
-            # Forward the model to apply changes (MuJoCo requirement)
-            self.env.unwrapped.sim.forward()
         
         return observation, info
     
