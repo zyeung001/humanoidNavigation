@@ -507,11 +507,11 @@ class StandingAgent:
 
     # ---------- Env construction ----------
 
-    def _make_single_env(self, seed: int, rank: int, render_mode="rgb_array", config = self.config) -> Callable:
+    def _make_single_env(self, seed: int, rank: int, render_mode="rgb_array") -> Callable:
         """Factory that returns a thunk creating one monitored env with seeding."""
         def _init():
             os.environ.setdefault("MUJOCO_GL", "egl")
-            env = make_standing_env(render_mode=render_mode)
+            env = make_standing_env(render_mode=render_mode, config=self.config)
             log_dir = self.config.get("log_dir", "data/logs")
             os.makedirs(log_dir, exist_ok=True)
             env = Monitor(env, filename=os.path.join(log_dir, f"train_env_{rank}.csv"))
