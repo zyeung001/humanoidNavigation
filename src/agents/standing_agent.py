@@ -640,7 +640,6 @@ class StandingAgent:
             deterministic=True,  # Use deterministic actions for fair eval
             render=False,  # No rendering during eval (set True if you want visuals)
             verbose=self.config['verbose'],  # Match your verbosity level
-            callback_on_new_best=self._on_best_model_update  # Optional custom hook (define below if needed)
         )
         
         callbacks = [
