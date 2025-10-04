@@ -190,7 +190,7 @@ def test_environment():
     print("=" * 40)
     
     # Test with random policy
-    env = make_standing_env(render_mode=None)
+    env = make_standing_env(render_mode=None, config=self.config)
     
     # Show observation info
     env.get_observation_info()

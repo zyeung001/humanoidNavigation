@@ -306,7 +306,7 @@ class StandingCallback(BaseCallback):
         
         try:
             # FIXED: Create environment with proper render mode for headless
-            render_env = make_standing_env(render_mode="rgb_array")
+            render_env = make_standing_env(render_mode="rgb_array", config=self.config)
             
             frames = []
             obs, _ = render_env.reset()
@@ -507,7 +507,7 @@ class StandingAgent:
 
     # ---------- Env construction ----------
 
-    def _make_single_env(self, seed: int, rank: int, render_mode="rgb_array") -> Callable:
+    def _make_single_env(self, seed: int, rank: int, render_mode="rgb_array", config = self.config) -> Callable:
         """Factory that returns a thunk creating one monitored env with seeding."""
         def _init():
             os.environ.setdefault("MUJOCO_GL", "egl")
@@ -629,7 +629,7 @@ class StandingAgent:
             if isinstance(self.env, VecNormalize):
                 os.makedirs(os.path.dirname(self.vecnormalize_path), exist_ok=True)
                 self.env.save(self.vecnormalize_path)
-            return DummyVecEnv([lambda: make_standing_env(render_mode="rgb_array")])
+            return DummyVecEnv([lambda: make_standing_env(render_mode="rgb_array", config=self.config)])
 
         # Create callbacks
         eval_callback = EvalCallback(
