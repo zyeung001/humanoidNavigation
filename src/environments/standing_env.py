@@ -85,13 +85,49 @@ class StandingEnv(gym.Wrapper):
         linear_vel = self.env.unwrapped.data.qvel[0:3]
         angular_vel = self.env.unwrapped.data.qvel[3:6]
 
-        com_pos = self.env.unwrapped.data.com  # COM position (array [x,y,z])
-        # Assume feet sites; need to define in model or approximate
-        left_foot_pos = self.env.unwrapped.data.site_xpos[self.env.unwrapped.model.site_name2id('left_foot')]  # Example; add site IDs if needed
-        right_foot_pos = self.env.unwrapped.data.site_xpos[self.env.unwrapped.model.site_name2id('right_foot')]
-        support_center = (left_foot_pos[:2] + right_foot_pos[:2]) / 2  # x/y average
+        # === Proper COM calculation ===
+        # MuJoCo stores subtree COM in data.subtree_com (indexed by body)
+        # The root body (torso) is typically body 1 (body 0 is world)
+        # Get the full body COM using cinert (composite inertia in global frame)
+        model = self.env.unwrapped.model
+        data = self.env.unwrapped.data
+        
+        # Method 1: Use subtree_com for root body
+        # Body 1 is typically the torso/root, which includes all child bodies
+        root_body_id = 1  # Usually torso
+        com_pos = data.subtree_com[root_body_id].copy()
+        
+        # Get foot positions - Humanoid-v5 has specific body/geom names
+        # We need to find the actual geom IDs for the feet
+        try:
+            # Try to get foot geom positions (Humanoid has left_foot and right_foot geoms)
+            left_foot_geom_id = model.geom('left_foot').id if hasattr(model, 'geom') else None
+            right_foot_geom_id = model.geom('right_foot').id if hasattr(model, 'geom') else None
+            
+            if left_foot_geom_id is not None and right_foot_geom_id is not None:
+                left_foot_pos = data.geom_xpos[left_foot_geom_id]
+                right_foot_pos = data.geom_xpos[right_foot_geom_id]
+                support_center = (left_foot_pos[:2] + right_foot_pos[:2]) / 2
+            else:
+                # Fallback: use body positions for feet
+                # Bodies: 1=torso, then limbs...
+                # For Humanoid, feet are typically bodies 7 and 11 (or use body names)
+                try:
+                    left_foot_body_id = model.body('left_foot').id
+                    right_foot_body_id = model.body('right_foot').id
+                    left_foot_pos = data.xpos[left_foot_body_id]
+                    right_foot_pos = data.xpos[right_foot_body_id]
+                    support_center = (left_foot_pos[:2] + right_foot_pos[:2]) / 2
+                except:
+                    # Last fallback: assume feet are roughly under the torso
+                    support_center = np.array([root_x, root_y])
+        except:
+            # Ultimate fallback: use origin
+            support_center = np.array([0.0, 0.0])
+        
+        # COM stability penalty
         com_error = np.linalg.norm(com_pos[:2] - support_center)
-        com_penalty = -5.0 * com_error**2  # Add to total_reward
+        com_penalty = -5.0 * com_error**2
         
         # === Primary objectives (standing at target) ===
         # 1. Height target - tight basin for precise standing
@@ -132,12 +168,11 @@ class StandingEnv(gym.Wrapper):
             com_penalty
         )
         
-        # === Termination check (optional - only end on catastrophic failure) ===
-        # You can add early termination if robot falls completely
+        # === Termination check ===
         terminate = False
         if height < 0.5 or abs(quat_w) < 0.3:  # Catastrophic failure
             terminate = True
-            total_reward = -100.0  # Large penalty for falling
+            total_reward = -100.0
         
         # === Debug logging ===
         if self.current_step % 1000 == 0:
@@ -146,8 +181,7 @@ class StandingEnv(gym.Wrapper):
                 f"H: {height:5.2f} ({height_reward:5.1f}) | "
                 f"Up: {quat_w:4.2f} ({upright_reward:5.1f}) | "
                 f"Pos: {position_error:5.2f} ({position_penalty:6.1f}) | "
-                f"V: {linear_vel_penalty:6.1f} | "
-                f"AngV: {angular_vel_penalty:6.1f}")
+                f"COM: {com_error:5.3f} ({com_penalty:6.1f})")
         
         return total_reward, terminate
     
