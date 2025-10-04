@@ -18,6 +18,7 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.utils import linear_schedule
+from stable_baselines3.common.callbacks import EvalCallback
 
 # Try to import wandb
 try:
@@ -557,7 +558,7 @@ class StandingAgent:
 
         # Standing-optimized parameters
         model_params = {
-            "learning_rate": linear_schedule(0.0003),
+            "learning_rate": linear_schedule(self.config.get("learning_rate")),
             "n_steps": self.config.get("n_steps"),
             "batch_size": self.config.get("batch_size"),
             "n_epochs": self.config.get("n_epochs"),
@@ -631,7 +632,20 @@ class StandingAgent:
             return DummyVecEnv([lambda: make_standing_env(render_mode="rgb_array")])
 
         # Create callbacks
+        eval_callback = EvalCallback(
+            eval_env=eval_env_fn(),  # Your eval env function
+            best_model_save_path=self.config['best_model_path'],  # Auto-save best model
+            log_path=os.path.join(self.config.get('log_dir', 'data/logs'), 'evaluations'),  # Log eval results
+            eval_freq=self.config['eval_freq'],  # From config (e.g., 50,000 steps)
+            n_eval_episodes=self.config['n_eval_episodes'],  # From config (e.g., 5)
+            deterministic=True,  # Use deterministic actions for fair eval
+            render=False,  # No rendering during eval (set True if you want visuals)
+            verbose=self.config['verbose'],  # Match your verbosity level
+            callback_on_new_best=self._on_best_model_update  # Optional custom hook (define below if needed)
+        )
+        
         callbacks = [
+            eval_callback,  # Add the new EvalCallback here
             StandingCallback(
                 config=self.config,
                 eval_env_fn=eval_env_fn,
@@ -639,10 +653,10 @@ class StandingAgent:
             ),
             EarlyStoppingCallback(
                 check_freq=20000,
-                target_reward=250,
-                target_height_error=0.08,
-                target_stability=0.12,
-                patience=2
+                target_reward=self.config['target_reward_threshold'],
+                target_height_error=self.config['height_error_threshold'],
+                target_stability=self.config['height_stability_threshold'],
+                patience=self.config.get('early_stop', {}).get('patience', 3)
             )
         ]
         

@@ -27,6 +27,10 @@ class StandingEnv(gym.Wrapper):
         # Use config for max_episode_steps if provided
         self.max_episode_steps = config.get('max_episode_steps', 5000) if config else 5000
         self.current_step = 0
+
+        self.domain_rand = config.get('domain_rand')
+        self.rand_mass_range = config.get('rand_mass_range')
+        self.rand_friction_range = config.get('rand_friction_range', [0.7, 1.3])
         
         # Verify observation space (should be 348 for Humanoid-v5)
         obs_space = env.observation_space
@@ -35,9 +39,25 @@ class StandingEnv(gym.Wrapper):
     def reset(self, seed: Optional[int] = None): 
         observation, info = self.env.reset(seed=seed)
         self.current_step = 0
+        self.prev_height = self.env.unwrapped.data.qpos[2]
         
-        # For standing reward tracking
-        self.prev_height = self.env.unwrapped.data.qpos[2]  # Initial height
+        if self.domain_rand:
+            # Randomize body masses
+            original_masses = self.env.unwrapped.model.body_mass.copy()  # Backup if needed
+            self.env.unwrapped.model.body_mass *= np.random.uniform(
+                self.rand_mass_range[0], self.rand_mass_range[1],
+                size=self.env.unwrapped.model.body_mass.shape
+            )
+            
+            # Randomize geom friction (for feet/contact surfaces)
+            original_friction = self.env.unwrapped.model.geom_friction.copy()
+            self.env.unwrapped.model.geom_friction[:, 0] *= np.random.uniform(  # Lateral friction
+                self.rand_friction_range[0], self.rand_friction_range[1],
+                size=self.env.unwrapped.model.geom_friction.shape[0]
+            )
+            
+            # Forward the model to apply changes (MuJoCo requirement)
+            self.env.unwrapped.sim.forward()
         
         return observation, info
     
@@ -46,10 +66,10 @@ class StandingEnv(gym.Wrapper):
         self.current_step += 1
         
         # Modify reward for standing
-        reward = self._compute_task_reward(observation, base_reward, info, action)
+        reward, terminated = self._compute_task_reward(observation, base_reward, info, action)
         
         # Override termination for standing to allow indefinite episodes
-        terminated = False  # Prevent early termination based on height
+        terminated = terminated  # Prevent early termination based on height
         truncated = self.current_step >= self.max_episode_steps
         
         # Add task info
@@ -111,7 +131,8 @@ class StandingEnv(gym.Wrapper):
             linear_vel_penalty +
             angular_vel_penalty +
             control_penalty +
-            survival_bonus
+            survival_bonus + 
+            com_penalty
         )
         
         # === Termination check (optional - only end on catastrophic failure) ===

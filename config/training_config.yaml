@@ -66,6 +66,10 @@ standing:
 
 
   max_episode_steps: 5000
+  
+  domain_rand: true  # Enable randomization for robustness
+  rand_mass_range: [0.8, 1.2]  # Multiplier range for body masses
+  rand_friction_range: [0.7, 1.3]  # For geom friction
 
 
 # Model saving

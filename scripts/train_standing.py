@@ -343,7 +343,7 @@ if __name__ == "__main__":
         
         # Manually create the training environment
         def make_env():
-            return make_standing_env()
+            return make_standing_env(config=standing_config)
         train_env = SubprocVecEnv([make_env for _ in range(standing_config['n_envs'])])
         if standing_config['normalize']:
             train_env = VecNormalize(train_env)
