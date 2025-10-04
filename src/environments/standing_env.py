@@ -86,21 +86,13 @@ class StandingEnv(gym.Wrapper):
         angular_vel = self.env.unwrapped.data.qvel[3:6]
 
         # === Proper COM calculation ===
-        # MuJoCo stores subtree COM in data.subtree_com (indexed by body)
-        # The root body (torso) is typically body 1 (body 0 is world)
-        # Get the full body COM using cinert (composite inertia in global frame)
         model = self.env.unwrapped.model
         data = self.env.unwrapped.data
         
-        # Method 1: Use subtree_com for root body
-        # Body 1 is typically the torso/root, which includes all child bodies
-        root_body_id = 1  # Usually torso
+        root_body_id = 1
         com_pos = data.subtree_com[root_body_id].copy()
         
-        # Get foot positions - Humanoid-v5 has specific body/geom names
-        # We need to find the actual geom IDs for the feet
         try:
-            # Try to get foot geom positions (Humanoid has left_foot and right_foot geoms)
             left_foot_geom_id = model.geom('left_foot').id if hasattr(model, 'geom') else None
             right_foot_geom_id = model.geom('right_foot').id if hasattr(model, 'geom') else None
             
@@ -109,9 +101,6 @@ class StandingEnv(gym.Wrapper):
                 right_foot_pos = data.geom_xpos[right_foot_geom_id]
                 support_center = (left_foot_pos[:2] + right_foot_pos[:2]) / 2
             else:
-                # Fallback: use body positions for feet
-                # Bodies: 1=torso, then limbs...
-                # For Humanoid, feet are typically bodies 7 and 11 (or use body names)
                 try:
                     left_foot_body_id = model.body('left_foot').id
                     right_foot_body_id = model.body('right_foot').id
@@ -119,46 +108,57 @@ class StandingEnv(gym.Wrapper):
                     right_foot_pos = data.xpos[right_foot_body_id]
                     support_center = (left_foot_pos[:2] + right_foot_pos[:2]) / 2
                 except:
-                    # Last fallback: assume feet are roughly under the torso
                     support_center = np.array([root_x, root_y])
         except:
-            # Ultimate fallback: use origin
             support_center = np.array([0.0, 0.0])
         
-        # COM stability penalty
         com_error = np.linalg.norm(com_pos[:2] - support_center)
-        com_penalty = -5.0 * com_error**2
         
-        # === Primary objectives (standing at target) ===
-        # 1. Height target - tight basin for precise standing
+        # === PRIMARY: HEIGHT TARGET (dramatically increased importance) ===
         target_height = 1.3
         height_error = abs(height - target_height)
-        height_reward = 100.0 * np.exp(-20.0 * height_error**2)
         
-        # 2. Uprightness - must stay vertical
-        upright_reward = 30.0 * np.exp(-10.0 * (1.0 - abs(quat_w))**2)
+        # Much tighter tolerance - heavily penalize any deviation from target
+        # Gaussian with very narrow peak at target height
+        height_reward = 200.0 * np.exp(-50.0 * height_error**2)
         
-        # === Stability constraints (zero motion ideal) ===
-        # 3. Position stability - stay near origin
+        # Additional penalty for being too short (crouching is worse than being too tall)
+        if height < target_height:
+            height_penalty = -100.0 * (target_height - height)**2
+        else:
+            height_penalty = 0.0
+        
+        # === UPRIGHTNESS (increased importance) ===
+        upright_reward = 50.0 * np.exp(-15.0 * (1.0 - abs(quat_w))**2)
+        
+        # === STABILITY (slightly reduced to prioritize height) ===
+        # Position stability
         position_error = np.sqrt(root_x**2 + root_y**2)
-        position_penalty = -5.0 * position_error**2
+        position_penalty = -2.0 * position_error**2
         
-        # 4. Linear velocity - penalize any translational motion
-        linear_vel_penalty = -3.0 * np.sum(np.square(linear_vel))
+        # Velocity penalties
+        linear_vel_penalty = -1.0 * np.sum(np.square(linear_vel))
+        angular_vel_penalty = -1.0 * np.sum(np.square(angular_vel))
         
-        # 5. Angular velocity - penalize any rotational motion
-        angular_vel_penalty = -2.0 * np.sum(np.square(angular_vel))
+        # COM stability
+        com_penalty = -2.0 * com_error**2
         
-        # === Efficiency ===
-        # 6. Control cost - encourage minimal corrections
-        control_penalty = -0.01 * np.sum(np.square(action))
+        # === EFFICIENCY ===
+        control_penalty = -0.005 * np.sum(np.square(action))
         
-        # 7. Small survival bonus - rewards each timestep of successful standing
-        survival_bonus = 1.0
+        # === SURVIVAL BONUS (only if standing tall) ===
+        # Only give survival bonus if height is close to target
+        if height_error < 0.15:
+            survival_bonus = 5.0  # Increased for standing well
+        elif height_error < 0.3:
+            survival_bonus = 1.0
+        else:
+            survival_bonus = 0.0
             
-        # === Total reward ===
+        # === TOTAL REWARD ===
         total_reward = (
             height_reward +
+            height_penalty +  # Extra penalty for crouching
             upright_reward +
             position_penalty +
             linear_vel_penalty +
@@ -168,19 +168,19 @@ class StandingEnv(gym.Wrapper):
             com_penalty
         )
         
-        # === Termination check ===
+        # === TERMINATION ===
         terminate = False
-        if height < 0.5 or abs(quat_w) < 0.3:  # Catastrophic failure
+        if height < 0.6 or abs(quat_w) < 0.3:  # Lower threshold - catastrophic failure only
             terminate = True
-            total_reward = -100.0
+            total_reward = -200.0
         
-        # === Debug logging ===
+        # === DEBUG LOGGING ===
         if self.current_step % 1000 == 0:
             print(f"Step {self.current_step:4d} | "
                 f"Total: {total_reward:6.1f} | "
                 f"H: {height:5.2f} ({height_reward:5.1f}) | "
+                f"H_pen: {height_penalty:6.1f} | "
                 f"Up: {quat_w:4.2f} ({upright_reward:5.1f}) | "
-                f"Pos: {position_error:5.2f} ({position_penalty:6.1f}) | "
                 f"COM: {com_error:5.3f} ({com_penalty:6.1f})")
         
         return total_reward, terminate

@@ -625,10 +625,31 @@ class StandingAgent:
             total_timesteps = int(self.config.get("total_timesteps"))
 
         def eval_env_fn():
+            # Create base eval environment
+            base_eval_env = DummyVecEnv([lambda: make_standing_env(render_mode="rgb_array", config=self.config)])
+            
+            # Wrap with VecNormalize to match training env structure
             if isinstance(self.env, VecNormalize):
-                os.makedirs(os.path.dirname(self.vecnormalize_path), exist_ok=True)
-                self.env.save(self.vecnormalize_path)
-            return DummyVecEnv([lambda: make_standing_env(render_mode="rgb_array", config=self.config)])
+                # Load existing normalization stats if available
+                if os.path.exists(self.vecnormalize_path):
+                    eval_env = VecNormalize.load(self.vecnormalize_path, base_eval_env)
+                else:
+                    # Create new VecNormalize with same settings as training
+                    eval_env = VecNormalize(
+                        base_eval_env,
+                        norm_obs=True,
+                        norm_reward=False,
+                        clip_obs=10.0,
+                        gamma=self.config.get("gamma", 0.995),
+                    )
+                
+                # Set to evaluation mode
+                eval_env.training = False
+                eval_env.norm_reward = False
+                
+                return eval_env
+            else:
+                return base_eval_env
 
         # Create callbacks
         eval_callback = EvalCallback(
