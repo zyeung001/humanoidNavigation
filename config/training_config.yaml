@@ -46,9 +46,9 @@ standing:
   wandb_log_freq: 2000
   video_freq: 50000
   
-  target_reward_threshold: 45.0
-  height_stability_threshold: 0.2
-  height_error_threshold: 0.1
+  target_reward_threshold: 3000
+  height_stability_threshold: 0.15
+  height_error_threshold: 0.08
   
   normalize: true
   n_envs: 8
@@ -66,7 +66,7 @@ standing:
 
 
   max_episode_steps: 5000
-  
+
   domain_rand: true  # Enable randomization for robustness
   rand_mass_range: [0.8, 1.2]  # Multiplier range for body masses
   rand_friction_range: [0.7, 1.3]  # For geom friction

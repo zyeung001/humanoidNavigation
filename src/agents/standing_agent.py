@@ -650,11 +650,12 @@ class StandingAgent:
                 wandb_run=self.wandb_run,
             ),
             EarlyStoppingCallback(
-                check_freq=20000,
+                check_freq=50000,
                 target_reward=self.config['target_reward_threshold'],
                 target_height_error=self.config['height_error_threshold'],
                 target_stability=self.config['height_stability_threshold'],
-                patience=self.config.get('early_stop', {}).get('patience', 3)
+                min_episode_length=900,
+                patience=self.config.get('early_stop', {}).get('patience')
             )
         ]
         
@@ -976,54 +977,77 @@ def create_standing_agent(config_path='config/training_config.yaml', device='aut
 class EarlyStoppingCallback(BaseCallback):
     """Stop training when standing is mastered"""
     
-    def __init__(self, check_freq=20000, target_reward=50, target_height_error=0.1, 
-                 target_stability=0.05, patience=3):
+    def __init__(self, check_freq=50000, target_reward=3000, target_height_error=0.1, 
+                 target_stability=0.15, min_episode_length=900, patience=5):
         super().__init__()
         self.check_freq = check_freq
-        self.target_reward = target_reward
+        self.target_reward = target_reward  # Much higher threshold
         self.target_height_error = target_height_error
         self.target_stability = target_stability
+        self.min_episode_length = min_episode_length  # Require long episodes
         self.patience = patience
         self.success_count = 0
         
     def _on_step(self):
         if self.num_timesteps % self.check_freq == 0:
-            # Quick stability test
+            # Proper evaluation with full episodes
             eval_env = self.training_env
-            obs = eval_env.reset()
-            rewards = []
-            heights = []
             
-            for _ in range(200):  # 200 step test
-                action, _ = self.model.predict(obs, deterministic=True)
-                obs, reward, done, info = eval_env.step(action)
-                rewards.append(reward[0] if hasattr(reward, '__len__') else reward)
-                
-                if hasattr(info, '__len__') and len(info) > 0 and 'height' in info[0]:
-                    heights.append(info[0]['height'])
-                
-                if any(done) if hasattr(done, '__len__') else done:
-                    break
+            episode_rewards = []
+            episode_heights = []
+            episode_lengths = []
             
-            if heights:
-                mean_reward = np.mean(rewards)
-                mean_height = np.mean(heights)
+            for _ in range(5):  # Test 5 episodes
+                obs = eval_env.reset()
+                ep_reward = 0
+                ep_heights = []
+                ep_length = 0
+                
+                for step in range(2000):  # Allow longer episodes
+                    action, _ = self.model.predict(obs, deterministic=True)
+                    obs, reward, done, info = eval_env.step(action)
+                    
+                    ep_reward += reward[0] if hasattr(reward, '__len__') else reward
+                    ep_length += 1
+                    
+                    if hasattr(info, '__len__') and len(info) > 0 and 'height' in info[0]:
+                        ep_heights.append(info[0]['height'])
+                    
+                    if any(done) if hasattr(done, '__len__') else done:
+                        break
+                
+                episode_rewards.append(ep_reward)
+                episode_lengths.append(ep_length)
+                if ep_heights:
+                    episode_heights.extend(ep_heights)
+            
+            mean_reward = np.mean(episode_rewards)
+            mean_length = np.mean(episode_lengths)
+            
+            if episode_heights:
+                mean_height = np.mean(episode_heights)
                 height_error = abs(mean_height - 1.3)
-                height_stability = np.std(heights)
+                height_stability = np.std(episode_heights)
                 
+                # Stricter success criteria
                 success = (mean_reward > self.target_reward and 
                           height_error < self.target_height_error and
-                          height_stability < self.target_stability)
+                          height_stability < self.target_stability and
+                          mean_length > self.min_episode_length)  # Must survive long
                 
                 if success:
                     self.success_count += 1
-                    print(f"Standing success {self.success_count}/{self.patience} "
-                          f"(reward={mean_reward:.1f}, error={height_error:.3f})")
+                    print(f"✓ Standing success {self.success_count}/{self.patience} | "
+                          f"reward={mean_reward:.0f}, error={height_error:.3f}, "
+                          f"stability={height_stability:.3f}, length={mean_length:.0f}")
                     
                     if self.success_count >= self.patience:
-                        print("Standing mastered! Stopping training early.")
-                        return False  # Stop training
+                        print("Standing truly mastered! Stopping training.")
+                        return False
                 else:
                     self.success_count = 0
+                    print(f"✗ Not standing well | reward={mean_reward:.0f}, "
+                          f"error={height_error:.3f}, stability={height_stability:.3f}, "
+                          f"length={mean_length:.0f}")
         
         return True
