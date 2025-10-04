@@ -558,7 +558,7 @@ class StandingAgent:
 
         # Standing-optimized parameters
         model_params = {
-            "learning_rate": linear_schedule(self.config.get("learning_rate")),
+            "learning_rate": LinearSchedule(self.config.get("learning_rate")),
             "n_steps": self.config.get("n_steps"),
             "batch_size": self.config.get("batch_size"),
             "n_epochs": self.config.get("n_epochs"),
