@@ -17,7 +17,6 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 from stable_baselines3.common.evaluation import evaluate_policy
-from stable_baselines3.common.utils import LinearSchedule
 from stable_baselines3.common.callbacks import EvalCallback
 
 # Try to import wandb
@@ -558,7 +557,7 @@ class StandingAgent:
 
         # Standing-optimized parameters
         model_params = {
-            "learning_rate": LinearSchedule(self.config.get("learning_rate")),
+            "learning_rate": self.config.get("learning_rate"),
             "n_steps": self.config.get("n_steps"),
             "batch_size": self.config.get("batch_size"),
             "n_epochs": self.config.get("n_epochs"),
