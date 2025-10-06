@@ -75,7 +75,7 @@ class StandingEnv(gym.Wrapper):
         return observation, reward, terminated, truncated, info
     
     def _compute_task_reward(self, obs, base_reward, info, action):
-        """Reward function for stable, indefinite standing at target height."""
+        """Reward function that FORCES tall standing through dominant height term."""
         
         # === State extraction ===
         height = self.env.unwrapped.data.qpos[2]
@@ -85,103 +85,54 @@ class StandingEnv(gym.Wrapper):
         linear_vel = self.env.unwrapped.data.qvel[0:3]
         angular_vel = self.env.unwrapped.data.qvel[3:6]
 
-        # === Proper COM calculation ===
-        model = self.env.unwrapped.model
-        data = self.env.unwrapped.data
-        
-        root_body_id = 1
-        com_pos = data.subtree_com[root_body_id].copy()
-        
-        try:
-            left_foot_geom_id = model.geom('left_foot').id if hasattr(model, 'geom') else None
-            right_foot_geom_id = model.geom('right_foot').id if hasattr(model, 'geom') else None
-            
-            if left_foot_geom_id is not None and right_foot_geom_id is not None:
-                left_foot_pos = data.geom_xpos[left_foot_geom_id]
-                right_foot_pos = data.geom_xpos[right_foot_geom_id]
-                support_center = (left_foot_pos[:2] + right_foot_pos[:2]) / 2
-            else:
-                try:
-                    left_foot_body_id = model.body('left_foot').id
-                    right_foot_body_id = model.body('right_foot').id
-                    left_foot_pos = data.xpos[left_foot_body_id]
-                    right_foot_pos = data.xpos[right_foot_body_id]
-                    support_center = (left_foot_pos[:2] + right_foot_pos[:2]) / 2
-                except:
-                    support_center = np.array([root_x, root_y])
-        except:
-            support_center = np.array([0.0, 0.0])
-        
-        com_error = np.linalg.norm(com_pos[:2] - support_center)
-        
-        # === PRIMARY: HEIGHT TARGET (dramatically increased importance) ===
+        # === DOMINANT REWARD: HEIGHT (10x larger than everything else) ===
         target_height = 1.3
-        height_error = abs(height - target_height)
+        height_error = target_height - height  # Positive when too short
         
-        # Much tighter tolerance - heavily penalize any deviation from target
-        # Gaussian with very narrow peak at target height
-        height_reward = 200.0 * np.exp(-50.0 * height_error**2)
-        
-        # Additional penalty for being too short (crouching is worse than being too tall)
+        # Massive linear penalty for being below target
         if height < target_height:
-            height_penalty = -100.0 * (target_height - height)**2
+            height_reward = -500.0 * height_error  # -500 when fully crouched, 0 at target
         else:
-            height_penalty = 0.0
+            height_reward = 100.0 - 50.0 * (height - target_height)**2  # Small penalty for being too tall
         
-        # === UPRIGHTNESS (increased importance) ===
-        upright_reward = 50.0 * np.exp(-15.0 * (1.0 - abs(quat_w))**2)
+        # === SECONDARY: Uprightness (heavily reduced) ===
+        upright_reward = 20.0 * abs(quat_w)  # Linear, 0 to +20
         
-        # === STABILITY (slightly reduced to prioritize height) ===
-        # Position stability
+        # === TERTIARY: Stability (minimal influence) ===
         position_error = np.sqrt(root_x**2 + root_y**2)
-        position_penalty = -2.0 * position_error**2
+        position_penalty = -0.5 * position_error**2
         
-        # Velocity penalties
-        linear_vel_penalty = -1.0 * np.sum(np.square(linear_vel))
-        angular_vel_penalty = -1.0 * np.sum(np.square(angular_vel))
+        linear_vel_penalty = -0.2 * np.sum(np.square(linear_vel))
+        angular_vel_penalty = -0.2 * np.sum(np.square(angular_vel))
         
-        # COM stability
-        com_penalty = -2.0 * com_error**2
+        control_penalty = -0.001 * np.sum(np.square(action))
         
-        # === EFFICIENCY ===
-        control_penalty = -0.005 * np.sum(np.square(action))
+        # === SURVIVAL: Only if standing tall ===
+        survival_bonus = 10.0 if height > 1.2 else 0.0
         
-        # === SURVIVAL BONUS (only if standing tall) ===
-        # Only give survival bonus if height is close to target
-        if height_error < 0.15:
-            survival_bonus = 5.0  # Increased for standing well
-        elif height_error < 0.3:
-            survival_bonus = 1.0
-        else:
-            survival_bonus = 0.0
-            
         # === TOTAL REWARD ===
         total_reward = (
-            height_reward +
-            height_penalty +  # Extra penalty for crouching
-            upright_reward +
-            position_penalty +
-            linear_vel_penalty +
-            angular_vel_penalty +
-            control_penalty +
-            survival_bonus + 
-            com_penalty
+            height_reward +      # -500 to +100 (DOMINATES)
+            upright_reward +     # 0 to +20
+            position_penalty +   # ~0
+            linear_vel_penalty + # ~0
+            angular_vel_penalty + # ~0
+            control_penalty +    # ~0
+            survival_bonus       # 0 or +10
         )
         
         # === TERMINATION ===
         terminate = False
-        if height < 0.6 or abs(quat_w) < 0.3:  # Lower threshold - catastrophic failure only
+        if height < 0.5 or abs(quat_w) < 0.2:
             terminate = True
-            total_reward = -200.0
+            total_reward = -1000.0
         
-        # === DEBUG LOGGING ===
+        # === DEBUG ===
         if self.current_step % 1000 == 0:
             print(f"Step {self.current_step:4d} | "
-                f"Total: {total_reward:6.1f} | "
-                f"H: {height:5.2f} ({height_reward:5.1f}) | "
-                f"H_pen: {height_penalty:6.1f} | "
-                f"Up: {quat_w:4.2f} ({upright_reward:5.1f}) | "
-                f"COM: {com_error:5.3f} ({com_penalty:6.1f})")
+                f"Total: {total_reward:7.1f} | "
+                f"H: {height:5.2f} (R={height_reward:7.1f}) | "
+                f"Up: {quat_w:4.2f} ({upright_reward:5.1f})")
         
         return total_reward, terminate
     
