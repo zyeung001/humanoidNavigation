@@ -131,7 +131,7 @@ class StandingCallback(BaseCallback):
             self.vecnormalize_path = config.get('vecnormalize_path')
             
             # Initialize tracking variables
-            self.best_mean_reward = -np.inf
+            self.best_mean_rewardard = -np.inf
             self.best_height_error = np.inf
             self.best_height_stability = np.inf
             self.height_data = []
@@ -414,15 +414,15 @@ class StandingCallback(BaseCallback):
                 heights.extend(ep_heights)
         
         # Calculate metrics
-        mean_rew = np.mean(rewards)
+        mean_rewardard = np.mean(rewards)
         std_rew = np.std(rewards)
 
-        if mean_reward > self.best_mean_reward:
-            self.best_mean_reward = mean_reward
+        if mean_rewardard > self.best_mean_rewardard:
+            self.best_mean_rewardard = mean_rewardard
             self.model.save(self.best_model_path)
             if isinstance(self.model.get_env(), VecNormalize):
                 self.model.get_env().save(self.vecnormalize_path)
-            print(f"New best! Reward: {mean_reward:.2f}")
+            print(f"New best! Reward: {mean_rewardard:.2f}")
         
         standing_metrics = {}
         if heights:
@@ -438,22 +438,22 @@ class StandingCallback(BaseCallback):
             }
             
             if self.verbose:
-                print(f"[eval] t={self.num_timesteps:,} reward={mean_rew:.2f}±{std_rew:.2f} "
+                print(f"[eval] t={self.num_timesteps:,} reward={mean_reward:.2f}±{std_rew:.2f} "
                     f"height={mean_height:.3f}±{height_stability:.3f} error={height_error:.3f}")
         
         # Track best model
         is_new_best = False
-        if mean_rew > self.best_mean_reward:
+        if mean_reward > self.best_mean_rewardard:
             if not standing_metrics or standing_metrics["height_error"] < 0.2:
-                self.best_mean_reward = mean_rew
+                self.best_mean_rewardard = mean_reward
                 if standing_metrics:
                     self.best_height_error = standing_metrics["height_error"]
                     self.best_height_stability = standing_metrics["height_stability"]
                 is_new_best = True
         elif (standing_metrics and 
             standing_metrics["height_error"] < self.best_height_error * 0.9 and
-            mean_rew > self.success_threshold):
-            self.best_mean_reward = mean_rew
+            mean_reward > self.success_threshold):
+            self.best_mean_rewardard = mean_reward
             self.best_height_error = standing_metrics["height_error"]
             self.best_height_stability = standing_metrics["height_stability"]
             is_new_best = True
@@ -461,20 +461,20 @@ class StandingCallback(BaseCallback):
         if is_new_best:
             self.model.save(self.best_model_path)
             if self.verbose:
-                print(f"New best model saved (reward={mean_rew:.2f})")
+                print(f"New best model saved (reward={mean_reward:.2f})")
             
             if WANDB_AVAILABLE and wandb.run:
                 wandb.save(self.best_model_path)
-                wandb.run.summary["best_mean_reward"] = mean_rew
+                wandb.run.summary["best_mean_rewardard"] = mean_reward
                 if standing_metrics:
                     wandb.run.summary["best_height_error"] = standing_metrics["height_error"]
                     wandb.run.summary["best_height_stability"] = standing_metrics["height_stability"]
         
         # Log to tensorboard and WandB
         if hasattr(self.model, "logger") and self.model.logger is not None:
-            self.model.logger.record("eval/mean_reward", float(mean_rew))
+            self.model.logger.record("eval/mean_rewardard", float(mean_reward))
             self.model.logger.record("eval/std_reward", float(std_rew))
-            self.model.logger.record("eval/best_mean_reward", float(self.best_mean_reward))
+            self.model.logger.record("eval/best_mean_rewardard", float(self.best_mean_rewardard))
             
             if standing_metrics:
                 for key, value in standing_metrics.items():
@@ -482,9 +482,9 @@ class StandingCallback(BaseCallback):
         
         if WANDB_AVAILABLE and wandb.run:
             log_data = {
-                "eval/mean_reward": float(mean_rew),
+                "eval/mean_rewardard": float(mean_reward),
                 "eval/std_reward": float(std_rew),
-                "eval/best_mean_reward": float(self.best_mean_reward),
+                "eval/best_mean_rewardard": float(self.best_mean_rewardard),
                 "eval/mean_length": float(np.mean(episode_lengths)),
                 "eval/timesteps": self.num_timesteps,
             }
@@ -810,13 +810,13 @@ class StandingAgent:
         eval_env.close()
 
         # Calculate overall metrics
-        mean_reward = np.mean(episode_rewards)
+        mean_rewardard = np.mean(episode_rewards)
         std_reward = np.std(episode_rewards)
         mean_length = np.mean(episode_lengths)
         std_length = np.std(episode_lengths)
         
         results = {
-            "mean_reward": float(mean_reward),
+            "mean_rewardard": float(mean_rewardard),
             "std_reward": float(std_reward),
             "mean_length": float(mean_length),
             "std_length": float(std_length),
@@ -841,7 +841,7 @@ class StandingAgent:
             })
 
         print(f"\nStanding Evaluation Results:")
-        print(f"   Mean Reward: {mean_reward:.2f} ± {std_reward:.2f}")
+        print(f"   Mean Reward: {mean_rewardard:.2f} ± {std_reward:.2f}")
         print(f"   Mean Length: {mean_length:.2f} ± {std_length:.2f}")
         
         if all_heights:
@@ -850,14 +850,14 @@ class StandingAgent:
             print(f"   Height Stability: {height_stability:.3f}")
             
             # Standing success assessment
-            success_reward = mean_reward > self.success_threshold
+            success_reward = mean_rewardard > self.success_threshold
             success_height = height_error < self.config.get('height_error_threshold', 0.1)
             success_stability = height_stability < self.config.get('height_stability_threshold', 0.2)
             overall_success = success_reward and success_height and success_stability
             
             print(f"\nStanding Assessment:")
             print(f"   Reward Success: {'✓' if success_reward else '✗'} "
-                  f"({mean_reward:.2f} > {self.success_threshold})")
+                  f"({mean_rewardard:.2f} > {self.success_threshold})")
             print(f"   Height Success: {'✓' if success_height else '✗'} "
                   f"(error {height_error:.3f} < {self.config.get('height_error_threshold', 0.1)})")
             print(f"   Stability Success: {'✓' if success_stability else '✗'} "
@@ -951,7 +951,7 @@ class StandingAgent:
                 "mean_height": np.mean(all_heights),
                 "height_stability": np.std(all_heights),
                 "height_error": abs(np.mean(all_heights) - self.target_height),
-                "mean_reward": np.mean(all_rewards),
+                "mean_rewardard": np.mean(all_rewards),
                 "episodes_completed": len([ep for ep in all_data if not ep['terminated_early']]),
                 "early_termination_rate": len([ep for ep in all_data if ep['terminated_early']]) / n_episodes,
             }
@@ -959,7 +959,7 @@ class StandingAgent:
             print(f"\nOverall Standing Analysis:")
             print(f"   Mean Height: {analysis['mean_height']:.3f} ± {analysis['height_stability']:.3f}")
             print(f"   Height Error: {analysis['height_error']:.3f}")
-            print(f"   Mean Reward: {analysis['mean_reward']:.3f}")
+            print(f"   Mean Reward: {analysis['mean_rewardard']:.3f}")
             print(f"   Episodes Completed: {analysis['episodes_completed']}/{n_episodes}")
             print(f"   Early Termination Rate: {analysis['early_termination_rate']:.1%}")
             
@@ -969,7 +969,7 @@ class StandingAgent:
                     "analysis/mean_height": analysis['mean_height'],
                     "analysis/height_stability": analysis['height_stability'],
                     "analysis/height_error": analysis['height_error'],
-                    "analysis/mean_reward": analysis['mean_reward'],
+                    "analysis/mean_rewardard": analysis['mean_rewardard'],
                     "analysis/completion_rate": 1 - analysis['early_termination_rate'],
                 })
             
@@ -1052,7 +1052,7 @@ class EarlyStoppingCallback(BaseCallback):
                 if ep_heights:
                     episode_heights.extend(ep_heights)
             
-            mean_reward = np.mean(episode_rewards)
+            mean_rewardard = np.mean(episode_rewards)
             mean_length = np.mean(episode_lengths)
             
             if episode_heights:
@@ -1061,7 +1061,7 @@ class EarlyStoppingCallback(BaseCallback):
                 height_stability = np.std(episode_heights)
                 
                 # Stricter success criteria
-                success = (mean_reward > self.target_reward and 
+                success = (mean_rewardard > self.target_reward and 
                           height_error < self.target_height_error and
                           height_stability < self.target_stability and
                           mean_length > self.min_episode_length)  # Must survive long
@@ -1069,7 +1069,7 @@ class EarlyStoppingCallback(BaseCallback):
                 if success:
                     self.success_count += 1
                     print(f"✓ Standing success {self.success_count}/{self.patience} | "
-                          f"reward={mean_reward:.0f}, error={height_error:.3f}, "
+                          f"reward={mean_rewardard:.0f}, error={height_error:.3f}, "
                           f"stability={height_stability:.3f}, length={mean_length:.0f}")
                     
                     if self.success_count >= self.patience:
@@ -1077,7 +1077,7 @@ class EarlyStoppingCallback(BaseCallback):
                         return False
                 else:
                     self.success_count = 0
-                    print(f"✗ Not standing well | reward={mean_reward:.0f}, "
+                    print(f"✗ Not standing well | reward={mean_rewardard:.0f}, "
                           f"error={height_error:.3f}, stability={height_stability:.3f}, "
                           f"length={mean_length:.0f}")
         
