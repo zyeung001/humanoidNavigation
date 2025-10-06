@@ -8,7 +8,7 @@ standing_env.py
 import gymnasium as gym
 import numpy as np
 from typing import Dict, Any, Tuple, Optional
-
+from mujoco import mj_name2id, mjtObj
 
 class StandingEnv(gym.Wrapper):
     """Wrapper for MuJoCo Humanoid environment optimized for standing task"""
