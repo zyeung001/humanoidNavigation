@@ -414,15 +414,15 @@ class StandingCallback(BaseCallback):
                 heights.extend(ep_heights)
         
         # Calculate metrics
-        mean_rewardard = np.mean(rewards)
+        mean_reward = np.mean(rewards)
         std_rew = np.std(rewards)
 
-        if mean_rewardard > self.best_mean_rewardard:
-            self.best_mean_rewardard = mean_rewardard
+        if mean_reward > self.best_mean_reward:
+            self.best_mean_reward = mean_reward
             self.model.save(self.best_model_path)
             if isinstance(self.model.get_env(), VecNormalize):
                 self.model.get_env().save(self.vecnormalize_path)
-            print(f"New best! Reward: {mean_rewardard:.2f}")
+            print(f"New best! Reward: {mean_reward:.2f}")
         
         standing_metrics = {}
         if heights:
