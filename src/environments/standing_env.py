@@ -90,8 +90,11 @@ class StandingEnv(gym.Wrapper):
         com_pos = self.env.unwrapped.data.subtree_com[torso_id]  # [x, y, z]
 
         # COM and feet for balance (use body_xpos as fixed)
-        left_foot_pos = self.env.unwrapped.data.body_xpos[mj_name2id(self.env.unwrapped.model, mjtObj.mjOBJ_BODY, 'left_foot')]
-        right_foot_pos = self.env.unwrapped.data.body_xpos[mj_name2id(self.env.unwrapped.model, mjtObj.mjOBJ_BODY, 'right_foot')]
+        # Feet positions
+        left_foot_id = mj_name2id(self.env.unwrapped.model, mjtObj.mjOBJ_BODY, 'left_foot')
+        right_foot_id = mj_name2id(self.env.unwrapped.model, mjtObj.mjOBJ_BODY, 'right_foot')
+        left_foot_pos = self.env.unwrapped.data.xpos[left_foot_id]
+        right_foot_pos = self.env.unwrapped.data.xpos[right_foot_id]
         support_center = (left_foot_pos[:2] + right_foot_pos[:2]) / 2
         com_error = np.linalg.norm(com_pos[:2] - support_center)
         
