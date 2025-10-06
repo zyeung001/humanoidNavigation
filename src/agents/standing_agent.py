@@ -58,7 +58,8 @@ def record_evaluation_video(model, env, n_episodes=1, max_steps_per_episode=1000
     if frame is None:
         print("Render returned None - check render_mode")
         return []  # Early exit
-    
+    frames = []
+
     for episode in range(n_episodes):
         obs = env.reset()
         episode_frames = []
@@ -110,6 +111,8 @@ class StandingCallback(BaseCallback):
             wandb_run=None,
         ):
             super().__init__(config.get('verbose', 1))
+
+            self.config = config
             
             # Get all values from config
             self.eval_env_fn = eval_env_fn
@@ -413,6 +416,13 @@ class StandingCallback(BaseCallback):
         # Calculate metrics
         mean_rew = np.mean(rewards)
         std_rew = np.std(rewards)
+
+        if mean_reward > self.best_mean_reward:
+            self.best_mean_reward = mean_reward
+            self.model.save(self.best_model_path)
+            if isinstance(self.model.get_env(), VecNormalize):
+                self.model.get_env().save(self.vecnormalize_path)
+            print(f"New best! Reward: {mean_reward:.2f}")
         
         standing_metrics = {}
         if heights:
@@ -542,7 +552,7 @@ class StandingAgent:
                 norm_obs=True,
                 norm_reward=False,  # CRITICAL FIX: Don't normalize rewards
                 clip_obs=10.0,
-                gamma=self.config.get("gamma", 0.995),
+                gamma=self.config.get("gamma"),
             )
         else:
             self.env = vec

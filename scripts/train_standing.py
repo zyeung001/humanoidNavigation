@@ -53,6 +53,9 @@ from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 from src.environments.standing_env import make_standing_env
 from datetime import datetime
 
+
+warnings.filterwarnings("ignore", message="Unable to register")  # CUDA noise
+
 # ======================================================
 # SETUP HELPERS
 # ======================================================
