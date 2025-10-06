@@ -85,8 +85,11 @@ class StandingEnv(gym.Wrapper):
         linear_vel = self.env.unwrapped.data.qvel[0:3]
         angular_vel = self.env.unwrapped.data.qvel[3:6]
 
+        # Get torso ID (root body for Humanoid)
+        torso_id = self.env.unwrapped.model.body_name2id('torso')
+        com_pos = self.env.unwrapped.data.subtree_com[torso_id]  # [x, y, z]
+
         # COM and feet for balance (use body_xpos as fixed)
-        com_pos = self.env.unwrapped.data.com  # Global COM [x,y,z]
         left_foot_pos = self.env.unwrapped.data.body_xpos[self.env.unwrapped.model.body_name2id('left_foot')]
         right_foot_pos = self.env.unwrapped.data.body_xpos[self.env.unwrapped.model.body_name2id('right_foot')]
         support_center = (left_foot_pos[:2] + right_foot_pos[:2]) / 2
