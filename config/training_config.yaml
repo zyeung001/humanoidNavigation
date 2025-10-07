@@ -7,7 +7,7 @@ general:
   device: "auto" 
   verbose: 1
   save_freq: 50000
-  eval_freq: 50000
+  eval_freq: 25000
   eval_episodes: 10   # More for better averages
 
 # Logging
@@ -19,8 +19,8 @@ logging:
 # Standing task
 standing:
   algorithm: "PPO"
-  total_timesteps: 200000 
-  learning_rate: 0.0003
+  total_timesteps: 500000 
+  learning_rate: 0.0002
   batch_size: 128
   n_steps: 2048
   n_epochs: 6
@@ -47,8 +47,8 @@ standing:
   video_freq: 50000
   
   target_reward_threshold: 1000
-  height_stability_threshold: 0.05
-  height_error_threshold: 0.05
+  height_stability_threshold: 0.08
+  height_error_threshold: 0.03
   
   normalize: true
   n_envs: 8

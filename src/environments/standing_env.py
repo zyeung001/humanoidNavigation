@@ -87,10 +87,9 @@ class StandingEnv(gym.Wrapper):
 
         # Get torso ID (root body for Humanoid)
         torso_id = mj_name2id(self.env.unwrapped.model, mjtObj.mjOBJ_BODY, 'torso')
-        com_pos = self.env.unwrapped.data.subtree_com[torso_id]  # [x, y, z]
+        com_pos = self.env.unwrapped.data.subtree_com[torso_id]
 
-        # COM and feet for balance (use body_xpos as fixed)
-        # Feet positions
+        # Feet positions for COM balance
         left_foot_id = mj_name2id(self.env.unwrapped.model, mjtObj.mjOBJ_BODY, 'left_foot')
         right_foot_id = mj_name2id(self.env.unwrapped.model, mjtObj.mjOBJ_BODY, 'right_foot')
         left_foot_pos = self.env.unwrapped.data.xpos[left_foot_id]
@@ -98,33 +97,47 @@ class StandingEnv(gym.Wrapper):
         support_center = (left_foot_pos[:2] + right_foot_pos[:2]) / 2
         com_error = np.linalg.norm(com_pos[:2] - support_center)
         
-        # === Primary: Height (smooth Gaussian, high scale) ===
+        # === PRIMARY: Height Reward (steep gradient + bonuses) ===
         target_height = 1.3
         height_error = abs(height - target_height)
-        height_reward = 100.0 * np.exp(-10.0 * height_error**2)  # Peak 100 at target, drops smoothly
+        
+        # Sharp exponential penalty
+        height_reward = 200.0 * np.exp(-50.0 * height_error**2)
+        
+        # Precision bonuses
+        if height_error < 0.05:
+            height_reward += 100.0  # Massive bonus within 5cm
+        elif height_error < 0.1:
+            height_reward += 50.0   # Good bonus within 10cm
+        
+        # Discourage being too tall (prevents jumping/overextension)
+        if height > target_height + 0.1:
+            height_reward *= 0.5
         
         # === Uprightness ===
-        upright_reward = 30.0 * np.exp(-5.0 * (1.0 - abs(quat_w))**2)  # Peak 30 when vertical
+        upright_reward = 30.0 * np.exp(-5.0 * (1.0 - abs(quat_w))**2)
         
-        # === Stability (stronger penalties to minimize motion/drift) ===
+        # === Stability (reduced to not dominate height) ===
         position_error = np.sqrt(root_x**2 + root_y**2)
-        position_penalty = -5.0 * np.clip(position_error**2, 0, 10)  # Clipped max -50
+        position_penalty = -2.0 * np.clip(position_error**2, 0, 5)
         
-        linear_vel_penalty = -3.0 * np.clip(np.sum(np.square(linear_vel)), 0, 10)  # Clipped max -30
-        angular_vel_penalty = -2.0 * np.clip(np.sum(np.square(angular_vel)), 0, 10)  # Clipped max -20
+        linear_vel_penalty = -1.0 * np.clip(np.sum(np.square(linear_vel)), 0, 5)
+        angular_vel_penalty = -1.0 * np.clip(np.sum(np.square(angular_vel)), 0, 5)
         
-        # COM balance
-        com_penalty = -10.0 * np.clip(com_error**2, 0, 5)  # Clipped max -50, stronger than before
+        # COM balance (keep this stronger for actual stability)
+        com_penalty = -8.0 * np.clip(com_error**2, 0, 5)
         
         # === Efficiency ===
-        control_penalty = -0.01 * np.sum(np.square(action))  # Minimal
+        control_penalty = -0.01 * np.sum(np.square(action))
         
-        # === Survival (constant dense bonus for longevity) ===
-        survival_bonus = 5.0 + 0.001 * self.current_step  # Ramp slightly for longer episodes
-
-        healthy_bonus = 15.0 if height > 1.0 and abs(quat_w) > 0.8 else 0.0
+        # === Survival (height-based bonus for longevity) ===
+        height_factor = np.clip((height - 1.0) / 0.3, 0, 1)  # 0 at h=1.0m, 1 at h=1.3m
+        survival_bonus = (5.0 + 0.001 * self.current_step) * (1.0 + height_factor)
         
-        # === Total ===
+        # More meaningful healthy bonus (stricter criteria)
+        healthy_bonus = 20.0 if (height > 1.25 and abs(quat_w) > 0.9) else 0.0
+        
+        # === Total Reward ===
         total_reward = (
             height_reward +
             upright_reward +
@@ -137,19 +150,20 @@ class StandingEnv(gym.Wrapper):
             healthy_bonus
         )
         
-        # === Termination (tighter for bad tilts/low height) ===
+        # === Termination ===
         terminate = False
-        if height < 0.8 or abs(quat_w) < 0.7:  # Stricter than 0.5/0.2 to avoid prolonged bad states
+        if height < 0.8 or abs(quat_w) < 0.7:
             terminate = True
             total_reward -= 500.0  # Harsh fall penalty
         
-        # === Debug ===
-        if self.current_step % 1000 == 0 and os.getpid() == os.getppid():
+        # === Debug Output (every 100 steps for better monitoring) ===
+        if self.current_step % 100 == 0:
             print(f"Step {self.current_step:4d} | "
-                f"Total: {total_reward:6.1f} | "
-                f"H: {height:5.2f} ({height_reward:5.1f}) | "
-                f"Up: {quat_w:4.2f} ({upright_reward:5.1f}) | "
-                f"COM err: {com_error:5.2f} ({com_penalty:6.1f})")
+                f"Total: {total_reward:7.1f} | "
+                f"H: {height:.3f} (R:{height_reward:6.1f}) | "
+                f"Up: {quat_w:.2f} ({upright_reward:5.1f}) | "
+                f"Pos: {position_error:.3f} ({position_penalty:5.1f}) | "
+                f"COM: {com_error:.3f} ({com_penalty:5.1f})")
         
         return total_reward, terminate
     
