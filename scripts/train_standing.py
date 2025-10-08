@@ -196,9 +196,9 @@ def main():
 
         # Check if standing was successfully learned
         success_criteria = {
-            'reward': results.get('mean_reward') > standing_config.get('target_reward_threshold', 200),
-            'height_error': results.get('height_error', float('inf')) < standing_config.get('height_error_threshold', 0.08),
-            'height_stability': results.get('height_stability', float('inf')) < standing_config.get('height_stability_threshold', 0.15),
+            'reward': results.get('mean_reward') > standing_config.get('target_reward_threshold'),
+            'height_error': results.get('height_error', float('inf')) < standing_config.get('height_error_threshold'),
+            'height_stability': results.get('height_stability', float('inf')) < standing_config.get('height_stability_threshold'),
         }
         
         standing_success = all(success_criteria.values())
@@ -207,7 +207,7 @@ def main():
         print(f"Mean Reward: {results.get('mean_reward'):.2f} (threshold: {standing_config.get('target_reward_threshold')}) {'✓' if success_criteria['reward'] else '✗'}")
         if 'height_error' in results:
             print(f"Height Error: {results['height_error']:.3f} (threshold: {standing_config.get('height_error_threshold')}) {'✓' if success_criteria['height_error'] else '✗'}")
-            print(f"Height Stability: {results['height_stability']:.3f} (threshold: {standing_config.get('height_stability_threshold', 0.15)}) {'✓' if success_criteria['height_stability'] else '✗'}")
+            print(f"Height Stability: {results['height_stability']:.3f} (threshold: {standing_config.get('height_stability_threshold')}) {'✓' if success_criteria['height_stability'] else '✗'}")
         print(f"Overall Standing Success: {'✓ PASSED' if standing_success else '✗ NEEDS MORE TRAINING'}")
 
         # Log final results to WandB

@@ -75,7 +75,7 @@ class StandingEnv(gym.Wrapper):
         return observation, reward, terminated, truncated, info
     
     def _compute_task_reward(self, obs, base_reward, info, action):
-        """Reward function for stable, indefinite standing at target height."""
+        """Enhanced reward function for more stable standing convergence"""
         
         # === State extraction ===
         height = self.env.unwrapped.data.qpos[2]
@@ -85,68 +85,88 @@ class StandingEnv(gym.Wrapper):
         linear_vel = self.env.unwrapped.data.qvel[0:3]
         angular_vel = self.env.unwrapped.data.qvel[3:6]
 
-        # Get torso ID (root body for Humanoid)
+        # Get torso and feet positions
         torso_id = mj_name2id(self.env.unwrapped.model, mjtObj.mjOBJ_BODY, 'torso')
         com_pos = self.env.unwrapped.data.subtree_com[torso_id]
 
-        # Feet positions for COM balance
         left_foot_id = mj_name2id(self.env.unwrapped.model, mjtObj.mjOBJ_BODY, 'left_foot')
         right_foot_id = mj_name2id(self.env.unwrapped.model, mjtObj.mjOBJ_BODY, 'right_foot')
         left_foot_pos = self.env.unwrapped.data.xpos[left_foot_id]
         right_foot_pos = self.env.unwrapped.data.xpos[right_foot_id]
+        
+        # Support polygon center
         support_center = (left_foot_pos[:2] + right_foot_pos[:2]) / 2
         com_error = np.linalg.norm(com_pos[:2] - support_center)
         
-        # === PRIMARY: Height Reward (steep gradient + bonuses) ===
+        # === PRIMARY: Height Reward (MORE AGGRESSIVE) ===
         target_height = 1.3
         height_error = abs(height - target_height)
         
-        # exponential with linear penalty
-        height_reward = 250.0 * np.exp(-80.0 * height_error**2) - 50.0 * height_error
+        # Stronger exponential with higher base reward
+        height_reward = 500.0 * np.exp(-100.0 * height_error**2)
         
-        # Progressive bonuses aligned with target
-        if height_error < 0.01:  # Within 1cm
-            height_reward += 150.0
+        # More aggressive bonuses
+        if height_error < 0.01:  # Within 1cm - JACKPOT
+            height_reward += 300.0
         elif height_error < 0.03:  # Within 3cm
-            height_reward += 100.0
-        elif height_error < 0.05:
-            height_reward += 50.0
+            height_reward += 150.0
+        elif height_error < 0.05:  # Within 5cm
+            height_reward += 75.0
+        elif height_error < 0.10:  # Within 10cm
+            height_reward += 25.0
         
-        # Discourage being too tall (prevents jumping/overextension)
-        if height > target_height + 0.1:
-            height_reward *= 0.5
+        # Stronger penalty for being too tall
+        if height > target_height + 0.15:
+            height_reward *= 0.3  # Harsh penalty
         
-        # === Uprightness ===
-        upright_reward = 30.0 * np.exp(-5.0 * (1.0 - abs(quat_w))**2)
+        # === CRITICAL: Height velocity penalty (prevent oscillations) ===
+        height_vel = self.env.unwrapped.data.qvel[2]
+        height_vel_penalty = -50.0 * abs(height_vel) if abs(height_vel) > 0.1 else 0
         
-        # === Stability (reduced to not dominate height) ===
+        # === Uprightness (stronger) ===
+        upright_reward = 50.0 * (abs(quat_w) ** 3)  # Cubic for stronger gradient near 1.0
+        
+        # === Position stability (softer early, stricter later) ===
         position_error = np.sqrt(root_x**2 + root_y**2)
-        position_penalty = -2.0 * np.clip(position_error**2, 0, 5)
+        # Progressive penalty based on training progress
+        position_penalty = -5.0 * min(position_error**2, 2.0)
         
-        linear_vel_penalty = -1.0 * np.clip(np.sum(np.square(linear_vel)), 0, 5)
-        angular_vel_penalty = -1.0 * np.clip(np.sum(np.square(angular_vel)), 0, 5)
+        # === Velocity penalties (reduced to not interfere with height corrections) ===
+        linear_vel_penalty = -0.5 * np.clip(np.sum(np.square(linear_vel[:2])), 0, 3)  # Only x,y
+        angular_vel_penalty = -0.5 * np.clip(np.sum(np.square(angular_vel)), 0, 3)
         
-        # COM balance (keep this stronger for actual stability)
-        com_penalty = -15.0 * np.clip(com_error**2, 0, 2)
+        # === COM balance (critical for stability) ===
+        com_penalty = -30.0 * min(com_error**2, 1.0)
         
-        # === Efficiency ===
-        control_penalty = -0.01 * np.sum(np.square(action))
+        # === Control (very light to allow corrections) ===
+        control_penalty = -0.005 * np.sum(np.square(action))
         
-        # === Survival (height-based bonus for longevity) ===
-        height_factor = np.clip((height - 1.0) / 0.3, 0, 1)  # 0 at h=1.0m, 1 at h=1.3m
-        survival_bonus = 5.0 * height_factor
+        # === Survival bonus (height-dependent) ===
+        if 1.25 < height < 1.35:  # Near target zone
+            survival_bonus = 20.0
+        elif 1.20 < height < 1.40:  # Acceptable zone
+            survival_bonus = 10.0
+        else:
+            survival_bonus = 2.0
         
-        # More meaningful healthy bonus (stricter criteria)
-        healthy_bonus = 30.0 if (1.28 < height < 1.32 and abs(quat_w) > 0.95) else 0.0
-
-        # === Smoothness Penalty (discourage rapid height changes) ===
-        height_change = abs(height - self.prev_height) if hasattr(self, 'prev_height') else 0
-        smoothness_penalty = -20.0 * height_change  # Penalize rapid height changes
-        self.prev_height = height
+        # === Perfect standing bonus ===
+        if (1.29 < height < 1.31 and  # Very close to target
+            abs(quat_w) > 0.98 and  # Very upright
+            position_error < 0.1 and  # Not drifting
+            com_error < 0.05):  # Well balanced
+            perfect_bonus = 100.0
+        else:
+            perfect_bonus = 0.0
+        
+        # === Foot contact bonus (both feet on ground) ===
+        left_contact = left_foot_pos[2] < 0.05
+        right_contact = right_foot_pos[2] < 0.05
+        contact_bonus = 10.0 if (left_contact and right_contact) else -20.0
         
         # === Total Reward ===
         total_reward = (
             height_reward +
+            height_vel_penalty +
             upright_reward +
             position_penalty +
             linear_vel_penalty +
@@ -154,24 +174,33 @@ class StandingEnv(gym.Wrapper):
             com_penalty +
             control_penalty +
             survival_bonus +
-            healthy_bonus +
-            smoothness_penalty
+            perfect_bonus +
+            contact_bonus
         )
         
-        # === Termination ===
+        # === Termination with grace period ===
         terminate = False
-        if height < 0.8 or abs(quat_w) < 0.7:
+        if height < 0.7:  # Lower threshold for falls
             terminate = True
-            total_reward -= 500.0  # Harsh fall penalty
+            total_reward -= 1000.0  # Severe penalty
+        elif height < 0.9 and self.current_step > 100:  # Grace period for startup
+            terminate = True
+            total_reward -= 500.0
+        elif abs(quat_w) < 0.6:  # Very tilted
+            terminate = True
+            total_reward -= 500.0
         
-        # === Debug Output (every 100 steps for better monitoring) ===
-        if self.current_step % 100 == 0:
+        # === Debug (less frequent) ===
+        if self.current_step % 200 == 0:
             print(f"Step {self.current_step:4d} | "
-                f"Total: {total_reward:7.1f} | "
-                f"H: {height:.3f} (R:{height_reward:6.1f}) | "
-                f"Up: {quat_w:.2f} ({upright_reward:5.1f}) | "
-                f"Pos: {position_error:.3f} ({position_penalty:5.1f}) | "
-                f"COM: {com_error:.3f} ({com_penalty:5.1f})")
+                f"R:{total_reward:6.1f} | "
+                f"H:{height:.2f}({height_reward:5.0f}) | "
+                f"Hv:{height_vel:.2f}({height_vel_penalty:4.0f}) | "
+                f"Up:{quat_w:.2f}({upright_reward:3.0f}) | "
+                f"COM:{com_error:.2f}({com_penalty:3.0f})")
+        
+        # Store for smoothness calculation
+        self.prev_height = height
         
         return total_reward, terminate
     
