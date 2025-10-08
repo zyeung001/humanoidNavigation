@@ -106,11 +106,9 @@ class StandingEnv(gym.Wrapper):
         height_reward = 500.0 * np.exp(-100.0 * height_error**2)
         
         # More aggressive bonuses
-        if height_error < 0.01:  # Within 1cm - JACKPOT
-            height_reward += 300.0
-        elif height_error < 0.03:  # Within 3cm
-            height_reward += 150.0
-        elif height_error < 0.05:  # Within 5cm
+        if height_error < 0.02:  # Within 2cm
+            height_reward += 150.0  # Reduced from 300
+        elif height_error < 0.05:  # Within 5cm  
             height_reward += 75.0
         elif height_error < 0.10:  # Within 10cm
             height_reward += 25.0
