@@ -582,7 +582,7 @@ class StandingAgent:
                 return 0.00005
         # Standing-optimized parameters
         model_params = {
-            "learning_rate": self.config.get("learning_rate"),
+            "learning_rate": lr_schedule,
             "n_steps": self.config.get("n_steps"),
             "batch_size": self.config.get("batch_size"),
             "n_epochs": self.config.get("n_epochs"),
