@@ -376,11 +376,11 @@ if __name__ == "__main__":
         callbacks = [
             StandingCallback(config=standing_config, eval_env_fn=eval_env_fn, wandb_run=wandb_run),
             EarlyStoppingCallback(
-                check_freq=20000,
+                check_freq=25000,
                 target_reward=standing_config['target_reward_threshold'],
                 target_height_error=standing_config['height_error_threshold'],
                 target_stability=standing_config['height_stability_threshold'],
-                target_length=900,  # Add if using length check
+                target_length=1500,  # Add if using length check
                 patience=3
             )
         ]

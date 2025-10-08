@@ -69,7 +69,7 @@ class StandingEnv(gym.Wrapper):
         terminated = terminated  # Prevent early termination based on height
         truncated = self.current_step >= self.max_episode_steps
         
-        # Add task info
+        # Add task info 
         info.update(self._get_task_info())
         
         return observation, reward, terminated, truncated, info
@@ -101,14 +101,16 @@ class StandingEnv(gym.Wrapper):
         target_height = 1.3
         height_error = abs(height - target_height)
         
-        # Sharp exponential penalty
-        height_reward = 200.0 * np.exp(-50.0 * height_error**2)
+        # exponential with linear penalty
+        height_reward = 250.0 * np.exp(-80.0 * height_error**2) - 50.0 * height_error
         
-        # Precision bonuses
-        if height_error < 0.05:
-            height_reward += 100.0  # Massive bonus within 5cm
-        elif height_error < 0.1:
-            height_reward += 50.0   # Good bonus within 10cm
+        # Progressive bonuses aligned with target
+        if height_error < 0.01:  # Within 1cm
+            height_reward += 150.0
+        elif height_error < 0.03:  # Within 3cm
+            height_reward += 100.0
+        elif height_error < 0.05:
+            height_reward += 50.0
         
         # Discourage being too tall (prevents jumping/overextension)
         if height > target_height + 0.1:
@@ -125,17 +127,22 @@ class StandingEnv(gym.Wrapper):
         angular_vel_penalty = -1.0 * np.clip(np.sum(np.square(angular_vel)), 0, 5)
         
         # COM balance (keep this stronger for actual stability)
-        com_penalty = -8.0 * np.clip(com_error**2, 0, 5)
+        com_penalty = -15.0 * np.clip(com_error**2, 0, 2)
         
         # === Efficiency ===
         control_penalty = -0.01 * np.sum(np.square(action))
         
         # === Survival (height-based bonus for longevity) ===
         height_factor = np.clip((height - 1.0) / 0.3, 0, 1)  # 0 at h=1.0m, 1 at h=1.3m
-        survival_bonus = (5.0 + 0.001 * self.current_step) * (1.0 + height_factor)
+        survival_bonus = 5.0 * height_factor
         
         # More meaningful healthy bonus (stricter criteria)
-        healthy_bonus = 20.0 if (height > 1.25 and abs(quat_w) > 0.9) else 0.0
+        healthy_bonus = 30.0 if (1.28 < height < 1.32 and abs(quat_w) > 0.95) else 0.0
+
+        # === Smoothness Penalty (discourage rapid height changes) ===
+        height_change = abs(height - self.prev_height) if hasattr(self, 'prev_height') else 0
+        smoothness_penalty = -20.0 * height_change  # Penalize rapid height changes
+        self.prev_height = height
         
         # === Total Reward ===
         total_reward = (
@@ -147,7 +154,8 @@ class StandingEnv(gym.Wrapper):
             com_penalty +
             control_penalty +
             survival_bonus +
-            healthy_bonus
+            healthy_bonus +
+            smoothness_penalty
         )
         
         # === Termination ===
