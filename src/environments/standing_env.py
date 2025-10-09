@@ -105,6 +105,8 @@ class StandingEnv(gym.Wrapper):
 
         # === PRIMARY: Height Reward (MORE AGGRESSIVE) ===
         target_height = self.target_height
+        height_error = abs(height - target_height)
+        
         if self.current_step < 50:  # Grace period for startup
             height_error = max(0, height_error - 0.05)  # Allow 5cm tolerance 
         else:
