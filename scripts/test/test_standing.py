@@ -35,7 +35,7 @@ def test_standing(model_path, vecnorm_path, n_steps=2000):
         'rand_friction_range': [0.85, 1.15],
         'target_height': 1.3
     }
-    env = make_standing_env(render_mode=None)
+    env = make_standing_env(render_mode=None, config=test_config)
     vec_env = DummyVecEnv([lambda: env])
     
     print(f"Loading VecNormalize...")
