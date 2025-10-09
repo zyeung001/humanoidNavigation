@@ -28,12 +28,6 @@ class StandingEnv(gym.Wrapper):
         self.base_target_height = 1.3
         self.curriculum_progress = 0.0
 
-        # In reset():
-        # Gradually increase target height from 1.2 to 1.3
-        self.target_height = 1.2 + 0.1 * min(1.0, self.curriculum_progress)
-        self.curriculum_progress += 1.0 / 100000
-
-
         self.max_episode_steps = config.get('max_episode_steps', 5000) if config else 5000
         self.current_step = 0
 
@@ -49,6 +43,10 @@ class StandingEnv(gym.Wrapper):
         observation, info = self.env.reset(seed=seed)
         self.current_step = 0
         self.prev_height = self.env.unwrapped.data.qpos[2]
+
+        # Gradually increase target height from 1.2 to 1.3
+        self.target_height = 1.2 + 0.1 * min(1.0, self.curriculum_progress)
+        self.curriculum_progress += 1.0 / 1000
         
         if self.domain_rand:
             # Randomize body masses
@@ -108,7 +106,7 @@ class StandingEnv(gym.Wrapper):
         com_error = np.linalg.norm(com_pos[:2] - support_center)
         
         # === PRIMARY: Height Reward (MORE AGGRESSIVE) ===
-        target_height = 1.3
+        target_height = self.target_height
         height_error = abs(height - target_height)
         
         # Stronger exponential with higher base reward
