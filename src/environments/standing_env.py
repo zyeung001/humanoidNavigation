@@ -26,7 +26,6 @@ class StandingEnv(gym.Wrapper):
         
         # Use config for max_episode_steps if provided
         self.base_target_height = 1.3
-        self.curriculum_progress = 0.0
 
         self.max_episode_steps = config.get('max_episode_steps', 5000) if config else 5000
         self.current_step = 0
@@ -44,9 +43,8 @@ class StandingEnv(gym.Wrapper):
         self.current_step = 0
         self.prev_height = self.env.unwrapped.data.qpos[2]
 
-        # Gradually increase target height from 1.2 to 1.3
-        self.target_height = 1.2 + 0.1 * min(1.0, self.curriculum_progress)
-        self.curriculum_progress += 1.0 / 1000
+
+        self.target_height = 1.3
         
         if self.domain_rand:
             # Randomize body masses
@@ -104,13 +102,14 @@ class StandingEnv(gym.Wrapper):
         # Support polygon center
         support_center = (left_foot_pos[:2] + right_foot_pos[:2]) / 2
         com_error = np.linalg.norm(com_pos[:2] - support_center)
-        
+
         # === PRIMARY: Height Reward (MORE AGGRESSIVE) ===
         target_height = self.target_height
-        height_error = abs(height - target_height)
+        if self.current_step < 50:  # Grace period for startup
+            height_error = max(0, height_error - 0.05)  # Allow 5cm tolerance 
+        else:
+            height_error = abs(height - target_height)
         
-        # Stronger exponential with higher base reward
-        height_error = abs(height - target_height)
 
         # Even stronger gradient toward target
         if height_error < 0.02:  # Within 2cm
