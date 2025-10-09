@@ -25,12 +25,21 @@ class StandingEnv(gym.Wrapper):
         super().__init__(env)
         
         # Use config for max_episode_steps if provided
+        self.base_target_height = 1.3
+        self.curriculum_progress = 0.0
+
+        # In reset():
+        # Gradually increase target height from 1.2 to 1.3
+        self.target_height = 1.2 + 0.1 * min(1.0, self.curriculum_progress)
+        self.curriculum_progress += 1.0 / 100000
+
+
         self.max_episode_steps = config.get('max_episode_steps', 5000) if config else 5000
         self.current_step = 0
 
         self.domain_rand = config.get('domain_rand')
         self.rand_mass_range = config.get('rand_mass_range')
-        self.rand_friction_range = config.get('rand_friction_range', [0.7, 1.3])
+        self.rand_friction_range = config.get('rand_friction_range')
         
         # Verify observation space (should be 348 for Humanoid-v5)
         obs_space = env.observation_space
@@ -103,15 +112,22 @@ class StandingEnv(gym.Wrapper):
         height_error = abs(height - target_height)
         
         # Stronger exponential with higher base reward
-        height_reward = 500.0 * np.exp(-100.0 * height_error**2)
-        
-        # More aggressive bonuses
+        height_error = abs(height - target_height)
+
+        # Even stronger gradient toward target
         if height_error < 0.02:  # Within 2cm
-            height_reward += 150.0  # Reduced from 300
-        elif height_error < 0.05:  # Within 5cm  
-            height_reward += 75.0
+            height_reward = 700.0  # Massive reward
+        elif height_error < 0.05:  # Within 5cm
+            height_reward = 400.0 + 200.0 * (0.05 - height_error) / 0.03
         elif height_error < 0.10:  # Within 10cm
-            height_reward += 25.0
+            height_reward = 200.0 + 200.0 * (0.10 - height_error) / 0.05
+        else:
+            # Exponential decay for larger errors
+            height_reward = 200.0 * np.exp(-20.0 * (height_error - 0.10)**2)
+
+        # Additional penalty for being too short (your robot's current problem)
+        if height < target_height - 0.05:  # More than 5cm too short
+            height_reward *= 0.5  # Cut reward in half
         
         # Stronger penalty for being too tall
         if height > target_height + 0.15:
