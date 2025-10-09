@@ -3,12 +3,11 @@ import sys
 import os
 import numpy as np
 
-# Fix the import path
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(script_dir, '..', '..'))
 sys.path.insert(0, project_root)
 
-# Now imports will work
+# imports
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from src.environments.standing_env import make_standing_env
@@ -28,6 +27,14 @@ def test_standing(model_path, vecnorm_path, n_steps=2000):
         return
     
     print("Creating environment...")
+
+    test_config = {
+        'max_episode_steps': 5000,
+        'domain_rand': False,  # Turn OFF for testing to see true performance
+        'rand_mass_range': [0.9, 1.1],
+        'rand_friction_range': [0.85, 1.15],
+        'target_height': 1.3
+    }
     env = make_standing_env(render_mode=None)
     vec_env = DummyVecEnv([lambda: env])
     
