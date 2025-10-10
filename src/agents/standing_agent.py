@@ -572,14 +572,13 @@ class StandingAgent:
             """
             progress = 1.0 - progress_remaining
             
-            if progress < 0.2:  # First 100k steps (20% of 500k)
+            if progress < 0.33:  # First 250k steps
+                return 0.0005
+            elif progress < 0.67:  # 250k-500k steps
                 return 0.0003
-            elif progress < 0.5:  # 100k-250k steps
-                return 0.0002
-            elif progress < 0.7:  # 250k-350k steps
+            else:  # Last 250k steps
                 return 0.0001
-            else:  # Last 150k steps
-                return 0.00005
+            
         # Standing-optimized parameters
         model_params = {
             "learning_rate": lr_schedule,
