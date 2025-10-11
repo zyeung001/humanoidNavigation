@@ -145,52 +145,46 @@ class StandingCallback(BaseCallback):
             os.makedirs(self.checkpoint_dir, exist_ok=True)
 
     def _collect_episode_data(self):
-        """Collect episode data for episode-based logging"""
         infos = self.locals.get("infos", [])
         
         for info in infos:
             # Collect height data during episode (step-level)
             if "height" in info:
+                if not hasattr(self, 'height_data'):
+                    self.height_data = []
+                self.height_data.append(info["height"])
+                
+                # Also track per-episode for detailed logging
                 if not hasattr(self, '_current_episode_heights'):
                     self._current_episode_heights = []
                 self._current_episode_heights.append(info["height"])
-                self.height_data.append(info["height"])
             
-            # Check if episode is done (episode stats available)
+            # Track XY position for drift calculation
+            if "x_position" in info and "y_position" in info:
+                if not hasattr(self, '_current_episode_xy'):
+                    self._current_episode_xy = []
+                self._current_episode_xy.append([info["x_position"], info["y_position"]])
+            
+            # When episode ends, store summary data
             if "episode" in info:
                 episode_reward = info["episode"]["r"]
                 episode_length = info["episode"]["l"]
                 
-                # Store episode data
                 self.episode_rewards.append(episode_reward)
                 self.episode_lengths.append(episode_length)
                 
-                # Calculate episode height statistics
-                if hasattr(self, '_current_episode_heights') and self._current_episode_heights:
-                    episode_height_mean = np.mean(self._current_episode_heights)
-                    episode_height_std = np.std(self._current_episode_heights)
-                    episode_height_error = abs(episode_height_mean - self.target_height)
-                    
-                    # Log episode-based metrics to WandB
-                    if WANDB_AVAILABLE and wandb.run:
-                        episode_metrics = {
-                            "train_episodes/reward": episode_reward,
-                            "train_episodes/length": episode_length,
-                            "train_episodes/height_mean": episode_height_mean,
-                            "train_episodes/height_std": episode_height_std,
-                            "train_episodes/height_error": episode_height_error,
-                            "train_episodes/episode_count": len(self.episode_rewards),
-                        }
-                        wandb.log(episode_metrics, step=self.num_timesteps)
-                    
-                    # Reset for next episode
-                    self._current_episode_heights = []
-                
+                # Print progress periodically
                 if self.verbose and len(self.episode_rewards) % self.episode_print_freq == 0:
-                    recent_rewards = self.episode_rewards[-10:]
-                    print(f"Episode {len(self.episode_rewards)}: "
-                        f"reward={episode_reward:.2f}, "
-                        f"recent_avg={np.mean(recent_rewards):.2f}")
+                    if self._current_episode_heights:
+                        ep_height_mean = np.mean(self._current_episode_heights)
+                        ep_height_std = np.std(self._current_episode_heights)
+                        print(f"Episode {len(self.episode_rewards)}: "
+                            f"len={episode_length}, height={ep_height_mean:.3f}±{ep_height_std:.3f}, "
+                            f"reward={episode_reward:.1f}")
+                
+                # Reset per-episode tracking (but keep global height_data!)
+                self._current_episode_heights = []
+                self._current_episode_xy = []
             
     def _save_checkpoint(self):
         """Save model checkpoint AND VecNormalize"""
@@ -238,69 +232,53 @@ class StandingCallback(BaseCallback):
         return True
 
     def _log_training_metrics(self):
-        """Log training metrics to WandB (merged from StandingWandBCallback)"""
-        # Get info from all environments
-        infos = self.locals.get("infos", [])
+        """Log training metrics every log_freq steps using recent episode data"""
+        if not (WANDB_AVAILABLE and wandb.run):
+            return
         
-        # Collect episode stats and standing-specific metrics
-        current_heights = []
-        for info in infos:
-            if "episode" in info:
-                self.episode_rewards.append(info["episode"]["r"])
-                self.episode_lengths.append(info["episode"]["l"])
+        # Calculate metrics from recent completed episodes
+        if not self.episode_rewards or not self.episode_lengths:
+            return  # No episodes completed yet
+        
+        # Use last N completed episodes for current metrics (e.g., last 10 episodes)
+        n_recent = min(10, len(self.episode_rewards))
+        recent_lengths = self.episode_lengths[-n_recent:]
+        
+        # Get height data from recent episodes
+        if hasattr(self, 'height_data') and self.height_data:
+            # Use last ~1000 height samples (approximate from recent episodes)
+            recent_heights = self.height_data[-1000:]
             
-            # Collect height data for standing analysis
-            if "height" in info:
-                current_heights.append(info["height"])
-                self.height_data.append(info["height"])
-        
-        # Build log dictionary
-        log_dict = {
-            "train/timesteps": self.num_timesteps,
-            "train/n_updates": self.model.n_updates if hasattr(self.model, 'n_updates') else 0,
-        }
-        
-        # Add episode stats if we have them
-        if self.episode_rewards:
-            log_dict.update({
-                "train/episode_reward_mean": np.mean(self.episode_rewards[-100:]),
-                "train/episode_reward_std": np.std(self.episode_rewards[-100:]),
-                "train/episode_length_mean": np.mean(self.episode_lengths[-100:]),
-            })
-        
-        # Add standing-specific metrics
-        if current_heights:
-            log_dict.update({
-                "train/height_mean": np.mean(current_heights),
-                "train/height_std": np.std(current_heights),
-                "train/height_error": abs(np.mean(current_heights) - self.target_height),
-            })
-        
-        if len(self.height_data) >= 50:  # Need some history for stability
-            recent_heights = self.height_data[-50:]
-            log_dict["train/height_stability"] = np.std(recent_heights)
-        
-        # Get learning rate
-        if hasattr(self.model, 'learning_rate'):
-            if callable(self.model.learning_rate):
-                lr = self.model.learning_rate(self.model._current_progress_remaining)
-            else:
-                lr = self.model.learning_rate
-            log_dict["train/learning_rate"] = lr
-        
-        # Get other training stats from logger if available
-        if hasattr(self.model, "logger") and self.model.logger:
-            if hasattr(self.model.logger, "name_to_value"):
-                for key, value in self.model.logger.name_to_value.items():
-                    if value is not None:
-                        if "loss" in key.lower():
-                            log_dict[f"train/{key}"] = value
-                        elif "entropy" in key.lower():
-                            log_dict[f"train/{key}"] = value
-                        elif "clip" in key.lower():
-                            log_dict[f"train/{key}"] = value
-        
-        wandb.log(log_dict, step=self.num_timesteps)
+            mean_height = np.mean(recent_heights)
+            height_stability = np.std(recent_heights)
+            height_error = abs(mean_height - self.target_height)
+            
+            # Calculate max consecutive in range
+            in_range = np.abs(np.array(recent_heights) - self.target_height) < 0.05
+            max_consec = 0
+            current_consec = 0
+            for in_target in in_range:
+                if in_target:
+                    current_consec += 1
+                    max_consec = max(max_consec, current_consec)
+                else:
+                    current_consec = 0
+            
+            # Get action data
+            actions = self.locals.get("actions", np.array([[0]]))
+            
+            # Log the 8 core metrics
+            wandb.log({
+                "global_step": self.num_timesteps,
+                "train/episode_length": float(np.mean(recent_lengths)),
+                "train/mean_height": float(mean_height),
+                "train/height_stability": float(height_stability),
+                "train/max_consecutive_in_range": float(max_consec),
+                "train/xy_drift": 0.0,  # Calculate if you track XY positions
+                "train/action_magnitude_mean": float(np.abs(actions).mean()),
+                "train/action_magnitude_max": float(np.abs(actions).max()),
+                "train/height_error": float(height_error),
+            }, step=self.num_timesteps)
 
     def _record_and_log_video(self):
         if self.verbose:
@@ -424,77 +402,46 @@ class StandingCallback(BaseCallback):
                 self.model.get_env().save(self.vecnormalize_path)
             print(f"New best! Reward: {mean_rew:.2f}")
         
-        standing_metrics = {}
-        if heights:
-            mean_height = np.mean(heights)
-            height_error = abs(mean_height - self.target_height)
-            height_stability = np.std(heights)
+        # Log evaluation metrics to WandB
+        if WANDB_AVAILABLE and wandb.run and heights:
+            mean_height = float(np.mean(heights))
+            height_stability = float(np.std(heights))
+            height_error = float(abs(mean_height - self.target_height))
+            mean_length = float(np.mean(episode_lengths))
             
-            standing_metrics = {
-                "mean_height": mean_height,
-                "height_error": height_error,
-                "height_stability": height_stability,
-                "target_height": self.target_height,
-            }
+            # Calculate max consecutive in range
+            in_range = np.abs(np.array(heights) - self.target_height) < 0.05
+            max_consec = 0
+            curr_consec = 0
+            for in_target in in_range:
+                if in_target:
+                    curr_consec += 1
+                    max_consec = max(max_consec, curr_consec)
+                else:
+                    curr_consec = 0
             
-            if self.verbose:
-                print(f"[eval] t={self.num_timesteps:,} reward={mean_rew:.2f}±{std_rew:.2f} "
-                    f"height={mean_height:.3f}±{height_stability:.3f} error={height_error:.3f}")
-        
-        # Track best model
-        is_new_best = False
-        if mean_rew > self.best_mean_reward:
-            if not standing_metrics or standing_metrics["height_error"] < 0.2:
-                self.best_mean_reward = mean_rew
-                if standing_metrics:
-                    self.best_height_error = standing_metrics["height_error"]
-                    self.best_height_stability = standing_metrics["height_stability"]
-                is_new_best = True
-        elif (standing_metrics and 
-            standing_metrics["height_error"] < self.best_height_error * 0.9 and
-            mean_rew > self.success_threshold):
-            self.best_mean_reward = mean_rew
-            self.best_height_error = standing_metrics["height_error"]
-            self.best_height_stability = standing_metrics["height_stability"]
-            is_new_best = True
-        
-        if is_new_best:
-            self.model.save(self.best_model_path)
-            if self.verbose:
-                print(f"New best model saved (reward={mean_rew:.2f})")
+            wandb.log({
+                "global_step": self.num_timesteps,
+                "eval/episode_length": mean_length,
+                "eval/mean_height": mean_height,
+                "eval/height_stability": height_stability,
+                "eval/max_consecutive_in_range": float(max_consec),
+                "eval/xy_drift": 0.0,  # Add if you track XY in eval
+                "eval/action_magnitude_mean": 0.0,  # Add if you track actions in eval
+                "eval/action_magnitude_max": 0.0,  # Add if you track actions in eval
+                "eval/height_error": height_error,
+            }, step=self.num_timesteps)
             
-            if WANDB_AVAILABLE and wandb.run:
-                wandb.save(self.best_model_path)
-                wandb.run.summary["best_mean_reward"] = mean_rew
-                if standing_metrics:
-                    wandb.run.summary["best_height_error"] = standing_metrics["height_error"]
-                    wandb.run.summary["best_height_stability"] = standing_metrics["height_stability"]
-        
-        # Log to tensorboard and WandB
-        if hasattr(self.model, "logger") and self.model.logger is not None:
-            self.model.logger.record("eval/mean_reward", float(mean_rew))
-            self.model.logger.record("eval/std_reward", float(std_rew))
-            self.model.logger.record("eval/best_mean_reward", float(self.best_mean_reward))
-            
-            if standing_metrics:
-                for key, value in standing_metrics.items():
-                    self.model.logger.record(f"eval/{key}", float(value))
-        
-        if WANDB_AVAILABLE and wandb.run:
-            log_data = {
-                "eval/mean_reward": float(mean_rew),
-                "eval/std_reward": float(std_rew),
-                "eval/best_mean_reward": float(self.best_mean_reward),
-                "eval/mean_length": float(np.mean(episode_lengths)),
-                "eval/timesteps": self.num_timesteps,
-            }
-            
-            if standing_metrics:
-                for key, value in standing_metrics.items():
-                    log_data[f"eval/{key}"] = float(value)
-            
-            wandb.log(log_data, step=self.num_timesteps)
-        
+            # Update best values in summary
+            if height_error < wandb.run.summary.get("best_height_error", float('inf')):
+                wandb.run.summary["best_height_error"] = height_error
+            if height_stability < wandb.run.summary.get("best_height_stability", float('inf')):
+                wandb.run.summary["best_height_stability"] = height_stability
+            if mean_length > wandb.run.summary.get("best_episode_length", 0):
+                wandb.run.summary["best_episode_length"] = mean_length
+            if max_consec > wandb.run.summary.get("best_max_consecutive", 0):
+                wandb.run.summary["best_max_consecutive"] = max_consec
+
         eval_env.close()
 
 
@@ -804,22 +751,6 @@ class StandingAgent:
             episode_rewards.append(ep_rew)
             episode_lengths.append(ep_len)
             episode_heights.append(heights_this_ep)
-            
-            # Log individual episode to WandB
-            if WANDB_AVAILABLE and wandb.run:
-                ep_metrics = {
-                    f"eval_episode/reward_ep_{ep}": ep_rew,
-                    f"eval_episode/length_ep_{ep}": ep_len,
-                }
-                
-                if heights_this_ep:
-                    ep_metrics.update({
-                        f"eval_episode/mean_height_ep_{ep}": np.mean(heights_this_ep),
-                        f"eval_episode/height_stability_ep_{ep}": np.std(heights_this_ep),
-                        f"eval_episode/height_error_ep_{ep}": abs(np.mean(heights_this_ep) - self.target_height),
-                    })
-                
-                wandb.log(ep_metrics)
 
         eval_env.close()
 

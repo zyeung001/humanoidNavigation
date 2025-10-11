@@ -19,7 +19,7 @@ logging:
 # Standing task - IMPROVED
 standing:
   algorithm: "PPO"
-  total_timesteps: 750000  # Extended for better convergence
+  total_timesteps: 750000
   
   # MORE GRADUAL learning rate schedule
   learning_rate: 

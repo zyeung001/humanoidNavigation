@@ -40,14 +40,12 @@ except ImportError:
     os.system("pip install wandb")
     import wandb
 
-# ======================================================
 # PROJECT IMPORTS
-# ======================================================
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from src.agents.standing_agent import StandingAgent  # <-- use the parallel VecEnv + VecNormalize version
+from src.agents.standing_agent import StandingAgent 
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 from src.environments.standing_env import make_standing_env
@@ -56,9 +54,8 @@ from datetime import datetime
 
 warnings.filterwarnings("ignore", message="Unable to register")  # CUDA noise
 
-# ======================================================
+
 # SETUP HELPERS
-# ======================================================
 def setup_colab_environment():
     """Quick setup for Colab runtime."""
     os.environ.setdefault("MUJOCO_GL", "egl")
@@ -98,9 +95,8 @@ def load_config():
     print(f"Loaded config from {config_path}")
     return config
 
-# ======================================================
 # TRAINING MAIN
-# ======================================================
+
 def main():
     print("=== Humanoid Standing PPO Training with WandB ===")
     device = setup_colab_environment()
@@ -138,21 +134,37 @@ def main():
         )
         standing_config['wandb_run'] = wandb_run
         
-        # Define custom metrics for better visualization
-        wandb.define_metric("train_episodes/episode_count")
-        wandb.define_metric("train_episodes/*", step_metric="train_episodes/episode_count")
-        wandb.define_metric("train/timesteps")
-        wandb.define_metric("train/*", step_metric="train/timesteps")
-        wandb.define_metric("eval/*", step_metric="train/timesteps")
+        wandb.define_metric("global_step")
+
+        # Training metrics
+        wandb.define_metric("train/episode_length", step_metric="global_step")
+        wandb.define_metric("train/mean_height", step_metric="global_step")
+        wandb.define_metric("train/height_stability", step_metric="global_step")
+        wandb.define_metric("train/max_consecutive_in_range", step_metric="global_step")
+        wandb.define_metric("train/xy_drift", step_metric="global_step")
+        wandb.define_metric("train/action_magnitude_mean", step_metric="global_step")
+        wandb.define_metric("train/action_magnitude_max", step_metric="global_step")
+        wandb.define_metric("train/height_error", step_metric="global_step")
+
+        # Evaluation metrics
+        wandb.define_metric("eval/episode_length", step_metric="global_step")
+        wandb.define_metric("eval/mean_height", step_metric="global_step")
+        wandb.define_metric("eval/height_stability", step_metric="global_step")
+        wandb.define_metric("eval/max_consecutive_in_range", step_metric="global_step")
+        wandb.define_metric("eval/xy_drift", step_metric="global_step")
+        wandb.define_metric("eval/action_magnitude_mean", step_metric="global_step")
+        wandb.define_metric("eval/action_magnitude_max", step_metric="global_step")
+        wandb.define_metric("eval/height_error", step_metric="global_step")
+
+        # Summary tracking for best values
+        wandb.run.summary.update({
+            "best_episode_length": 0,
+            "best_height_stability": float('inf'),
+            "best_max_consecutive": 0,
+            "best_height_error": float('inf'),
+        })
         
-        # Custom summaries for key metrics
-        wandb.define_metric("train_episodes/height_mean", summary="last")
-        wandb.define_metric("train_episodes/height_error", summary="min")
-        wandb.define_metric("train_episodes/height_stability", summary="min")
-        wandb.define_metric("eval/height_stability", summary="min")
-        wandb.define_metric("eval/height_error", summary="min")
-        
-        print(f"WandB initialized with video logging every {standing_config.get('video_freq', 40_000):,} timesteps")
+        print(f"WandB initialized with video logging every {standing_config.get('video_freq'):,} timesteps")
     else:
         standing_config['wandb_run'] = None
 
@@ -210,41 +222,11 @@ def main():
             print(f"Height Stability: {results['height_stability']:.3f} (threshold: {standing_config.get('height_stability_threshold')}) {'✓' if success_criteria['height_stability'] else '✗'}")
         print(f"Overall Standing Success: {'✓ PASSED' if standing_success else '✗ NEEDS MORE TRAINING'}")
 
-        # Log final results to WandB
-        if use_wandb and wandb.run:
-            final_metrics = {
-                "final/mean_reward": results['mean_reward'],
-                "final/std_reward": results['std_reward'],
-                "final/mean_length": results['mean_length'],
-                "final/std_length": results['std_length'],
-                "final/standing_success": standing_success,
-            }
             
-            if 'mean_height' in results:
-                final_metrics.update({
-                    "final/mean_height": results['mean_height'],
-                    "final/height_stability": results['height_stability'],
-                    "final/height_error": results['height_error'],
-                    "final/target_height": results['target_height'],
-                })
-            
-            wandb.log(final_metrics)
-            
-            # Create a summary table for the run
-            summary_table = wandb.Table(columns=["Metric", "Value", "Threshold", "Success"])
-            summary_table.add_data("Mean Reward", f"{results['mean_reward']:.2f}", 
-                                 standing_config.get('target_reward_threshold'), success_criteria['reward'])
-            if 'height_error' in results:
-                summary_table.add_data("Height Error", f"{results['height_error']:.3f}", 
-                                     standing_config.get('height_error_threshold'), success_criteria['height_error'])
-                summary_table.add_data("Height Stability", f"{results['height_stability']:.3f}", 
-                                     standing_config.get('height_stability_threshold'), success_criteria['height_stability'])
-            
-            wandb.log({"final/success_summary": summary_table})
             
             # Save model to wandb
-            wandb.save("models/saved_models/best_standing_model.zip")
-            wandb.save("models/saved_models/final_standing_model.zip")
+        wandb.save("models/saved_models/best_standing_model.zip")
+        wandb.save("models/saved_models/final_standing_model.zip")
 
         # Save final eval results
         results_path = f"{standing_config['log_dir']}/final_results.txt"
