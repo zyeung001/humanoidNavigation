@@ -1,3 +1,10 @@
+import sys
+import os
+
+# Add project root to path
+project_root = '/content/humanoidNavigation'  # Adjust if needed
+sys.path.insert(0, project_root)
+
 import numpy as np
 import matplotlib.pyplot as plt
 from stable_baselines3 import PPO
