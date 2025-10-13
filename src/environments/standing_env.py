@@ -40,15 +40,18 @@ class StandingEnv(gym.Wrapper):
     
     def reset(self, seed: Optional[int] = None): 
         observation, info = self.env.reset(seed=seed)
+        
+        # DEBUG: Check what the default height actually is
+        default_height = self.env.unwrapped.data.qpos[2]
+        print(f"🔍 DEBUG: Default reset height = {default_height:.3f}m")
+        
         self.current_step = 0
-        self.prev_height = self.env.unwrapped.data.qpos[2]
-
-
+        self.prev_height = default_height
         self.target_height = self.base_target_height
         
         if self.domain_rand:
             # Randomize body masses
-            original_masses = self.env.unwrapped.model.body_mass.copy()  # Backup if needed
+            original_masses = self.env.unwrapped.model.body_mass.copy()
             self.env.unwrapped.model.body_mass *= np.random.uniform(
                 self.rand_mass_range[0], self.rand_mass_range[1],
                 size=self.env.unwrapped.model.body_mass.shape
@@ -56,7 +59,7 @@ class StandingEnv(gym.Wrapper):
             
             # Randomize geom friction (for feet/contact surfaces)
             original_friction = self.env.unwrapped.model.geom_friction.copy()
-            self.env.unwrapped.model.geom_friction[:, 0] *= np.random.uniform(  # Lateral friction
+            self.env.unwrapped.model.geom_friction[:, 0] *= np.random.uniform(
                 self.rand_friction_range[0], self.rand_friction_range[1],
                 size=self.env.unwrapped.model.geom_friction.shape[0]
             )
@@ -79,33 +82,33 @@ class StandingEnv(gym.Wrapper):
         
         return observation, reward, terminated, truncated, info
     
-    def _compute_task_reward(self , obs , base_reward , info , action):
+    def _compute_task_reward(self, obs, base_reward, info, action):
         # State extraction
-        height = self.env.unwrapped.data.qpos [2]
-        vel = self.env.unwrapped.data.qvel [0:3] # [vx , vy , vz]
-    
+        height = self.env.unwrapped.data.qpos[2]
+        vel = self.env.unwrapped.data.qvel[0:3]  # [vx, vy, vz]
+
         target_height = 1.3
-    
-        # 1. Height reward - main objective
+
+        # 1. Height reward - MAKE THIS DOMINANT
         height_error = abs(height - target_height)
-        height_reward = np.exp (-10.0 * height_error)
-    
-        # 2. Height stability - penalize z velocity
-        z_vel_penalty = -5.0 * abs(vel [2])
-    
-        # 3. XY stability - stay centered
-        xy_vel_penalty = -2.0 * (vel [0]**2 + vel [1]**2)
-    
-        # 4. Small control penalty
-        control_penalty = -0.01 * np.sum(np.square(action))
+        height_reward = 50.0 * np.exp(-20.0 * height_error)  # 50x stronger, steeper curve
+
+        # 2. Height stability - REDUCE this (was too strong)
+        z_vel_penalty = -1.0 * abs(vel[2])  # 5x weaker
+
+        # 3. XY stability - REDUCE this (was too strong)
+        xy_vel_penalty = -0.5 * (vel[0]**2 + vel[1]**2)  # 4x weaker
+
+        # 4. Small control penalty - REDUCE this (was too strong)
+        control_penalty = -0.001 * np.sum(np.square(action))  # 10x weaker
 
         total_reward = (height_reward + z_vel_penalty +
-        xy_vel_penalty + control_penalty)
-    
+                        xy_vel_penalty + control_penalty)
+
         # Only terminate on catastrophic failure
         terminate = height < 0.5
-    
-        return total_reward , terminate
+
+        return total_reward, terminate
     
     def _get_task_info(self):
         """Get task-specific information"""

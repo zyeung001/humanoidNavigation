@@ -16,45 +16,37 @@ logging:
   log_dir: "data/logs"
   project_name: "humanoid-navigation"
 
-# Standing task - IMPROVED
+# Standing task
 standing:
   algorithm: "PPO"
-  total_timesteps: 750000
-  
-  # MORE GRADUAL learning rate schedule
-  learning_rate: 
-  - [0, 0.0005]       # Higher initial LR to reach target height
-  - [250000, 0.0003]  # Slower reduction
-  - [500000, 0.0001]  # Keep higher for longer
+  total_timesteps: 200000
+  learning_rate: 0.0003  # Fixed learning rate for stability
 
-  # IMPROVED hyperparameters
   batch_size: 256        # Larger batch for more stable updates
   n_steps: 2048
   n_epochs: 10           # More epochs per update
   gamma: 0.99            # Slightly lower gamma (less future discounting)
   gae_lambda: 0.95       # Standard GAE
   clip_range: 0.2        # Standard clip range
-  ent_coef: 0.005        # Lower entropy for more focused policy
+  ent_coef: 0.01 
   vf_coef: 0.5           # Standard value function coefficient
   max_grad_norm: 0.5     # Standard gradient clipping
 
   n_eval_episodes: 5
   target_height: 1.3 
   
-  # SIMPLIFIED network architecture
   policy_kwargs:
     net_arch:
       pi: [256, 256]     # Simpler, symmetric architecture
       vf: [256, 256]
     activation_fn: "relu"
-    log_std_init: -1.0   # Less initial exploration
+    log_std_init: -0.5  
   
   use_wandb: true
   wandb_project: "humanoid-standing-improved"
   wandb_log_freq: 2000
   video_freq: 50000
   
-  # MORE LENIENT success criteria initially
   target_reward_threshold: 25000  # Lower threshold
   height_stability_threshold: 0.12  # More lenient
   height_error_threshold: 0.05   # More lenient (5cm)
@@ -73,7 +65,7 @@ standing:
   checkpoint_prefix: "standing_model"
   vecnormalize_path: "models/saved_models/vecnorm_standing.pkl"
 
-  max_episode_steps: 2000  # Longer episodes
+  max_episode_steps: 3000  # Longer episodes
 
   # DISABLE domain randomization initially
   domain_rand: false  # Turn off until basic standing works

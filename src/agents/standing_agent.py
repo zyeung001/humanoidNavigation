@@ -512,23 +512,10 @@ class StandingAgent:
         if self.env is None:
             self.create_environment()
 
-        def lr_schedule(progress_remaining):
-            """
-            Decay learning rate based on progress
-            progress_remaining goes from 1.0 to 0.0
-            """
-            progress = 1.0 - progress_remaining
-            
-            if progress < 0.33:  # First 250k steps
-                return 0.0005
-            elif progress < 0.67:  # 250k-500k steps
-                return 0.0003
-            else:  # Last 250k steps
-                return 0.0001
             
         # Standing-optimized parameters
         model_params = {
-            "learning_rate": lr_schedule,
+            "learning_rate": self.config.get("learning_rate"),
             "n_steps": self.config.get("n_steps"),
             "batch_size": self.config.get("batch_size"),
             "n_epochs": self.config.get("n_epochs"),
