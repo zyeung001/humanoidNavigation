@@ -41,9 +41,7 @@ class StandingEnv(gym.Wrapper):
     def reset(self, seed: Optional[int] = None): 
         observation, info = self.env.reset(seed=seed)
         
-        # DEBUG: Check what the default height actually is
         default_height = self.env.unwrapped.data.qpos[2]
-        print(f"🔍 DEBUG: Default reset height = {default_height:.3f}m")
         
         self.current_step = 0
         self.prev_height = default_height
