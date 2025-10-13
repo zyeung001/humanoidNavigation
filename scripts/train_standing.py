@@ -320,64 +320,52 @@ if __name__ == "__main__":
         config = load_config()
         standing_config = config.get('standing', {}).copy()
         general_config = config.get('general', {})
+        
         for key in ['save_freq', 'eval_freq', 'eval_episodes', 'seed', 'device', 'verbose']:
             if key in general_config and key not in standing_config:
                 standing_config[key] = general_config[key]
+        
         standing_config['device'] = device
+        
+        # Create agent (this will create the environment)
         agent = StandingAgent(standing_config)
         
-        # Manually create the training environment
-        def make_env():
-            return make_standing_env(config=standing_config)
-        train_env = SubprocVecEnv([make_env for _ in range(standing_config['n_envs'])])
-        if standing_config['normalize']:
-            train_env = VecNormalize(train_env)
-        agent.train_env = train_env
+        # Load the checkpoint
+        print(f"Loading checkpoint: {args.resume}")
+        agent.model = PPO.load(args.resume, env=agent.env, device=standing_config['device'])
+        
+        # Load VecNormalize stats if they exist
+        vecnorm_path = standing_config.get('vecnormalize_path', 'models/saved_models/vecnorm_standing.pkl')
+        if os.path.exists(vecnorm_path):
+            print(f"Loading VecNormalize stats from: {vecnorm_path}")
+            if isinstance(agent.env, VecNormalize):
+                agent.env = VecNormalize.load(vecnorm_path, agent.env.venv)
+                agent.env.training = True  # Set back to training mode
+                agent.model.set_env(agent.env)
         
         # Re-init WandB if enabled
-        wandb_run = None
-        if standing_config['use_wandb']:
-            import wandb
+        if standing_config.get('use_wandb', True):
             timestamp = datetime.now().strftime("%m%d_%H%M")
             exp_name = f"standing_resume_{timestamp}"
             wandb_run = wandb.init(
-                project=standing_config['wandb_project'],
+                project=standing_config.get('wandb_project', 'humanoid-standing'),
                 name=exp_name,
                 config=standing_config,
                 dir=standing_config.get('log_dir', "data/logs"),
                 resume="allow"
             )
+            standing_config['wandb_run'] = wandb_run
         
-        # Setup eval_env_fn
-        from stable_baselines3.common.vec_env import DummyVecEnv
-        def eval_env_fn():
-            return DummyVecEnv([lambda: make_standing_env(render_mode="rgb_array")])
+        # Continue training
+        print(f"Resuming training for {standing_config['total_timesteps']:,} more timesteps...")
+        remaining_timesteps = standing_config['total_timesteps']
         
-        # Create callbacks (adapt from StandingAgent logic)
-        from src.agents.standing_agent import StandingCallback, EarlyStoppingCallback
-        callbacks = [
-            StandingCallback(config=standing_config, eval_env_fn=eval_env_fn, wandb_run=wandb_run),
-            EarlyStoppingCallback(
-                check_freq=25000,
-                target_reward=standing_config['target_reward_threshold'],
-                target_height_error=standing_config['height_error_threshold'],
-                target_stability=standing_config['height_stability_threshold'],
-                target_length=1500,  # Add if using length check
-                patience=3
-            )
-        ]
-        agent.callbacks = callbacks
+        agent.train(total_timesteps=remaining_timesteps)
         
-        print(f"Resuming from checkpoint: {args.resume}")
-        agent.model = PPO.load(args.resume, env=train_env, device=standing_config['device'])
-        agent.model.learn(
-            total_timesteps=standing_config['total_timesteps'],
-            callback=agent.callbacks,
-            reset_num_timesteps=False
-        )
-        agent.save_final_model()
         agent.close()
-        print("Resumed training complete.")
+        if wandb.run:
+            wandb.finish()
+        print("Resume training complete.")
     else:
         main()
 
