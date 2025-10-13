@@ -327,21 +327,23 @@ if __name__ == "__main__":
         
         standing_config['device'] = device
         
-        # Create agent (this will create the environment)
+        # Create agent (this creates the environment)
         agent = StandingAgent(standing_config)
         
-        # Load the checkpoint
-        print(f"Loading checkpoint: {args.resume}")
-        agent.model = PPO.load(args.resume, env=agent.env, device=standing_config['device'])
+        # CRITICAL: Create environment BEFORE loading model
+        agent.create_environment()
         
-        # Load VecNormalize stats if they exist
+        # Load VecNormalize stats FIRST (before loading model)
         vecnorm_path = standing_config.get('vecnormalize_path', 'models/saved_models/vecnorm_standing.pkl')
         if os.path.exists(vecnorm_path):
             print(f"Loading VecNormalize stats from: {vecnorm_path}")
-            if isinstance(agent.env, VecNormalize):
-                agent.env = VecNormalize.load(vecnorm_path, agent.env.venv)
-                agent.env.training = True  # Set back to training mode
-                agent.model.set_env(agent.env)
+            from stable_baselines3.common.vec_env import VecNormalize
+            agent.env = VecNormalize.load(vecnorm_path, agent.env.venv)
+            agent.env.training = True  # Set back to training mode
+        
+        # NOW load the model with the environment
+        print(f"Loading checkpoint: {args.resume}")
+        agent.model = PPO.load(args.resume, env=agent.env, device=standing_config['device'])
         
         # Re-init WandB if enabled
         if standing_config.get('use_wandb', True):
@@ -356,14 +358,12 @@ if __name__ == "__main__":
             )
             standing_config['wandb_run'] = wandb_run
         
-        # Continue training
+        # Continue training (reset_num_timesteps=False to continue counting)
         print(f"Resuming training for {standing_config['total_timesteps']:,} more timesteps...")
-        remaining_timesteps = standing_config['total_timesteps']
-        
-        agent.train(total_timesteps=remaining_timesteps)
+        agent.train(total_timesteps=standing_config['total_timesteps'])
         
         agent.close()
-        if wandb.run:
+        if 'wandb_run' in locals() and wandb.run:
             wandb.finish()
         print("Resume training complete.")
     else:
