@@ -141,7 +141,10 @@ class StandingCallback(BaseCallback):
             self.episode_lengths = []
             self._current_episode_heights = []
             
-            os.makedirs(os.path.dirname(self.best_model_path), exist_ok=True)
+            parent_dir = os.path.dirname(self.best_model_path)
+            if parent_dir:  # Only if there's a directory component
+                os.makedirs(parent_dir, exist_ok=True)
+
             os.makedirs(self.checkpoint_dir, exist_ok=True)
 
     def _collect_episode_data(self):
