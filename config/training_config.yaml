@@ -47,7 +47,7 @@ standing:
   wandb_log_freq: 2000
   video_freq: 50000
   
-  target_reward_threshold: 25000  # Lower threshold
+  target_reward_threshold: 50000
   height_stability_threshold: 0.12  # More lenient
   height_error_threshold: 0.05   # More lenient (5cm)
   
