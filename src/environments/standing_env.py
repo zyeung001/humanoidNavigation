@@ -87,18 +87,25 @@ class StandingEnv(gym.Wrapper):
 
         target_height = 1.3
 
-        # 1. Height reward - MAKE THIS DOMINANT
+        # 1. Height reward - MAKE THIS MASSIVELY DOMINANT
         height_error = abs(height - target_height)
-        height_reward = 50.0 * np.exp(-20.0 * height_error)  # 50x stronger, steeper curve
+        
+        # Progressive scaling: massive reward when close
+        if height_error < 0.05:  # Within 5cm
+            height_reward = 1000.0  # HUGE reward
+        elif height_error < 0.10:  # Within 10cm
+            height_reward = 500.0 * (1.0 - (height_error - 0.05) / 0.05)  # 500-1000 range
+        else:
+            height_reward = 200.0 * np.exp(-15.0 * height_error)  # 200x base, steeper
 
-        # 2. Height stability - REDUCE this (was too strong)
-        z_vel_penalty = -1.0 * abs(vel[2])  # 5x weaker
+        # 2. Height stability - keep small
+        z_vel_penalty = -0.5 * abs(vel[2])  # Even weaker
 
-        # 3. XY stability - REDUCE this (was too strong)
-        xy_vel_penalty = -0.5 * (vel[0]**2 + vel[1]**2)  # 4x weaker
+        # 3. XY stability - keep small
+        xy_vel_penalty = -0.2 * (vel[0]**2 + vel[1]**2)  # Even weaker
 
-        # 4. Small control penalty - REDUCE this (was too strong)
-        control_penalty = -0.001 * np.sum(np.square(action))  # 10x weaker
+        # 4. Control penalty - keep tiny
+        control_penalty = -0.0005 * np.sum(np.square(action))  # Even smaller
 
         total_reward = (height_reward + z_vel_penalty +
                         xy_vel_penalty + control_penalty)
