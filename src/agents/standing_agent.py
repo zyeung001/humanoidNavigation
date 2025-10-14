@@ -267,8 +267,17 @@ class StandingCallback(BaseCallback):
                 else:
                     current_consec = 0
             
+            # NEW: Calculate XY drift from tracked positions
+            xy_drift = 0.0
+            if hasattr(self, '_current_episode_xy') and self._current_episode_xy:
+                xy_array = np.array(self._current_episode_xy[-1000:])  # Last 1000 positions
+                distances = np.sqrt(xy_array[:, 0]**2 + xy_array[:, 1]**2)
+                xy_drift = float(np.mean(distances))
+            
             # Get action data
             actions = self.locals.get("actions", np.array([[0]]))
+            action_mag_mean = float(np.abs(actions).mean())
+            action_mag_max = float(np.abs(actions).max())
             
             # Log the 8 core metrics
             wandb.log({
@@ -277,9 +286,9 @@ class StandingCallback(BaseCallback):
                 "train/mean_height": float(mean_height),
                 "train/height_stability": float(height_stability),
                 "train/max_consecutive_in_range": float(max_consec),
-                "train/xy_drift": 0.0,  # Calculate if you track XY positions
-                "train/action_magnitude_mean": float(np.abs(actions).mean()),
-                "train/action_magnitude_max": float(np.abs(actions).max()),
+                "train/xy_drift": xy_drift,  # FIXED: Now calculated
+                "train/action_magnitude_mean": action_mag_mean,  # FIXED: Already calculated
+                "train/action_magnitude_max": action_mag_max,  # FIXED: Already calculated
                 "train/height_error": float(height_error),
             }, step=self.num_timesteps)
 
@@ -356,8 +365,11 @@ class StandingCallback(BaseCallback):
         # SAVE VecNormalize BEFORE evaluation
         if isinstance(self.model.get_env(), VecNormalize):
             try:
-                self.model.get_env().save(self.vecnormalize_path)
-                print(f"✓ VecNormalize stats saved to {self.vecnormalize_path}")
+                from pathlib import Path
+                vecnorm_path = Path(self.vecnormalize_path)
+                vecnorm_path.parent.mkdir(parents=True, exist_ok=True)
+                self.model.get_env().save(str(vecnorm_path))
+                print(f"✓ VecNormalize stats saved to {vecnorm_path}")
             except Exception as e:
                 print(f"✗ WARNING: VecNormalize save failed: {e}")
         
@@ -366,6 +378,8 @@ class StandingCallback(BaseCallback):
         heights = []
         rewards = []
         episode_lengths = []
+        xy_positions = []  # NEW: Track XY drift
+        actions_taken = []  # NEW: Track actions
         
         for ep in range(self.n_eval_episodes):
             obs = eval_env.reset()
@@ -373,6 +387,8 @@ class StandingCallback(BaseCallback):
             ep_reward = 0
             ep_length = 0
             ep_heights = []
+            ep_xy_positions = []  # NEW
+            ep_actions = []  # NEW
             
             while not done:
                 action, _ = self.model.predict(obs, deterministic=True)
@@ -386,13 +402,26 @@ class StandingCallback(BaseCallback):
                 # Extract height
                 if hasattr(info, '__len__') and len(info) > 0 and 'height' in info[0]:
                     ep_heights.append(info[0]['height'])
+                    # NEW: Extract XY position
+                    if 'x_position' in info[0] and 'y_position' in info[0]:
+                        ep_xy_positions.append([info[0]['x_position'], info[0]['y_position']])
                 elif hasattr(obs, '__len__') and len(obs) > 0:
                     ep_heights.append(obs[0][0] if hasattr(obs[0], '__len__') else obs[0])
+                
+                # NEW: Track actions
+                if hasattr(action, '__len__'):
+                    ep_actions.append(action[0] if len(action.shape) > 1 else action)
+                else:
+                    ep_actions.append(action)
             
             rewards.append(ep_reward)
             episode_lengths.append(ep_length)
             if ep_heights:
                 heights.extend(ep_heights)
+            if ep_xy_positions:
+                xy_positions.extend(ep_xy_positions)
+            if ep_actions:
+                actions_taken.extend(ep_actions)
         
         # Calculate metrics
         mean_rew = np.mean(rewards)
@@ -401,22 +430,38 @@ class StandingCallback(BaseCallback):
         if mean_rew > self.best_mean_reward:
             self.best_mean_reward = mean_rew
             
-            # FIXED: Proper path handling
+            # FIXED: Proper file saving
             from pathlib import Path
-            model_path = Path(self.best_model_path)
+            
+            # Get the path WITHOUT .zip
+            model_path_str = self.best_model_path
+            # Remove .zip if someone added it in config
+            if model_path_str.endswith('.zip'):
+                model_path_str = model_path_str[:-4]
+            
+            model_path = Path(model_path_str)
+            
+            # Create parent directory
             model_path.parent.mkdir(parents=True, exist_ok=True)
             
-            # Save WITHOUT .zip (SB3 adds it)
+            # CRITICAL: Save without .zip, SB3 adds it
             self.model.save(str(model_path))
+            
+            # Verify the file was created correctly
+            zip_file = Path(str(model_path) + ".zip")
+            if zip_file.is_file():
+                print(f"✓ Best model saved: {zip_file}")
+            else:
+                print(f"✗ WARNING: Expected file not created: {zip_file}")
             
             # Save VecNormalize
             if isinstance(self.model.get_env(), VecNormalize):
                 vecnorm_path = Path(self.vecnormalize_path)
                 vecnorm_path.parent.mkdir(parents=True, exist_ok=True)
                 self.model.get_env().save(str(vecnorm_path))
+                print(f"✓ VecNormalize saved: {vecnorm_path}")
             
-            print(f"✓ New best model saved: {model_path}.zip")
-            print(f"  Reward: {mean_rew:.2f}")
+            print(f"  New best reward: {mean_rew:.2f}")
         
         # Log evaluation metrics to WandB
         if WANDB_AVAILABLE and wandb.run and heights:
@@ -424,6 +469,23 @@ class StandingCallback(BaseCallback):
             height_stability = float(np.std(heights))
             height_error = float(abs(mean_height - self.target_height))
             mean_length = float(np.mean(episode_lengths))
+            
+            # NEW: Calculate XY drift (distance from origin)
+            if xy_positions:
+                xy_array = np.array(xy_positions)
+                distances_from_origin = np.sqrt(xy_array[:, 0]**2 + xy_array[:, 1]**2)
+                xy_drift = float(np.mean(distances_from_origin))
+            else:
+                xy_drift = 0.0
+            
+            # NEW: Calculate action magnitudes
+            if actions_taken:
+                actions_array = np.array(actions_taken)
+                action_mag_mean = float(np.mean(np.abs(actions_array)))
+                action_mag_max = float(np.max(np.abs(actions_array)))
+            else:
+                action_mag_mean = 0.0
+                action_mag_max = 0.0
             
             # Calculate max consecutive in range
             in_range = np.abs(np.array(heights) - self.target_height) < 0.05
@@ -442,10 +504,11 @@ class StandingCallback(BaseCallback):
                 "eval/mean_height": mean_height,
                 "eval/height_stability": height_stability,
                 "eval/max_consecutive_in_range": float(max_consec),
-                "eval/xy_drift": 0.0,  # Add if you track XY in eval
-                "eval/action_magnitude_mean": 0.0,  # Add if you track actions in eval
-                "eval/action_magnitude_max": 0.0,  # Add if you track actions in eval
+                "eval/xy_drift": xy_drift,  # FIXED: Now calculated
+                "eval/action_magnitude_mean": action_mag_mean,  # FIXED: Now calculated
+                "eval/action_magnitude_max": action_mag_max,  # FIXED: Now calculated
                 "eval/height_error": height_error,
+                "eval/mean_reward": float(mean_rew),
             }, step=self.num_timesteps)
             
             # Update best values in summary
