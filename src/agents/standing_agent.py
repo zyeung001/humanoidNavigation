@@ -17,7 +17,6 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 from stable_baselines3.common.evaluation import evaluate_policy
-from stable_baselines3.common.callbacks import EvalCallback
 
 # Try to import wandb
 try:
@@ -687,21 +686,8 @@ class StandingAgent:
                 return eval_env
             else:
                 return base_eval_env
-
-        # Create callbacks
-        eval_callback = EvalCallback(
-            eval_env=eval_env_fn(),  # Your eval env function
-            best_model_save_path=self.config['best_model_path'],  # Auto-save best model
-            log_path=os.path.join(self.config.get('log_dir', 'data/logs'), 'evaluations'),  # Log eval results
-            eval_freq=self.config['eval_freq'],  # From config (e.g., 50,000 steps)
-            n_eval_episodes=self.config['n_eval_episodes'],  # From config (e.g., 5)
-            deterministic=True,  # Use deterministic actions for fair eval
-            render=False,  # No rendering during eval (set True if you want visuals)
-            verbose=self.config['verbose'],  # Match your verbosity level
-        )
         
         callbacks = [
-            eval_callback,  # Add the new EvalCallback here
             StandingCallback(
                 config=self.config,
                 eval_env_fn=eval_env_fn,
