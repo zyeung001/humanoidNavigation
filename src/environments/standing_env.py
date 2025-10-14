@@ -81,36 +81,44 @@ class StandingEnv(gym.Wrapper):
         return observation, reward, terminated, truncated, info
     
     def _compute_task_reward(self, obs, base_reward, info, action):
+
         # State extraction
         height = self.env.unwrapped.data.qpos[2]
         vel = self.env.unwrapped.data.qvel[0:3]  # [vx, vy, vz]
-
+        quat = self.env.unwrapped.data.qpos[3:7]  # [w, x, y, z]
+        
         target_height = 1.3
-
-        # 1. ULTRA-DOMINANT height reward with MUCH steeper curve
         height_error = abs(height - target_height)
         
-        # Exponential scaling - massive penalty for being far from 1.3m
-        if height_error < 0.03:  # Within 3cm - PERFECT
-            height_reward = 5000.0  # MASSIVE reward
-        elif height_error < 0.08:  # Within 8cm - GOOD  
-            height_reward = 2000.0 - (height_error - 0.03) * 20000.0  # 2000-5000 range, steep
-        elif height_error < 0.15:  # Within 15cm - ACCEPTABLE
-            height_reward = 500.0 - (height_error - 0.08) * 10000.0  # 500-2000 range
-        else:  # Too far - BAD
-            height_reward = 500.0 * np.exp(-25.0 * height_error)  # Steep drop-off
-
-        # 2-4. Keep penalties VERY small (they were fine)
-        z_vel_penalty = -0.3 * abs(vel[2])
-        xy_vel_penalty = -0.1 * (vel[0]**2 + vel[1]**2)
-        control_penalty = -0.0003 * np.sum(np.square(action))
-
-        total_reward = (height_reward + z_vel_penalty +
-                        xy_vel_penalty + control_penalty)
-
-        # Only terminate on catastrophic failure
+        # 1. HEIGHT REWARD - The ONLY positive signal (scaled properly)
+        height_reward = 100.0 * np.exp(-10.0 * height_error)
+        
+        # Simple linear scaling: w=1.0 (upright) gives full reward
+        upright_reward = 50.0 * quat[0]
+        
+        # 3. STABILITY PENALTIES - Minimal, just enough to reduce wobble
+        z_vel_penalty = -2.0 * abs(vel[2])
+        xy_vel_penalty = -1.0 * (vel[0]**2 + vel[1]**2)
+        
+        # 4. CONTROL PENALTY - Tiny (mentor's -0.01 was right scale)
+        control_penalty = -0.01 * np.sum(np.square(action))
+        
+        total_reward = (
+            height_reward + 
+            upright_reward +
+            z_vel_penalty + 
+            xy_vel_penalty + 
+            control_penalty
+        )
+        
+        # Only terminate if catastrophically failed
         terminate = height < 0.5
 
+        if self.current_step % 200 == 0:
+            print(f"Step {self.current_step}: h={height:.2f}, "
+                    f"h_rew={height_reward:.1f}, up_rew={upright_reward:.1f}, "
+                    f"total={total_reward:.1f}")
+        
         return total_reward, terminate
     
     def _get_task_info(self):

@@ -223,10 +223,12 @@ def main():
         print(f"Overall Standing Success: {'✓ PASSED' if standing_success else '✗ NEEDS MORE TRAINING'}")
 
             
-            
-            # Save model to wandb
-        wandb.save("models/saved_models/best_standing_model.zip")
-        wandb.save("models/saved_models/final_standing_model.zip")
+        # Save model to wandb (use config paths)
+        if use_wandb and wandb.run:
+            best_path = standing_config.get('best_model_path', 'models/standing_model/best_standing_model')
+            final_path = standing_config.get('final_model_path', 'models/standing_model/final_standing_model')
+            wandb.save(f"{best_path}.zip")
+            wandb.save(f"{final_path}.zip")
 
         # Save final eval results
         results_path = f"{standing_config['log_dir']}/final_results.txt"

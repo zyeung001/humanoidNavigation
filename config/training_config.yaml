@@ -1,5 +1,5 @@
 # Training Configuration for Humanoid Standing
-#training_config.yaml
+# training_config.yaml
 
 # General settings
 general:
@@ -14,30 +14,29 @@ general:
 logging:
   use_tensorboard: true
   log_dir: "data/logs"
-  project_name: "humanoid-navigation"
 
 # Standing task
 standing:
   algorithm: "PPO"
-  total_timesteps: 500000
-  learning_rate: 0.0003  # Fixed learning rate for stability
+  total_timesteps: 750000
+  learning_rate: 0.0003
 
-  batch_size: 256        # Larger batch for more stable updates
+  batch_size: 256
   n_steps: 2048
-  n_epochs: 10           # More epochs per update
-  gamma: 0.99            # Slightly lower gamma (less future discounting)
-  gae_lambda: 0.95       # Standard GAE
-  clip_range: 0.2        # Standard clip range
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
   ent_coef: 0.01 
-  vf_coef: 0.5           # Standard value function coefficient
-  max_grad_norm: 0.5     # Standard gradient clipping
+  vf_coef: 0.5
+  max_grad_norm: 0.5
 
   n_eval_episodes: 5
   target_height: 1.3 
   
   policy_kwargs:
     net_arch:
-      pi: [256, 256]     # Simpler, symmetric architecture
+      pi: [256, 256]
       vf: [256, 256]
     activation_fn: "relu"
     log_std_init: -0.5  
@@ -47,9 +46,10 @@ standing:
   wandb_log_freq: 2000
   video_freq: 50000
   
-  target_reward_threshold: 50000
-  height_stability_threshold: 0.12  # More lenient
-  height_error_threshold: 0.05   # More lenient (5cm)
+  # FIXED: Adjusted for new reward scale
+  target_reward_threshold: 120
+  height_stability_threshold: 0.08
+  height_error_threshold: 0.03
   
   normalize: true
   n_envs: 8
@@ -59,25 +59,18 @@ standing:
 
   episode_print_freq: 1000
   
-  # Paths
-  best_model_path: "models/saved_models/best_standing_model.zip"
+  # FIXED: Paths WITHOUT .zip extension
+  best_model_path: "models/standing_model/best_standing_model"
+  final_model_path: "models/standing_model/final_standing_model"
   checkpoint_dir: "data/checkpoints" 
   checkpoint_prefix: "standing_model"
-  vecnormalize_path: "models/saved_models/vecnorm_standing.pkl"
+  vecnormalize_path: "models/standing_model/vecnorm.pkl"
 
-  max_episode_steps: 3000  # Longer episodes
+  max_episode_steps: 3000
 
-  # DISABLE domain randomization initially
-  domain_rand: false  # Turn off until basic standing works
+  domain_rand: false
   rand_mass_range: [0.95, 1.05]
   rand_friction_range: [0.95, 1.05]
-
-# Model saving
-checkpointing:
-  save_best: true
-  save_last: true
-  checkpoint_dir: "data/checkpoints"
-  model_dir: "models/saved_models"
 
 # Evaluation
 evaluation:
@@ -87,7 +80,7 @@ evaluation:
   video_length: 1000
 
 simulation:
-  max_steps: 2000  # Longer episodes
+  max_steps: 3000
   reset_on_done: true
   save_frames: true
 

@@ -400,10 +400,23 @@ class StandingCallback(BaseCallback):
 
         if mean_rew > self.best_mean_reward:
             self.best_mean_reward = mean_rew
-            self.model.save(self.best_model_path)
+            
+            # FIXED: Proper path handling
+            from pathlib import Path
+            model_path = Path(self.best_model_path)
+            model_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Save WITHOUT .zip (SB3 adds it)
+            self.model.save(str(model_path))
+            
+            # Save VecNormalize
             if isinstance(self.model.get_env(), VecNormalize):
-                self.model.get_env().save(self.vecnormalize_path)
-            print(f"New best! Reward: {mean_rew:.2f}")
+                vecnorm_path = Path(self.vecnormalize_path)
+                vecnorm_path.parent.mkdir(parents=True, exist_ok=True)
+                self.model.get_env().save(str(vecnorm_path))
+            
+            print(f"✓ New best model saved: {model_path}.zip")
+            print(f"  Reward: {mean_rew:.2f}")
         
         # Log evaluation metrics to WandB
         if WANDB_AVAILABLE and wandb.run and heights:
@@ -665,19 +678,33 @@ class StandingAgent:
         self.model.learn(total_timesteps=total_timesteps, callback=combined_callback)
 
         # Save final model + normalization stats
-        final_model_path = "models/saved_models/final_standing_model.zip"
-        self.model.save(final_model_path)
+        from pathlib import Path
+
+        # Use config path
+        final_model_path = self.config.get('final_model_path', 'models/standing_model/final_standing_model')
+        model_path = Path(final_model_path)
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Save WITHOUT .zip extension (SB3 adds it automatically)
+        self.model.save(str(model_path))
+        print(f"✓ Final model saved: {model_path}.zip")
+
+        # Save VecNormalize
         if isinstance(self.env, VecNormalize):
-            self.env.save(self.vecnormalize_path)
+            vecnorm_path = Path(self.vecnormalize_path)
+            vecnorm_path.parent.mkdir(parents=True, exist_ok=True)
+            self.env.save(str(vecnorm_path))
+            print(f"✓ VecNormalize saved: {vecnorm_path}")
+            
             if WANDB_AVAILABLE and wandb.run:
-                wandb.save(self.vecnormalize_path)
-        
-        # Save final model to WandB
+                wandb.save(str(vecnorm_path))
+
+        # Save final model to WandB (add .zip for WandB)
         if WANDB_AVAILABLE and wandb.run:
-            wandb.save(final_model_path)
+            wandb.save(str(model_path) + ".zip")
             wandb.log({"train/completed": 1})
-        
-        print(f"Training completed! Final model: {final_model_path}")
+
+        print(f"Training completed!")
         return self.model
 
     def load_model(self, model_path):
