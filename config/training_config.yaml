@@ -19,15 +19,15 @@ logging:
 standing:
   algorithm: "PPO"
   total_timesteps: 750000
-  learning_rate: 0.0003
+  learning_rate: 0.0001
 
-  batch_size: 256
-  n_steps: 2048
+  batch_size: 512
+  n_steps: 4096
   n_epochs: 10
   gamma: 0.99
   gae_lambda: 0.95
   clip_range: 0.2
-  ent_coef: 0.01 
+  ent_coef: 0.005
   vf_coef: 0.5
   max_grad_norm: 0.5
 
@@ -60,11 +60,11 @@ standing:
   episode_print_freq: 1000
   
   # FIXED: Paths WITHOUT .zip extension
-  best_model_path: "models/standing_model/best_standing_model"
-  final_model_path: "models/standing_model/final_standing_model"
-  checkpoint_dir: "data/checkpoints" 
-  checkpoint_prefix: "standing_model"
-  vecnormalize_path: "models/standing_model/vecnorm.pkl"
+  best_model_path: "models/saved_models/best_standing_model"
+  final_model_path: "models/saved_models/final_standing_model"
+  vecnormalize_path: "models/saved_models/vecnorm.pkl"
+  checkpoint_dir: "models/saved_models/checkpoints"
+  checkpoint_prefix: "checkpoint"
 
   max_episode_steps: 3000
 

@@ -79,45 +79,71 @@ class StandingEnv(gym.Wrapper):
         info.update(self._get_task_info())
         
         return observation, reward, terminated, truncated, info
-    
+        
     def _compute_task_reward(self, obs, base_reward, info, action):
-
+        """Strict reward for perfect standing at 1.3m with minimal movement."""
+        
         # State extraction
         height = self.env.unwrapped.data.qpos[2]
         vel = self.env.unwrapped.data.qvel[0:3]  # [vx, vy, vz]
         quat = self.env.unwrapped.data.qpos[3:7]  # [w, x, y, z]
+        angular_vel = self.env.unwrapped.data.qvel[3:6]
+        root_x, root_y = self.env.unwrapped.data.qpos[0:2]
         
         target_height = 1.3
         height_error = abs(height - target_height)
         
-        # 1. HEIGHT REWARD - The ONLY positive signal (scaled properly)
-        height_reward = 100.0 * np.exp(-10.0 * height_error)
+        # 1. STRICT HEIGHT REWARD - Very sharp peak at 1.3m
+        # This prevents the 1.25m local optimum problem we discussed
+        if height_error < 0.02:  # Within 2cm
+            height_reward = 100.0
+        elif height_error < 0.05:  # Within 5cm
+            height_reward = 50.0 * np.exp(-50.0 * (height_error - 0.02)**2)
+        else:
+            height_reward = 0.0  # No reward if too far
         
-        # Simple linear scaling: w=1.0 (upright) gives full reward
-        upright_reward = 50.0 * quat[0]
+        # 2. UPRIGHTNESS - Only reward when truly upright
+        if quat[0] > 0.98:  # Very upright
+            upright_reward = 30.0
+        elif quat[0] > 0.95:
+            upright_reward = 10.0 * (quat[0] - 0.95) / 0.03
+        else:
+            upright_reward = 0.0
         
-        # 3. STABILITY PENALTIES - Minimal, just enough to reduce wobble
-        z_vel_penalty = -2.0 * abs(vel[2])
-        xy_vel_penalty = -1.0 * (vel[0]**2 + vel[1]**2)
+        # 3. HEAVY MOVEMENT PENALTIES (key insight from past chats)
+        # Linear velocity penalty - MUCH stronger
+        velocity_penalty = -5.0 * (vel[0]**2 + vel[1]**2 + 2.0*vel[2]**2)
         
-        # 4. CONTROL PENALTY - Tiny (mentor's -0.01 was right scale)
+        # Angular velocity penalty
+        angular_penalty = -3.0 * np.sum(angular_vel**2)
+        
+        # Position drift penalty
+        position_penalty = -2.0 * (root_x**2 + root_y**2)
+        
+        # 4. Small control penalty
         control_penalty = -0.01 * np.sum(np.square(action))
+        
+        # 5. NO SURVIVAL BONUS (critical - we discussed this)
+        # survival_bonus = 0  # Removed entirely
         
         total_reward = (
             height_reward + 
             upright_reward +
-            z_vel_penalty + 
-            xy_vel_penalty + 
+            velocity_penalty + 
+            angular_penalty +
+            position_penalty +
             control_penalty
         )
         
-        # Only terminate if catastrophically failed
-        terminate = height < 0.5
-
+        # Termination only for catastrophic failure
+        terminate = height < 0.7 or quat[0] < 0.5
+        
+        # Debug logging
         if self.current_step % 200 == 0:
-            print(f"Step {self.current_step}: h={height:.2f}, "
-                    f"h_rew={height_reward:.1f}, up_rew={upright_reward:.1f}, "
-                    f"total={total_reward:.1f}")
+            print(f"Step {self.current_step}: h={height:.2f} (target={target_height:.2f}), "
+                f"h_err={height_error:.3f}, h_rew={height_reward:.1f}, "
+                f"up={quat[0]:.2f}, v_pen={velocity_penalty:.1f}, "
+                f"total={total_reward:.1f}")
         
         return total_reward, terminate
     
