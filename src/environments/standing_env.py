@@ -98,13 +98,14 @@ class StandingEnv(gym.Wrapper):
         survival_reward = 5.0
         
         # Height reward (main objective)
-        if height_error < 0.05:
-            height_reward = 50.0 * (1.0 - height_error/0.05)  # Gradual
+        if height < 1.0:  # Too low - strong penalty
+            height_reward = -50.0
+        elif height_error < 0.05:
+            height_reward = 100.0 * (1.0 - height_error/0.05)
         elif height_error < 0.1:
-            height_reward = 20.0
+            height_reward = 30.0
         else:
-            height_reward = -20.0 * height_error
-        
+            height_reward = -30.0 * height_error
         # Uprightness
         upright_reward = 30.0 * quat[0] if quat[0] > 0.9 else -10.0
         
