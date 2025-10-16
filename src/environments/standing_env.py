@@ -81,7 +81,7 @@ class StandingEnv(gym.Wrapper):
         return observation, reward, terminated, truncated, info
         
     def _compute_task_reward(self, obs, base_reward, info, action):
-        """Progressive reward - more forgiving initially, stricter over time"""
+        """Balanced reward for learning to stand still"""
         
         # State extraction
         height = self.env.unwrapped.data.qpos[2]
@@ -94,28 +94,28 @@ class StandingEnv(gym.Wrapper):
         height_error = abs(height - 1.3)
         total_vel = np.sqrt(vel[0]**2 + vel[1]**2 + vel[2]**2)
         
-        # Phase 1: Just stay alive (first priority)
-        survival_reward = 10.0  # Small positive for not falling
+        # Base survival reward
+        survival_reward = 5.0
         
-        # Phase 2: Get to approximately right height
-        if height_error < 0.1:  # Within 10cm
-            height_reward = 50.0
-        elif height_error < 0.2:
+        # Height reward (main objective)
+        if height_error < 0.05:
+            height_reward = 50.0 * (1.0 - height_error/0.05)  # Gradual
+        elif height_error < 0.1:
             height_reward = 20.0
         else:
-            height_reward = -10.0 * height_error
+            height_reward = -20.0 * height_error
         
-        # Phase 3: Stay upright
-        upright_reward = 20.0 * quat[0] if quat[0] > 0.9 else 0
+        # Uprightness
+        upright_reward = 30.0 * quat[0] if quat[0] > 0.9 else -10.0
         
-        # Phase 4: Reduce movement (gentler penalties)
-        velocity_penalty = -5.0 * total_vel  # Reduced from -200
-        angular_penalty = -2.0 * np.sum(angular_vel**2)
+        # Movement penalties (scaled up)
+        velocity_penalty = -20.0 * total_vel  # Increased from -5
+        angular_penalty = -5.0 * np.sum(angular_vel**2)
         
-        # Phase 5: Stay near origin
-        position_penalty = -1.0 * (root_x**2 + root_y**2)
+        # Position drift
+        position_penalty = -2.0 * (root_x**2 + root_y**2)
         
-        # Small control penalty
+        # Control
         control_penalty = -0.01 * np.sum(np.square(action))
         
         total_reward = (
@@ -128,12 +128,13 @@ class StandingEnv(gym.Wrapper):
             control_penalty
         )
         
-        # Only terminate if really fallen
+        # Termination
         terminate = height < 0.5 or quat[0] < 0.3
         
         if self.current_step % 100 == 0:
-            print(f"Step {self.current_step}: h={height:.2f}, err={height_error:.3f}, "
-                f"vel={total_vel:.3f}, r={total_reward:.1f}")
+            print(f"Step {self.current_step}: h={height:.2f}, "
+                f"h_rew={height_reward:.1f}, vel_pen={velocity_penalty:.1f}, "
+                f"total={total_reward:.1f}")
         
         return total_reward, terminate
     
