@@ -1,8 +1,7 @@
-# test_reward.py - Run this BEFORE training to check reward function
+# test_reward_debug.py - Debug version to see what's actually happening
 import sys
 import os
 
-# Add project root to path
 project_root = '/content/humanoidNavigation'
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
@@ -10,48 +9,51 @@ if project_root not in sys.path:
 import numpy as np
 from src.environments.standing_env import make_standing_env
 
-def test_reward_scenarios():
-    """Test reward function in different scenarios"""
+def test_reward_debug():
+    """Debug test to see actual values"""
     env = make_standing_env(render_mode=None, config={'max_episode_steps': 100})
     env.reset()
     
-    scenarios = [
-        ("Perfect standing", 1.3, 1.0, [0,0,0], [0,0,0]),
-        ("Slightly low", 1.28, 1.0, [0,0,0], [0,0,0]),
-        ("Too low", 1.2, 1.0, [0,0,0], [0,0,0]),
-        ("Perfect height but moving", 1.3, 1.0, [0.1,0.1,0], [0,0,0]),
-        ("Perfect height but tilted", 1.3, 0.95, [0,0,0], [0,0,0]),
-        ("Good height but drifting", 1.29, 1.0, [0.05,0.05,0], [0,0,0]),
-        ("Falling", 0.8, 0.7, [0,0,-0.5], [0,0,0]),
-    ]
-    
     print("\n" + "="*60)
-    print("REWARD FUNCTION TEST")
+    print("DEBUG: Testing reward calculation")
     print("="*60)
-    print(f"{'Scenario':<30} {'Reward':>10}")
-    print("-"*60)
     
-    for name, height, quat_w, vel, ang_vel in scenarios:
-        env.env.unwrapped.data.qpos[2] = height
-        env.env.unwrapped.data.qpos[3] = quat_w
-        env.env.unwrapped.data.qvel[0:3] = vel
-        env.env.unwrapped.data.qvel[3:6] = ang_vel
-        env.env.unwrapped.data.qpos[0:2] = [0, 0]  # Reset position
-        
-        action = np.zeros(env.action_space.shape)
-        _, reward, terminated, _, _ = env.step(action)
-        
-        status = " [TERM]" if terminated else ""
-        print(f"{name:<30}: {reward:10.2f}{status}")
+    # Test 1: Perfect standing
+    print("\nTest 1: Perfect standing")
+    env.env.unwrapped.data.qpos[2] = 1.3
+    env.env.unwrapped.data.qpos[3] = 1.0
+    env.env.unwrapped.data.qvel[:] = 0
     
-    print("="*60)
-    print("\nInterpretation:")
-    print("- Perfect standing should give highest reward (~150)")
-    print("- Any movement should reduce reward significantly")
-    print("- Wrong height should give negative or very low reward")
-    print("- Falling should terminate\n")
+    # Check actual values BEFORE step
+    print(f"Before step:")
+    print(f"  Height: {env.env.unwrapped.data.qpos[2]}")
+    print(f"  Quat[0]: {env.env.unwrapped.data.qpos[3]}")
+    print(f"  Velocity: {env.env.unwrapped.data.qvel[0:3]}")
+    
+    action = np.zeros(env.action_space.shape)
+    _, reward, _, _, _ = env.step(action)
+    
+    # Check actual values AFTER step
+    print(f"After step:")
+    print(f"  Height: {env.env.unwrapped.data.qpos[2]}")
+    print(f"  Quat[0]: {env.env.unwrapped.data.qpos[3]}")
+    print(f"  Velocity: {env.env.unwrapped.data.qvel[0:3]}")
+    print(f"  Reward: {reward}")
+    
+    # Test 2: With movement
+    print("\n" + "-"*40)
+    print("Test 2: Perfect height but moving")
+    env.reset()
+    env.env.unwrapped.data.qpos[2] = 1.3
+    env.env.unwrapped.data.qpos[3] = 1.0
+    env.env.unwrapped.data.qvel[0:3] = [0.1, 0.1, 0]
+    
+    print(f"Set velocity to: {env.env.unwrapped.data.qvel[0:3]}")
+    _, reward, _, _, _ = env.step(action)
+    print(f"After step velocity: {env.env.unwrapped.data.qvel[0:3]}")
+    print(f"Reward: {reward}")
     
     env.close()
 
 if __name__ == "__main__":
-    test_reward_scenarios()
+    test_reward_debug()
