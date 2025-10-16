@@ -81,7 +81,7 @@ class StandingEnv(gym.Wrapper):
         return observation, reward, terminated, truncated, info
         
     def _compute_task_reward(self, obs, base_reward, info, action):
-        """Strict reward for perfect standing at 1.3m with minimal movement."""
+        """Ultra-strict reward for standing perfectly still at 1.3m"""
         
         # State extraction
         height = self.env.unwrapped.data.qpos[2]
@@ -93,38 +93,33 @@ class StandingEnv(gym.Wrapper):
         target_height = 1.3
         height_error = abs(height - target_height)
         
-        # 1. STRICT HEIGHT REWARD - Very sharp peak at 1.3m
-        # This prevents the 1.25m local optimum problem we discussed
-        if height_error < 0.02:  # Within 2cm
+        # 1. HEIGHT: Binary reward - you're either at the right height or you're not
+        if height_error < 0.01:  # Within 1cm - VERY strict
             height_reward = 100.0
-        elif height_error < 0.05:  # Within 5cm
-            height_reward = 50.0 * np.exp(-50.0 * (height_error - 0.02)**2)
+        elif height_error < 0.02:
+            height_reward = 50.0
+        elif height_error < 0.05:
+            height_reward = 10.0
         else:
-            height_reward = 0.0  # No reward if too far
+            height_reward = -10.0  # PENALTY for being far from target
         
-        # 2. UPRIGHTNESS - Only reward when truly upright
-        if quat[0] > 0.98:  # Very upright
-            upright_reward = 30.0
+        # 2. UPRIGHTNESS: Binary
+        if quat[0] > 0.99:  # Almost perfectly upright
+            upright_reward = 50.0
         elif quat[0] > 0.95:
-            upright_reward = 10.0 * (quat[0] - 0.95) / 0.03
+            upright_reward = 10.0
         else:
-            upright_reward = 0.0
+            upright_reward = -20.0  # PENALTY for tilting
         
-        # 3. HEAVY MOVEMENT PENALTIES (key insight from past chats)
-        # Linear velocity penalty - MUCH stronger
-        velocity_penalty = -5.0 * (vel[0]**2 + vel[1]**2 + 2.0*vel[2]**2)
+        # 3. STILLNESS is CRITICAL - much heavier penalties
+        velocity_penalty = -10.0 * (vel[0]**2 + vel[1]**2 + 4.0*vel[2]**2)
+        angular_penalty = -5.0 * np.sum(angular_vel**2)
         
-        # Angular velocity penalty
-        angular_penalty = -3.0 * np.sum(angular_vel**2)
+        # 4. Position drift - heavier
+        position_penalty = -5.0 * (root_x**2 + root_y**2)
         
-        # Position drift penalty
-        position_penalty = -2.0 * (root_x**2 + root_y**2)
-        
-        # 4. Small control penalty
-        control_penalty = -0.01 * np.sum(np.square(action))
-        
-        # 5. NO SURVIVAL BONUS (critical - we discussed this)
-        # survival_bonus = 0  # Removed entirely
+        # 5. Control should be minimal
+        control_penalty = -0.02 * np.sum(np.square(action))
         
         total_reward = (
             height_reward + 
@@ -135,15 +130,14 @@ class StandingEnv(gym.Wrapper):
             control_penalty
         )
         
-        # Termination only for catastrophic failure
-        terminate = height < 0.7 or quat[0] < 0.5
+        # Only terminate if completely fallen
+        terminate = height < 0.5 or quat[0] < 0.3
         
-        # Debug logging
-        if self.current_step % 200 == 0:
-            print(f"Step {self.current_step}: h={height:.2f} (target={target_height:.2f}), "
-                f"h_err={height_error:.3f}, h_rew={height_reward:.1f}, "
-                f"up={quat[0]:.2f}, v_pen={velocity_penalty:.1f}, "
-                f"total={total_reward:.1f}")
+        # Debug with more detail
+        if self.current_step % 100 == 0:  # More frequent logging
+            print(f"Step {self.current_step}: h={height:.3f}, err={height_error:.3f}, "
+                f"h_r={height_reward:.1f}, up_r={upright_reward:.1f}, "
+                f"vel_p={velocity_penalty:.1f}, tot={total_reward:.1f}")
         
         return total_reward, terminate
     
@@ -183,7 +177,7 @@ def test_environment():
     print("=" * 40)
     
     # Test with random policy
-    env = make_standing_env(render_mode=None, config=self.config)
+    env = make_standing_env(render_mode=None, config=None)
     
     # Show observation info
     env.get_observation_info()

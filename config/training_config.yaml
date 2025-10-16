@@ -19,15 +19,15 @@ logging:
 standing:
   algorithm: "PPO"
   total_timesteps: 750000
-  learning_rate: 0.0001
+  learning_rate: 0.00005
 
   batch_size: 512
   n_steps: 4096
   n_epochs: 10
   gamma: 0.99
   gae_lambda: 0.95
-  clip_range: 0.2
-  ent_coef: 0.005
+  clip_range: 0.1
+  ent_coef: 0.001
   vf_coef: 0.5
   max_grad_norm: 0.5
 
@@ -47,9 +47,9 @@ standing:
   video_freq: 50000
   
   # FIXED: Adjusted for new reward scale
-  target_reward_threshold: 120
-  height_stability_threshold: 0.08
-  height_error_threshold: 0.03
+  target_reward_threshold: 80
+  height_stability_threshold: 0.02
+  height_error_threshold: 0.05
   
   normalize: true
   n_envs: 8
