@@ -81,45 +81,54 @@ class StandingEnv(gym.Wrapper):
         return observation, reward, terminated, truncated, info
         
     def _compute_task_reward(self, obs, base_reward, info, action):
-        """Ultra-strict reward for standing perfectly still at 1.3m"""
+        """Harsh reward that ONLY rewards perfect stillness at 1.3m"""
         
         # State extraction
         height = self.env.unwrapped.data.qpos[2]
-        vel = self.env.unwrapped.data.qvel[0:3]  # [vx, vy, vz]
-        quat = self.env.unwrapped.data.qpos[3:7]  # [w, x, y, z]
+        vel = self.env.unwrapped.data.qvel[0:3]
+        quat = self.env.unwrapped.data.qpos[3:7]
         angular_vel = self.env.unwrapped.data.qvel[3:6]
         root_x, root_y = self.env.unwrapped.data.qpos[0:2]
         
         target_height = 1.3
         height_error = abs(height - target_height)
         
-        # 1. HEIGHT: Binary reward - you're either at the right height or you're not
-        if height_error < 0.01:  # Within 1cm - VERY strict
+        # 1. HEIGHT: Extremely strict
+        if height_error < 0.01:  # Within 1cm
             height_reward = 100.0
-        elif height_error < 0.02:
-            height_reward = 50.0
+        elif height_error < 0.02:  # Within 2cm  
+            height_reward = 20.0  # Much lower
         elif height_error < 0.05:
-            height_reward = 10.0
+            height_reward = -20.0  # Penalty!
         else:
-            height_reward = -10.0  # PENALTY for being far from target
+            height_reward = -50.0  # Strong penalty
         
-        # 2. UPRIGHTNESS: Binary
-        if quat[0] > 0.99:  # Almost perfectly upright
+        # 2. UPRIGHTNESS: Must be perfect
+        if quat[0] > 0.995:  # Nearly perfect
             upright_reward = 50.0
-        elif quat[0] > 0.95:
+        elif quat[0] > 0.98:
             upright_reward = 10.0
+        elif quat[0] > 0.95:
+            upright_reward = -10.0  # Penalty for tilt
         else:
-            upright_reward = -20.0  # PENALTY for tilting
+            upright_reward = -30.0
         
-        # 3. STILLNESS is CRITICAL - much heavier penalties
-        velocity_penalty = -10.0 * (vel[0]**2 + vel[1]**2 + 4.0*vel[2]**2)
-        angular_penalty = -5.0 * np.sum(angular_vel**2)
+        # 3. MOVEMENT: Massive penalties
+        # Any movement is BAD
+        linear_vel_mag = np.sqrt(vel[0]**2 + vel[1]**2 + vel[2]**2)
+        if linear_vel_mag < 0.01:  # Nearly still
+            velocity_penalty = 0.0
+        else:
+            velocity_penalty = -50.0 * linear_vel_mag  # Heavy scaling penalty
         
-        # 4. Position drift - heavier
-        position_penalty = -5.0 * (root_x**2 + root_y**2)
+        # Angular velocity penalty
+        angular_penalty = -20.0 * np.sum(angular_vel**2)
         
-        # 5. Control should be minimal
-        control_penalty = -0.02 * np.sum(np.square(action))
+        # Position drift
+        position_penalty = -10.0 * (root_x**2 + root_y**2)
+        
+        # Control penalty
+        control_penalty = -0.05 * np.sum(np.square(action))
         
         total_reward = (
             height_reward + 
@@ -130,14 +139,12 @@ class StandingEnv(gym.Wrapper):
             control_penalty
         )
         
-        # Only terminate if completely fallen
+        # Only terminate if fallen
         terminate = height < 0.5 or quat[0] < 0.3
         
-        # Debug with more detail
-        if self.current_step % 100 == 0:  # More frequent logging
-            print(f"Step {self.current_step}: h={height:.3f}, err={height_error:.3f}, "
-                f"h_r={height_reward:.1f}, up_r={upright_reward:.1f}, "
-                f"vel_p={velocity_penalty:.1f}, tot={total_reward:.1f}")
+        if self.current_step % 100 == 0:
+            print(f"Step {self.current_step}: h={height:.3f}, q={quat[0]:.3f}, "
+                f"v={linear_vel_mag:.3f}, r={total_reward:.1f}")
         
         return total_reward, terminate
     
