@@ -91,7 +91,7 @@ class StandingEnv(gym.Wrapper):
         lower, upper = bounds
         if lower == upper:
             diff = abs(x - lower)
-            return 1.0 if diff < margin else 0.0  # Or use smooth: np.exp(- (diff / margin)**2)
+            return np.exp(- (diff / margin)**2)  # Smooth version instead of binary
         else:
             # For range, but here for still it's (0,0)
             return 1.0 - np.clip(abs(x - (lower + upper)/2) / margin, 0, 1)
