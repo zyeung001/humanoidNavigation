@@ -86,6 +86,12 @@ class StandingEnv(gym.Wrapper):
         
         return observation, reward, terminated, truncated, info
     
+    def _pose_reward(self):
+        """Reward for joints close to standing pose (0 for most)."""
+        qpos = self.env.unwrapped.data.qpos[7:]  # Joint positions after root
+        # Assume standing is all 0, adjust if needed
+        return np.exp(-0.1 * np.sum(np.square(qpos)))  # Gaussian, scale 0.1
+    
     def _tol(self, x, bounds=(0,0), margin=2.0):
         """Tolerance function: high reward in [lower, upper], drops off to 0 outside with margin."""
         lower, upper = bounds
@@ -98,12 +104,21 @@ class StandingEnv(gym.Wrapper):
 
     def _upright(self):
         """Upright torso reward [0,1]."""
-        return np.clip(self.env.unwrapped.data.qpos[3], 0, 1)  # quat[0], assume normalized
+        # Get torso quaternion
+        torso_quat = self.env.unwrapped.data.body("torso").xquat  # [w, x, y, z]
+        # World up vector [0,0,1]
+        # Rotate local up [0,0,1] by conjugate quat to get world alignment
+        # Simplified dot product with up
+        # For upright, the z-component of rotated xmat should be high
+        torso_xmat = self.env.unwrapped.data.body("torso").xmat.reshape(3,3)
+        up_alignment = torso_xmat[2, 2]  # z-z component, cosine of angle to up
+        return np.clip((up_alignment + 1) / 2, 0, 1)  # Map [-1,1] to [0,1]
 
     def _height_reward(self):
         """Height reward [0,1]."""
-        height = self.env.unwrapped.data.qpos[2]
-        target = 1.3
+        torso_id = mj_name2id(self.env.unwrapped.model, mjtObj.mjOBJ_BODY, "torso")
+        height = self.env.unwrapped.data.xpos[torso_id][2]
+        target = 1.4
         return self._tol(height, (target, target), margin=0.05)
 
     def _effort(self, action):
@@ -130,13 +145,15 @@ class StandingEnv(gym.Wrapper):
         height_r = self._height_reward()
         effort = self._effort(action)
         still = self._still()
+        pose_r = self._pose_reward()
 
         # Additive weighted reward
         total_reward = (
-            5.0 * height_r +   # Prioritize height
-            3.0 * upright +    # Upright posture
-            1.0 * effort +     # Low control effort
-            2.0 * still        # Minimal movement
+            10.0 * height_r +   # Increase priority on height
+            5.0 * upright +     # Increase on posture
+            0.5 * effort +      # Reduce effort weight to allow more control if needed
+            2.0 * still +       # Keep minimal movement
+            2.0 * pose_r  # Encourage correct pose
         )
 
         # Survival bonus per step
@@ -148,7 +165,7 @@ class StandingEnv(gym.Wrapper):
         total_reward += angular_penalty + position_penalty
 
         # Termination only if truly fallen
-        terminate = height < 0.6 or upright < 0.5
+        terminate = height < 0.5 or upright < 0.3
 
         return total_reward, terminate
     

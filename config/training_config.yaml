@@ -64,7 +64,7 @@ standing:
   checkpoint_dir: "models/saved_models/checkpoints"
   checkpoint_prefix: "checkpoint"
 
-  max_episode_steps: 1000
+  max_episode_steps: 2000
 
   domain_rand: true
   rand_mass_range: [0.85, 1.15]
