@@ -106,7 +106,7 @@ class StandingEnv(gym.Wrapper):
         target = 1.3
         return self._tol(height, (target, target), margin=0.1)  # Adjust margin for smoothness
 
-    def _effort(self):
+    def _effort(self, action):
         """Low effort reward [0,1]."""
         return np.exp(-0.1 * np.sum(np.square(action)))  # Scale to [0,1], adjust coef
 
@@ -122,7 +122,7 @@ class StandingEnv(gym.Wrapper):
         
         upright = self._upright()
         height_r = self._height_reward()
-        effort = self._effort()
+        effort = self._effort(action)
         still = self._still()
 
         # Stand component
