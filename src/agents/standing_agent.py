@@ -575,14 +575,12 @@ class StandingAgent:
 
         if self.config.get("normalize", True):
             self.env = VecNormalize(
-                vec,
-                norm_obs=True,
-                norm_reward=False,  # CRITICAL FIX: Don't normalize rewards
-                clip_obs=10.0,
-                gamma=self.config.get("gamma"),
-            )
-        else:
-            self.env = vec
+            self.venv,
+            norm_obs=True,
+            norm_reward=True,
+            clip_obs=10.0,
+            clip_reward=10.0
+        ) if self.config['normalize'] else self.venv
         return self.env
 
     # ---------- Model construction ----------

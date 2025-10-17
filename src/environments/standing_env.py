@@ -164,6 +164,10 @@ class StandingEnv(gym.Wrapper):
         position_penalty = -0.1 * (root_x**2 + root_y**2)
         total_reward += angular_penalty + position_penalty
 
+        ctrl_cost = -0.5 * np.square(action).sum()  # Already in effort, but enhance
+        impact_cost = -5e-7 * np.square(self.env.unwrapped.data.cfrc_ext).sum()  # Penalize external contacts
+        total_reward += impact_cost
+
         z_vel_penalty = -0.1 * abs(vel[2])  # Minimize vertical bobbing
         total_reward += z_vel_penalty
 

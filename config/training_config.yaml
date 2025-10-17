@@ -1,43 +1,27 @@
-# Training Configuration for Humanoid Standing
-# training_config.yaml
-
-# General settings
-general:
-  seed: 42
-  device: "auto" 
-  verbose: 1
-  save_freq: 50000
-  eval_freq: 25000
-  eval_episodes: 10
-
-# Logging
-logging:
-  use_tensorboard: true
-  log_dir: "data/logs"
-
-# Standing task
+# In training_config.yaml, update hyperparameters to match successful MuJoCo PPO setups (e.g., larger clip_range for bolder updates, lower ent_coef to focus on exploitation, smaller n_steps for frequent updates, larger network for complex balance).
+# Replace the standing block with:
 standing:
   algorithm: "PPO"
-  total_timesteps: 200000
+  total_timesteps: 1000000  
   learning_rate: 0.0003
 
   batch_size: 512
-  n_steps: 4096
+  n_steps: 2048  # Smaller rollouts for more updates
   n_epochs: 10
   gamma: 0.99
   gae_lambda: 0.95
-  clip_range: 0.1
-  ent_coef: 0.02
+  clip_range: 0.2  # Wider for better exploration
+  ent_coef: 0.001  # Lower to reduce randomness in later training
   vf_coef: 0.5
   max_grad_norm: 0.5
 
   n_eval_episodes: 5
-  target_height: 1.3 
+  target_height: 1.4  # Adjust to match initial torso height
   
   policy_kwargs:
     net_arch:
-      pi: [512, 512]
-      vf: [512, 512]
+      pi: [512, 256, 128]  # Larger for high-dim control
+      vf: [512, 256, 128]
     activation_fn: "relu"
     log_std_init: -0.5  
   
@@ -48,7 +32,7 @@ standing:
   
   height_error_threshold: 0.05
   height_stability_threshold: 0.05
-  target_reward_threshold: 800
+  target_reward_threshold: 800  # Keep, but expect ~10-20 per step for good standing
   
   normalize: true
   n_envs: 8
@@ -69,19 +53,3 @@ standing:
   domain_rand: true
   rand_mass_range: [0.85, 1.15]
   rand_friction_range: [0.8, 1.2]
-
-# Evaluation
-evaluation:
-  render_eval: false
-  record_video: true
-  video_dir: "data/videos"
-  video_length: 1000
-
-simulation:
-  max_steps: 3000
-  reset_on_done: true
-  save_frames: true
-
-early_stop:
-  target_length: 1500
-  patience: 5
