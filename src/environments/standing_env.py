@@ -25,7 +25,7 @@ class StandingEnv(gym.Wrapper):
         super().__init__(env)
         
         # Use config for max_episode_steps if provided
-        self.base_target_height = 1.3
+        self.base_target_height = 1.4
 
         self.max_episode_steps = config.get('max_episode_steps', 5000) if config else 5000
         self.current_step = 0
@@ -90,7 +90,7 @@ class StandingEnv(gym.Wrapper):
         """Reward for joints close to standing pose (0 for most)."""
         qpos = self.env.unwrapped.data.qpos[7:]  # Joint positions after root
         # Assume standing is all 0, adjust if needed
-        return np.exp(-0.1 * np.sum(np.square(qpos)))  # Gaussian, scale 0.1
+        return np.exp(-0.2 * np.sum(np.square(qpos)))
     
     def _tol(self, x, bounds=(0,0), margin=2.0):
         """Tolerance function: high reward in [lower, upper], drops off to 0 outside with margin."""
@@ -118,8 +118,8 @@ class StandingEnv(gym.Wrapper):
         """Height reward [0,1]."""
         torso_id = mj_name2id(self.env.unwrapped.model, mjtObj.mjOBJ_BODY, "torso")
         height = self.env.unwrapped.data.xpos[torso_id][2]
-        target = 1.4
-        return self._tol(height, (target, target), margin=0.05)
+        target = 1.4  # Adjusted to match initial standing
+        return self._tol(height, (target, target), margin=0.03)
 
     def _effort(self, action):
         """Low effort reward [0,1]."""
@@ -128,8 +128,8 @@ class StandingEnv(gym.Wrapper):
     def _still(self):
         """Low velocity in x,y."""
         vel = self.env.unwrapped.data.qvel[0:2]  # x,y only, ignore z
-        still_x = self._tol(vel[0], (0,0), margin=0.2)
-        still_y = self._tol(vel[1], (0,0), margin=0.2)
+        still_x = self._tol(vel[0], (0,0), margin=0.1)
+        still_y = self._tol(vel[1], (0,0), margin=0.1)
         return (still_x + still_y) / 2.0
         
     def _compute_task_reward(self, obs, base_reward, info, action):
@@ -160,9 +160,16 @@ class StandingEnv(gym.Wrapper):
         total_reward += 1.0
 
         # Small penalties
-        angular_penalty = -0.05 * np.sum(np.square(angular_vel))
-        position_penalty = -0.05 * (root_x**2 + root_y**2)
+        angular_penalty = -0.2 * np.sum(np.square(angular_vel))  
+        position_penalty = -0.1 * (root_x**2 + root_y**2)
         total_reward += angular_penalty + position_penalty
+
+        z_vel_penalty = -0.1 * abs(vel[2])  # Minimize vertical bobbing
+        total_reward += z_vel_penalty
+
+        # Impact penalty to avoid harsh contacts
+        impact = -5e-7 * np.square(self.env.unwrapped.data.cfrc_ext).sum()
+        total_reward += impact
 
         # Termination only if truly fallen
         terminate = height < 0.5 or upright < 0.3
