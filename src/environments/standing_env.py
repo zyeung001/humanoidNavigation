@@ -75,7 +75,7 @@ class StandingEnv(gym.Wrapper):
         self.current_step += 1
         
         # Modify reward for standing
-        reward, terminated = self._compute_task_reward(observation, base_reward, info, action)
+        reward, terminate = self._compute_task_reward(observation, base_reward, info, action)
         
         # Override termination for standing to allow indefinite episodes
         terminated = terminate  # Only true if fallen hard
