@@ -119,6 +119,11 @@ class StandingEnv(gym.Wrapper):
         
     def _compute_task_reward(self, obs, base_reward, info, action):
         """Balanced reward for learning to stand still"""
+        height = self.env.unwrapped.data.qpos[2]
+        quat = self.env.unwrapped.data.qpos[3:7]  # Though not directly used, for completeness
+        vel = self.env.unwrapped.data.qvel[0:3]
+        angular_vel = self.env.unwrapped.data.qvel[3:6]
+        root_x, root_y = self.env.unwrapped.data.qpos[0:2]
         
         upright = self._upright()
         height_r = self._height_reward()
