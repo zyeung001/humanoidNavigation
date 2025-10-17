@@ -46,10 +46,9 @@ standing:
   wandb_log_freq: 2000
   video_freq: 50000
   
-  # FIXED: Adjusted for new reward scale
-  target_reward_threshold: 80
-  height_stability_threshold: 0.02
-  height_error_threshold: 0.05
+  height_error_threshold: 0.1
+  height_stability_threshold: 0.1
+  target_reward_threshold: 5000
   
   normalize: true
   n_envs: 8
@@ -58,8 +57,7 @@ standing:
   video_max_steps: 500
 
   episode_print_freq: 1000
-  
-  # FIXED: Paths WITHOUT .zip extension
+
   best_model_path: "models/saved_models/best_standing_model"
   final_model_path: "models/saved_models/final_standing_model"
   vecnormalize_path: "models/saved_models/vecnorm.pkl"
@@ -68,9 +66,9 @@ standing:
 
   max_episode_steps: 3000
 
-  domain_rand: false
-  rand_mass_range: [0.95, 1.05]
-  rand_friction_range: [0.95, 1.05]
+  domain_rand: true
+  rand_mass_range: [0.85, 1.15]
+  rand_friction_range: [0.8, 1.2]
 
 # Evaluation
 evaluation:
