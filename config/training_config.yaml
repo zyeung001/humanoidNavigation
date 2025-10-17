@@ -27,7 +27,7 @@ standing:
   gamma: 0.99
   gae_lambda: 0.95
   clip_range: 0.1
-  ent_coef: 0.001
+  ent_coef: 0.02
   vf_coef: 0.5
   max_grad_norm: 0.5
 
@@ -46,9 +46,9 @@ standing:
   wandb_log_freq: 2000
   video_freq: 50000
   
-  height_error_threshold: 0.1
-  height_stability_threshold: 0.1
-  target_reward_threshold: 5000
+  height_error_threshold: 0.05
+  height_stability_threshold: 0.05
+  target_reward_threshold: 800
   
   normalize: true
   n_envs: 8
@@ -64,7 +64,7 @@ standing:
   checkpoint_dir: "models/saved_models/checkpoints"
   checkpoint_prefix: "checkpoint"
 
-  max_episode_steps: 3000
+  max_episode_steps: 1000
 
   domain_rand: true
   rand_mass_range: [0.85, 1.15]

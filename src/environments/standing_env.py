@@ -78,7 +78,7 @@ class StandingEnv(gym.Wrapper):
         reward, terminated = self._compute_task_reward(observation, base_reward, info, action)
         
         # Override termination for standing to allow indefinite episodes
-        terminated = terminated  # Prevent early termination based on height
+        terminated = terminate  # Only true if fallen hard
         truncated = self.current_step >= self.max_episode_steps
         
         # Add task info 
@@ -104,7 +104,7 @@ class StandingEnv(gym.Wrapper):
         """Height reward [0,1]."""
         height = self.env.unwrapped.data.qpos[2]
         target = 1.3
-        return self._tol(height, (target, target), margin=0.1)  # Adjust margin for smoothness
+        return self._tol(height, (target, target), margin=0.05)
 
     def _effort(self, action):
         """Low effort reward [0,1]."""
@@ -113,8 +113,8 @@ class StandingEnv(gym.Wrapper):
     def _still(self):
         """Low velocity in x,y."""
         vel = self.env.unwrapped.data.qvel[0:2]  # x,y only, ignore z
-        still_x = self._tol(vel[0], (0,0), margin=0.5)  # Adjust margin
-        still_y = self._tol(vel[1], (0,0), margin=0.5)
+        still_x = self._tol(vel[0], (0,0), margin=0.2)
+        still_y = self._tol(vel[1], (0,0), margin=0.2)
         return (still_x + still_y) / 2.0
         
     def _compute_task_reward(self, obs, base_reward, info, action):
@@ -125,30 +125,30 @@ class StandingEnv(gym.Wrapper):
         angular_vel = self.env.unwrapped.data.qvel[3:6]
         root_x, root_y = self.env.unwrapped.data.qpos[0:2]
         
+        # Components (each [0,1] or similar)
         upright = self._upright()
         height_r = self._height_reward()
         effort = self._effort(action)
         still = self._still()
 
-        # Stand component
-        stand = height_r * upright
+        # Additive weighted reward
+        total_reward = (
+            5.0 * height_r +   # Prioritize height
+            3.0 * upright +    # Upright posture
+            1.0 * effort +     # Low control effort
+            2.0 * still        # Minimal movement
+        )
 
-        # Stable component
-        stable = stand * effort
-
-        # Full reward: encourage standing still
-        total_reward = stable * still * 10.0  # Scale up to make positive and encouraging
-
-        # Add small survival bonus
+        # Survival bonus per step
         total_reward += 1.0
 
-        # Minimal penalties for angular vel and position drift
-        angular_penalty = -0.1 * np.sum(angular_vel**2)
-        position_penalty = -0.1 * (root_x**2 + root_y**2)
+        # Small penalties
+        angular_penalty = -0.05 * np.sum(np.square(angular_vel))
+        position_penalty = -0.05 * (root_x**2 + root_y**2)
         total_reward += angular_penalty + position_penalty
 
-        # Termination relaxed
-        terminate = height < 0.8 or upright < 0.7  # Allow more recovery
+        # Termination only if truly fallen
+        terminate = height < 0.6 or upright < 0.5
 
         return total_reward, terminate
     

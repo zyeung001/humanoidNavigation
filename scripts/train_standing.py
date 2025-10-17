@@ -336,7 +336,7 @@ if __name__ == "__main__":
         agent.create_environment()
         
         # Load VecNormalize stats FIRST (before loading model)
-        vecnorm_path = standing_config.get('vecnormalize_path', 'models/saved_models/vecnorm_standing.pkl')
+        vecnorm_path = standing_config.get('vecnormalize_path')
         if os.path.exists(vecnorm_path):
             print(f"Loading VecNormalize stats from: {vecnorm_path}")
             from stable_baselines3.common.vec_env import VecNormalize
