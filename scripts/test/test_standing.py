@@ -86,7 +86,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, 
                        default="/content/humanoidNavigation/models/saved_models/final_standing_model.zip")
     parser.add_argument("--vecnorm", type=str,
-                       default="/content/humanoidNavigation/models/saved_models/vecnorm_standing.pkl")
+                       default="/content/humanoidNavigation/models/saved_models/vecnorm.pkl")
     parser.add_argument("--steps", type=int, default=2000)
     args = parser.parse_args()
     
