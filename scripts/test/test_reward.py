@@ -20,7 +20,7 @@ def test_reward_debug():
     
     # Test 1: Perfect standing
     print("\nTest 1: Perfect standing")
-    env.env.unwrapped.data.qpos[2] = 1.3
+    env.env.unwrapped.data.qpos[2] = 1.4
     env.env.unwrapped.data.qpos[3] = 1.0
     env.env.unwrapped.data.qvel[:] = 0
     
@@ -44,7 +44,7 @@ def test_reward_debug():
     print("\n" + "-"*40)
     print("Test 2: Perfect height but moving")
     env.reset()
-    env.env.unwrapped.data.qpos[2] = 1.3
+    env.env.unwrapped.data.qpos[2] = 1.4
     env.env.unwrapped.data.qpos[3] = 1.0
     env.env.unwrapped.data.qvel[0:3] = [0.1, 0.1, 0]
     

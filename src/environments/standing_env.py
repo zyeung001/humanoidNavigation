@@ -44,12 +44,6 @@ class StandingEnv(gym.Wrapper):
         default_height = self.env.unwrapped.data.qpos[2]
         
         self.current_step = 0
-
-        # Add small noise to joints for robustness
-        qpos = self.env.unwrapped.data.qpos.copy()
-        qpos[7:] += np.random.uniform(-0.01, 0.01, size=len(qpos[7:]))  # Joints after root
-        self.env.unwrapped.data.qpos[:] = qpos
-
         self.prev_height = default_height
         self.target_height = self.base_target_height
         
@@ -75,110 +69,58 @@ class StandingEnv(gym.Wrapper):
         self.current_step += 1
         
         # Modify reward for standing
-        reward, terminate = self._compute_task_reward(observation, base_reward, info, action)
+        reward, terminated = self._compute_task_reward(observation, base_reward, info, action)
         
         # Override termination for standing to allow indefinite episodes
-        terminated = terminate  # Only true if fallen hard
+        terminated = terminated  # Prevent early termination based on height
         truncated = self.current_step >= self.max_episode_steps
         
         # Add task info 
         info.update(self._get_task_info())
         
         return observation, reward, terminated, truncated, info
-    
-    def _pose_reward(self):
-        """Reward for joints close to standing pose (0 for most)."""
-        qpos = self.env.unwrapped.data.qpos[7:]  # Joint positions after root
-        # Assume standing is all 0, adjust if needed
-        return np.exp(-0.2 * np.sum(np.square(qpos)))
-    
-    def _tol(self, x, bounds=(0,0), margin=2.0):
-        """Tolerance function: high reward in [lower, upper], drops off to 0 outside with margin."""
-        lower, upper = bounds
-        if lower == upper:
-            diff = abs(x - lower)
-            return np.exp(- (diff / margin)**2)  # Smooth version instead of binary
-        else:
-            # For range, but here for still it's (0,0)
-            return 1.0 - np.clip(abs(x - (lower + upper)/2) / margin, 0, 1)
-
-    def _upright(self):
-        """Upright torso reward [0,1]."""
-        # Get torso quaternion
-        torso_quat = self.env.unwrapped.data.body("torso").xquat  # [w, x, y, z]
-        # World up vector [0,0,1]
-        # Rotate local up [0,0,1] by conjugate quat to get world alignment
-        # Simplified dot product with up
-        # For upright, the z-component of rotated xmat should be high
-        torso_xmat = self.env.unwrapped.data.body("torso").xmat.reshape(3,3)
-        up_alignment = torso_xmat[2, 2]  # z-z component, cosine of angle to up
-        return np.clip((up_alignment + 1) / 2, 0, 1)  # Map [-1,1] to [0,1]
-
-    def _height_reward(self):
-        """Height reward [0,1]."""
-        torso_id = mj_name2id(self.env.unwrapped.model, mjtObj.mjOBJ_BODY, "torso")
-        height = self.env.unwrapped.data.xpos[torso_id][2]
-        target = 1.4  # Adjusted to match initial standing
-        return self._tol(height, (target, target), margin=0.03)
-
-    def _effort(self, action):
-        """Low effort reward [0,1]."""
-        return np.exp(-0.1 * np.sum(np.square(action)))  # Scale to [0,1], adjust coef
-
-    def _still(self):
-        """Low velocity in x,y."""
-        vel = self.env.unwrapped.data.qvel[0:2]  # x,y only, ignore z
-        still_x = self._tol(vel[0], (0,0), margin=0.1)
-        still_y = self._tol(vel[1], (0,0), margin=0.1)
-        return (still_x + still_y) / 2.0
         
     def _compute_task_reward(self, obs, base_reward, info, action):
-        """Balanced reward for learning to stand still"""
+        """Extremely harsh reward - only perfect stillness gets positive reward"""
+        
+        # State extraction
         height = self.env.unwrapped.data.qpos[2]
-        quat = self.env.unwrapped.data.qpos[3:7]  # Though not directly used, for completeness
         vel = self.env.unwrapped.data.qvel[0:3]
+        quat = self.env.unwrapped.data.qpos[3:7]
         angular_vel = self.env.unwrapped.data.qvel[3:6]
         root_x, root_y = self.env.unwrapped.data.qpos[0:2]
         
-        # Components (each [0,1] or similar)
-        upright = self._upright()
-        height_r = self._height_reward()
-        effort = self._effort(action)
-        still = self._still()
-        pose_r = self._pose_reward()
-
-        # Additive weighted reward
-        total_reward = (
-            10.0 * height_r +   # Increase priority on height
-            5.0 * upright +     # Increase on posture
-            0.5 * effort +      # Reduce effort weight to allow more control if needed
-            2.0 * still +       # Keep minimal movement
-            2.0 * pose_r  # Encourage correct pose
-        )
-
-        # Survival bonus per step
-        total_reward += 1.0
-
-        # Small penalties
-        angular_penalty = -0.2 * np.sum(np.square(angular_vel))  
-        position_penalty = -0.1 * (root_x**2 + root_y**2)
-        total_reward += angular_penalty + position_penalty
-
-        ctrl_cost = -0.5 * np.square(action).sum()  # Already in effort, but enhance
-        impact_cost = -5e-7 * np.square(self.env.unwrapped.data.cfrc_ext).sum()  # Penalize external contacts
-        total_reward += impact_cost
-
-        z_vel_penalty = -0.1 * abs(vel[2])  # Minimize vertical bobbing
-        total_reward += z_vel_penalty
-
-        # Impact penalty to avoid harsh contacts
-        impact = -5e-7 * np.square(self.env.unwrapped.data.cfrc_ext).sum()
-        total_reward += impact
-
-        # Termination only if truly fallen
-        terminate = height < 0.5 or upright < 0.3
-
-        return total_reward, terminate
+        # Calculate key metrics
+        height_error = abs(height - 1.4)
+        total_vel = np.sqrt(vel[0]**2 + vel[1]**2 + vel[2]**2)
+        
+        # Start with base reward only if height is perfect
+        if height_error < 0.01 and quat[0] > 0.99 and total_vel < 0.01:
+            # Perfect state - give full reward
+            reward = 150.0
+        elif height_error < 0.02 and quat[0] > 0.98 and total_vel < 0.05:
+            # Close to perfect
+            reward = 50.0
+        else:
+            # Not good enough - start with penalty
+            reward = -20.0
+        
+        # Additional penalties (always applied)
+        reward -= 100.0 * height_error  # Heavy height error penalty
+        reward -= 200.0 * total_vel      # Massive movement penalty  
+        reward -= 50.0 * (1.0 - quat[0]) # Tilt penalty
+        reward -= 10.0 * np.sum(angular_vel**2)
+        reward -= 5.0 * (root_x**2 + root_y**2)
+        reward -= 0.01 * np.sum(np.square(action))
+        
+        # Termination
+        terminate = height < 0.5 or quat[0] < 0.3
+        
+        if self.current_step % 100 == 0:
+            print(f"Step {self.current_step}: h_err={height_error:.3f}, "
+                f"vel={total_vel:.3f}, up={quat[0]:.3f}, r={reward:.1f}")
+        
+        return reward, terminate
     
     def _get_task_info(self):
         """Get task-specific information"""

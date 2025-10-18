@@ -577,9 +577,9 @@ class StandingAgent:
             self.env = VecNormalize(
                 vec,
                 norm_obs=True,
-                norm_reward=True,
+                norm_reward=False,  # CRITICAL FIX: Don't normalize rewards
                 clip_obs=10.0,
-                clip_reward=10.0
+                gamma=self.config.get("gamma"),
             )
         else:
             self.env = vec
@@ -1021,8 +1021,8 @@ def create_standing_agent(config_path='config/training_config.yaml', device='aut
 class EarlyStoppingCallback(BaseCallback):
     """Stop training when standing is mastered"""
     
-    def __init__(self, check_freq=50000, target_reward=8000, target_height_error=0.05, 
-                 target_stability=0.05, min_episode_length=5000, patience=3):
+    def __init__(self, check_freq=50000, target_reward=3000, target_height_error=0.1, 
+                 target_stability=0.15, min_episode_length=900, patience=5):
         super().__init__()
         self.check_freq = check_freq
         self.target_reward = target_reward  # Much higher threshold
@@ -1070,7 +1070,7 @@ class EarlyStoppingCallback(BaseCallback):
             
             if episode_heights:
                 mean_height = np.mean(episode_heights)
-                height_error = abs(mean_height - 1.3)
+                height_error = abs(mean_height - 1.4)
                 height_stability = np.std(episode_heights)
                 
                 # Stricter success criteria

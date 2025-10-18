@@ -33,7 +33,7 @@ def test_standing(model_path, vecnorm_path, n_steps=2000):
         'domain_rand': False,  # Turn OFF for testing to see true performance
         'rand_mass_range': [0.9, 1.1],
         'rand_friction_range': [0.85, 1.15],
-        'target_height': 1.3
+        'target_height': 1.4
     }
     env = make_standing_env(render_mode=None, config=test_config)
     vec_env = DummyVecEnv([lambda: env])
@@ -73,7 +73,7 @@ def test_standing(model_path, vecnorm_path, n_steps=2000):
     else:
         print(f"\n✅ SUCCESS! Stood for {n_steps} steps")
         print(f"  Mean height: {np.mean(heights):.3f} ± {np.std(heights):.3f}")
-        print(f"  Height error: {abs(np.mean(heights) - 1.3):.3f}")
+        print(f"  Height error: {abs(np.mean(heights) - 1.4):.3f}")
         print(f"  Mean dist: {np.mean(distances):.3f}, max: {np.max(distances):.3f}")
         print(f"  Mean reward/step: {np.mean(rewards):.2f}")
     

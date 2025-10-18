@@ -190,7 +190,7 @@ def main():
         files_to_check = [
             "models/saved_models/best_standing_model.zip",
             "models/saved_models/final_standing_model.zip", 
-            "models/saved_models/vecnorm_standing.pkl"
+            "models/saved_models/vecnorm.pkl"
         ]
 
         for filepath in files_to_check:
@@ -370,4 +370,3 @@ if __name__ == "__main__":
         print("Resume training complete.")
     else:
         main()
-
