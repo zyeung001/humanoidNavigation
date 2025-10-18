@@ -81,7 +81,6 @@ class StandingEnv(gym.Wrapper):
         return observation, reward, terminated, truncated, info
         
     def _compute_task_reward(self, obs, base_reward, info, action):
-        """Extremely harsh reward - only perfect stillness gets positive reward"""
         
         # State extraction
         height = self.env.unwrapped.data.qpos[2]
@@ -94,33 +93,48 @@ class StandingEnv(gym.Wrapper):
         height_error = abs(height - 1.4)
         total_vel = np.sqrt(vel[0]**2 + vel[1]**2 + vel[2]**2)
         
-        # Start with base reward only if height is perfect
-        if height_error < 0.01 and quat[0] > 0.99 and total_vel < 0.01:
-            # Perfect state - give full reward
-            reward = 150.0
-        elif height_error < 0.02 and quat[0] > 0.98 and total_vel < 0.05:
-            # Close to perfect
-            reward = 50.0
+        # Phase 1: Just stay alive (first priority)
+        survival_reward = 10.0  # Small positive for not falling
+        
+        # Phase 2: Get to approximately right height
+        if height_error < 0.1:  # Within 10cm
+            height_reward = 50.0
+        elif height_error < 0.2:
+            height_reward = 20.0
         else:
-            # Not good enough - start with penalty
-            reward = -20.0
+            height_reward = -10.0 * height_error
         
-        # Additional penalties (always applied)
-        reward -= 100.0 * height_error  # Heavy height error penalty
-        reward -= 200.0 * total_vel      # Massive movement penalty  
-        reward -= 50.0 * (1.0 - quat[0]) # Tilt penalty
-        reward -= 10.0 * np.sum(angular_vel**2)
-        reward -= 5.0 * (root_x**2 + root_y**2)
-        reward -= 0.01 * np.sum(np.square(action))
+        # Phase 3: Stay upright
+        upright_reward = 20.0 * quat[0] if quat[0] > 0.9 else 0
         
-        # Termination
+        # Phase 4: Reduce movement (gentler penalties)
+        velocity_penalty = -5.0 * total_vel  # Reduced from -200
+        angular_penalty = -2.0 * np.sum(angular_vel**2)
+        
+        # Phase 5: Stay near origin
+        position_penalty = -1.0 * (root_x**2 + root_y**2)
+        
+        # Small control penalty
+        control_penalty = -0.01 * np.sum(np.square(action))
+        
+        total_reward = (
+            survival_reward +
+            height_reward + 
+            upright_reward +
+            velocity_penalty + 
+            angular_penalty +
+            position_penalty +
+            control_penalty
+        )
+        
+        # Only terminate if really fallen
         terminate = height < 0.5 or quat[0] < 0.3
-        
+
         if self.current_step % 100 == 0:
-            print(f"Step {self.current_step}: h_err={height_error:.3f}, "
-                f"vel={total_vel:.3f}, up={quat[0]:.3f}, r={reward:.1f}")
-        
-        return reward, terminate
+            print(f"Step {self.current_step}: h={height:.2f}, err={height_error:.3f}, "
+                f"vel={total_vel:.3f}, r={total_reward:.1f}")
+            
+        return total_reward, terminate
     
     def _get_task_info(self):
         """Get task-specific information"""
