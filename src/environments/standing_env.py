@@ -31,7 +31,7 @@ class StandingEnv(gym.Wrapper):
         super().__init__(env)
         
         # Use config for max_episode_steps if provided
-        self.base_target_height = 1.4
+        self.base_target_height = 1.4  # Correct target height for full standing
 
         self.max_episode_steps = config.get('max_episode_steps', 5000) if config else 5000
         self.current_step = 0
@@ -109,62 +109,82 @@ class StandingEnv(gym.Wrapper):
         total_vel = np.sqrt(vel[0]**2 + vel[1]**2 + vel[2]**2)
         xy_dist = np.sqrt(root_x**2 + root_y**2)
         
-        # SIMPLIFIED REWARD: Focus on height first, then stability
-        # Core height reward (this is the PRIMARY objective)
-        if height_error < 0.03:  # Very close (within 3cm)
-            height_reward = 200.0
-        elif height_error < 0.05:  # Close (within 5cm) 
-            height_reward = 150.0
-        elif height_error < 0.10:  # Acceptable (within 10cm)
+        # IMPROVED REWARD FUNCTION: Progressive height rewards with stability bonuses
+        
+        # 1. HEIGHT REWARD (Primary objective) - More generous scaling
+        if height_error < 0.02:  # Excellent (within 2cm)
             height_reward = 100.0
-        elif height_error < 0.20:  # Getting there (within 20cm)
-            height_reward = 50.0
-        else:  # Too far
-            height_reward = -30.0 * height_error
+        elif height_error < 0.05:  # Very good (within 5cm)
+            height_reward = 80.0
+        elif height_error < 0.10:  # Good (within 10cm)
+            height_reward = 60.0
+        elif height_error < 0.20:  # Acceptable (within 20cm)
+            height_reward = 40.0
+        elif height_error < 0.30:  # Poor but not terrible (within 30cm)
+            height_reward = 20.0
+        else:  # Too far - but don't punish too harshly
+            height_reward = max(0, 10.0 - height_error * 10.0)
         
-        # Upright orientation bonus (secondary objective)
+        # 2. UPRIGHT ORIENTATION (Critical for standing)
         # quat[0] is the w component, should be close to 1.0 when upright
-        upright_reward = 50.0 * max(0, quat[0] - 0.5)  # Reward being upright
+        upright_bonus = 30.0 * max(0, quat[0] - 0.3)  # Reward being upright, more generous
         
-        # GENTLE stability penalties (let agent learn to balance with small movements)
-        velocity_penalty = -0.5 * total_vel  # Reduced from -5.0
-        angular_penalty = -0.5 * np.sum(np.square(angular_vel))  # Reduced from -2.0
-        position_penalty = -0.2 * xy_dist  # Gentle drift penalty
+        # 3. STABILITY REWARDS (Encourage smooth control)
+        # Reward low velocity (being still)
+        velocity_bonus = max(0, 20.0 - total_vel * 5.0)  # Bonus for being still
         
-        # Very small control cost (don't penalize actions too much)
-        control_penalty = -0.005 * np.sum(np.square(action))
+        # Reward low angular velocity (not spinning)
+        angular_bonus = max(0, 15.0 - np.sum(np.square(angular_vel)) * 2.0)
         
-        # Survival bonus (reward for not falling)
-        survival_reward = 5.0
+        # 4. POSITION STABILITY (Stay in place)
+        position_bonus = max(0, 10.0 - xy_dist * 5.0)  # Bonus for staying centered
         
+        # 5. CONTROL EFFICIENCY (Encourage smooth actions)
+        action_magnitude = np.sum(np.square(action))
+        control_bonus = max(0, 5.0 - action_magnitude * 0.1)  # Small bonus for efficient control
+        
+        # 6. SURVIVAL BONUS (Base reward for not falling)
+        survival_bonus = 10.0
+        
+        # 7. PROGRESSIVE BONUS (Reward for maintaining good state)
+        if height_error < 0.10 and quat[0] > 0.7:  # Good standing state
+            progressive_bonus = 25.0
+        elif height_error < 0.20 and quat[0] > 0.5:  # Decent standing state
+            progressive_bonus = 15.0
+        else:
+            progressive_bonus = 0.0
+        
+        # Total reward (all positive components)
         total_reward = (
             height_reward + 
-            upright_reward +
-            survival_reward +
-            velocity_penalty + 
-            angular_penalty +
-            position_penalty +
-            control_penalty
+            upright_bonus +
+            velocity_bonus +
+            angular_bonus +
+            position_bonus +
+            control_bonus +
+            survival_bonus +
+            progressive_bonus
         )
         
-        # Track reward components
+        # Track reward components for debugging
         self.reward_history['height'].append(height_reward)
-        self.reward_history['upright'].append(upright_reward)
-        self.reward_history['velocity'].append(velocity_penalty)
-        self.reward_history['angular'].append(angular_penalty)
-        self.reward_history['position'].append(position_penalty)
-        self.reward_history['control'].append(control_penalty)
+        self.reward_history['upright'].append(upright_bonus)
+        self.reward_history['velocity'].append(velocity_bonus)
+        self.reward_history['angular'].append(angular_bonus)
+        self.reward_history['position'].append(position_bonus)
+        self.reward_history['control'].append(control_bonus)
         
-        # Much more lenient termination - only if really fallen over
-        terminate = height < 0.3 or quat[0] < 0.1
+        # MUCH MORE LENIENT TERMINATION - only if completely fallen
+        # Only terminate if really fallen over or crashed
+        terminate = height < 0.2 or quat[0] < 0.05 or height > 3.0
 
         # Detailed logging every 100 steps
         if self.current_step % 100 == 0:
             print(f"Step {self.current_step}: h={height:.2f}, err={height_error:.3f}, "
                   f"vel={total_vel:.3f}, quat[0]={quat[0]:.3f}, r={total_reward:.1f}")
-            print(f"  Components: height={height_reward:.1f}, upright={upright_reward:.1f}, "
-                  f"vel={velocity_penalty:.1f}, ang={angular_penalty:.1f}, "
-                  f"pos={position_penalty:.1f}, ctrl={control_penalty:.1f}")
+            print(f"  Components: height={height_reward:.1f}, upright={upright_bonus:.1f}, "
+                  f"vel={velocity_bonus:.1f}, ang={angular_bonus:.1f}, "
+                  f"pos={position_bonus:.1f}, ctrl={control_bonus:.1f}, prog={progressive_bonus:.1f}")
             
         return total_reward, terminate
     
