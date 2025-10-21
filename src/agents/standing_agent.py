@@ -144,9 +144,10 @@ class StandingCallback(BaseCallback):
             os.makedirs("models/saved_models", exist_ok=True)
 
             for path in [self.best_model_path, self.checkpoint_dir]:
-                parent_dir = os.path.dirname(path)
-                if parent_dir:
-                    os.makedirs(parent_dir, exist_ok=True)
+                if path is not None:  # ✅ Check for None first!
+                    parent_dir = os.path.dirname(path)
+                    if parent_dir:
+                        os.makedirs(parent_dir, exist_ok=True)
 
     def _collect_episode_data(self):
         infos = self.locals.get("infos", [])

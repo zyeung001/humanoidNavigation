@@ -59,11 +59,11 @@ standing:
 
   episode_print_freq: 1000
   
-  # Paths WITHOUT .zip extension  best_model_path: "models/saved_models/best_standing_model"
   final_model_path: "models/saved_models/final_standing_model"
   vecnormalize_path: "models/saved_models/vecnorm.pkl"
   checkpoint_dir: "models/saved_models/checkpoints"
   checkpoint_prefix: "checkpoint"
+  best_model_path: "models/saved_models/best_standing_model"
 
   max_episode_steps: 5000  # Longer episodes for proper evaluation
 
