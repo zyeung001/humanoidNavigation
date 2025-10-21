@@ -21,25 +21,25 @@ standing:
   total_timesteps: 300000  # Increased for better convergence
   learning_rate: 0.0003
 
-  batch_size: 512
-  n_steps: 4096
+  batch_size: 2048
+  n_steps: 2048
   n_epochs: 10
   gamma: 0.99
   gae_lambda: 0.95
-  clip_range: 0.1
+  clip_range: 0.2
   ent_coef: 0.001  # Slight exploration
   vf_coef: 0.5
   max_grad_norm: 0.5
 
   n_eval_episodes: 5
-  target_height: 1.4
+  target_height: 1.25
   
   policy_kwargs:
     net_arch:
       pi: [256, 256]
       vf: [256, 256]
     activation_fn: "relu"
-    log_std_init: -0.5  
+    log_std_init: -1.0 
   
   use_wandb: true
   wandb_project: "humanoid-standing-improved"
