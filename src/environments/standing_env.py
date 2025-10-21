@@ -109,21 +109,25 @@ class StandingEnv(gym.Wrapper):
         total_vel = np.sqrt(vel[0]**2 + vel[1]**2 + vel[2]**2)
         xy_dist = np.sqrt(root_x**2 + root_y**2)
         
-        # IMPROVED REWARD FUNCTION: Progressive height rewards with stability bonuses
+        # AGGRESSIVE HEIGHT REWARD: Strongly encourage reaching target height
         
-        # 1. HEIGHT REWARD (Primary objective) - More generous scaling
+        # 1. HEIGHT REWARD (Primary objective) - Much more aggressive
         if height_error < 0.02:  # Excellent (within 2cm)
-            height_reward = 100.0
+            height_reward = 200.0
         elif height_error < 0.05:  # Very good (within 5cm)
-            height_reward = 80.0
+            height_reward = 150.0
         elif height_error < 0.10:  # Good (within 10cm)
-            height_reward = 60.0
+            height_reward = 100.0
         elif height_error < 0.20:  # Acceptable (within 20cm)
-            height_reward = 40.0
-        elif height_error < 0.30:  # Poor but not terrible (within 30cm)
-            height_reward = 20.0
-        else:  # Too far - but don't punish too harshly
-            height_reward = max(0, 10.0 - height_error * 10.0)
+            height_reward = 50.0
+        elif height_error < 0.30:  # Poor (within 30cm)
+            height_reward = 10.0
+        elif height_error < 0.50:  # Very poor (within 50cm)
+            height_reward = -20.0
+        elif height_error < 0.80:  # Terrible (within 80cm)
+            height_reward = -50.0
+        else:  # Completely wrong height - strong penalty
+            height_reward = -100.0
         
         # 2. UPRIGHT ORIENTATION (Critical for standing)
         # quat[0] is the w component, should be close to 1.0 when upright
@@ -146,7 +150,19 @@ class StandingEnv(gym.Wrapper):
         # 6. SURVIVAL BONUS (Base reward for not falling)
         survival_bonus = 10.0
         
-        # 7. PROGRESSIVE BONUS (Reward for maintaining good state)
+        # 7. HEIGHT PROGRESSION BONUS (Encourage increasing height over time)
+        if height > 1.3:  # Very close to target
+            height_progression_bonus = 50.0
+        elif height > 1.1:  # Getting close
+            height_progression_bonus = 30.0
+        elif height > 0.9:  # Decent height
+            height_progression_bonus = 15.0
+        elif height > 0.7:  # Some height
+            height_progression_bonus = 5.0
+        else:  # Too low
+            height_progression_bonus = -10.0
+        
+        # 8. PROGRESSIVE BONUS (Reward for maintaining good state)
         if height_error < 0.10 and quat[0] > 0.7:  # Good standing state
             progressive_bonus = 25.0
         elif height_error < 0.20 and quat[0] > 0.5:  # Decent standing state
@@ -154,7 +170,7 @@ class StandingEnv(gym.Wrapper):
         else:
             progressive_bonus = 0.0
         
-        # Total reward (all positive components)
+        # Total reward (all components)
         total_reward = (
             height_reward + 
             upright_bonus +
@@ -163,6 +179,7 @@ class StandingEnv(gym.Wrapper):
             position_bonus +
             control_bonus +
             survival_bonus +
+            height_progression_bonus +
             progressive_bonus
         )
         
@@ -184,7 +201,8 @@ class StandingEnv(gym.Wrapper):
                   f"vel={total_vel:.3f}, quat[0]={quat[0]:.3f}, r={total_reward:.1f}")
             print(f"  Components: height={height_reward:.1f}, upright={upright_bonus:.1f}, "
                   f"vel={velocity_bonus:.1f}, ang={angular_bonus:.1f}, "
-                  f"pos={position_bonus:.1f}, ctrl={control_bonus:.1f}, prog={progressive_bonus:.1f}")
+                  f"pos={position_bonus:.1f}, ctrl={control_bonus:.1f}, "
+                  f"h_prog={height_progression_bonus:.1f}, prog={progressive_bonus:.1f}")
             
         return total_reward, terminate
     

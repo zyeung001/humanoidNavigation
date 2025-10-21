@@ -47,9 +47,9 @@ standing:
   video_freq: 50000
   
 
-  target_reward_threshold: 2000  # Adjusted for new positive reward scale
-  height_stability_threshold: 0.15  # More lenient for stability
-  height_error_threshold: 0.20  # More lenient for height error
+  target_reward_threshold: 5000  # Higher threshold for aggressive height rewards
+  height_stability_threshold: 0.10  # Stricter for stability
+  height_error_threshold: 0.15  # Stricter for height error
   
   normalize: true
   n_envs: 8
