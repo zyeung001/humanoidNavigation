@@ -1,6 +1,12 @@
 """
 Standing environment wrapper for MuJoCo Humanoid-v5
-Optimized reward for indefinite standing balance
+OPTIMIZED reward for indefinite standing balance
+
+FIXES:
+- Simplified reward function (height first, then stability)
+- More lenient termination conditions
+- Better reward shaping with clearer objectives
+- Enhanced debugging output
 
 standing_env.py
 """
@@ -30,9 +36,15 @@ class StandingEnv(gym.Wrapper):
         self.max_episode_steps = config.get('max_episode_steps', 5000) if config else 5000
         self.current_step = 0
 
-        self.domain_rand = config.get('domain_rand')
-        self.rand_mass_range = config.get('rand_mass_range')
-        self.rand_friction_range = config.get('rand_friction_range')
+        self.domain_rand = config.get('domain_rand', False) if config else False
+        self.rand_mass_range = config.get('rand_mass_range', [0.95, 1.05]) if config else [0.95, 1.05]
+        self.rand_friction_range = config.get('rand_friction_range', [0.95, 1.05]) if config else [0.95, 1.05]
+        
+        # Track reward components for debugging
+        self.reward_history = {
+            'height': [], 'upright': [], 'velocity': [], 
+            'angular': [], 'position': [], 'control': []
+        }
         
         # Verify observation space (should be 348 for Humanoid-v5)
         obs_space = env.observation_space
@@ -46,6 +58,10 @@ class StandingEnv(gym.Wrapper):
         self.current_step = 0
         self.prev_height = default_height
         self.target_height = self.base_target_height
+        
+        # Clear reward history
+        for key in self.reward_history:
+            self.reward_history[key] = []
         
         if self.domain_rand:
             # Randomize body masses
@@ -72,7 +88,6 @@ class StandingEnv(gym.Wrapper):
         reward, terminated = self._compute_task_reward(observation, base_reward, info, action)
         
         # Override termination for standing to allow indefinite episodes
-        terminated = terminated  # Prevent early termination based on height
         truncated = self.current_step >= self.max_episode_steps
         
         # Add task info 
@@ -90,49 +105,66 @@ class StandingEnv(gym.Wrapper):
         root_x, root_y = self.env.unwrapped.data.qpos[0:2]
         
         # Calculate key metrics
-        height_error = abs(height - 1.4)
+        height_error = abs(height - self.target_height)
         total_vel = np.sqrt(vel[0]**2 + vel[1]**2 + vel[2]**2)
+        xy_dist = np.sqrt(root_x**2 + root_y**2)
         
-        # Phase 1: Just stay alive (first priority)
-        survival_reward = 10.0  # Small positive for not falling
-        
-        # Phase 2: Get to approximately right height
-        if height_error < 0.1:  # Within 10cm
+        # SIMPLIFIED REWARD: Focus on height first, then stability
+        # Core height reward (this is the PRIMARY objective)
+        if height_error < 0.03:  # Very close (within 3cm)
+            height_reward = 200.0
+        elif height_error < 0.05:  # Close (within 5cm) 
+            height_reward = 150.0
+        elif height_error < 0.10:  # Acceptable (within 10cm)
+            height_reward = 100.0
+        elif height_error < 0.20:  # Getting there (within 20cm)
             height_reward = 50.0
-        elif height_error < 0.2:
-            height_reward = 20.0
-        else:
-            height_reward = -10.0 * height_error
+        else:  # Too far
+            height_reward = -30.0 * height_error
         
-        # Phase 3: Stay upright
-        upright_reward = 20.0 * quat[0] if quat[0] > 0.9 else 0
+        # Upright orientation bonus (secondary objective)
+        # quat[0] is the w component, should be close to 1.0 when upright
+        upright_reward = 50.0 * max(0, quat[0] - 0.5)  # Reward being upright
         
-        # Phase 4: Reduce movement (gentler penalties)
-        velocity_penalty = -5.0 * total_vel  # Reduced from -200
-        angular_penalty = -2.0 * np.sum(angular_vel**2)
+        # GENTLE stability penalties (let agent learn to balance with small movements)
+        velocity_penalty = -0.5 * total_vel  # Reduced from -5.0
+        angular_penalty = -0.5 * np.sum(np.square(angular_vel))  # Reduced from -2.0
+        position_penalty = -0.2 * xy_dist  # Gentle drift penalty
         
-        # Phase 5: Stay near origin
-        position_penalty = -1.0 * (root_x**2 + root_y**2)
+        # Very small control cost (don't penalize actions too much)
+        control_penalty = -0.005 * np.sum(np.square(action))
         
-        # Small control penalty
-        control_penalty = -0.01 * np.sum(np.square(action))
+        # Survival bonus (reward for not falling)
+        survival_reward = 5.0
         
         total_reward = (
-            survival_reward +
             height_reward + 
             upright_reward +
+            survival_reward +
             velocity_penalty + 
             angular_penalty +
             position_penalty +
             control_penalty
         )
         
-        # Only terminate if really fallen
-        terminate = height < 0.5 or quat[0] < 0.3
+        # Track reward components
+        self.reward_history['height'].append(height_reward)
+        self.reward_history['upright'].append(upright_reward)
+        self.reward_history['velocity'].append(velocity_penalty)
+        self.reward_history['angular'].append(angular_penalty)
+        self.reward_history['position'].append(position_penalty)
+        self.reward_history['control'].append(control_penalty)
+        
+        # Much more lenient termination - only if really fallen over
+        terminate = height < 0.3 or quat[0] < 0.1
 
+        # Detailed logging every 100 steps
         if self.current_step % 100 == 0:
             print(f"Step {self.current_step}: h={height:.2f}, err={height_error:.3f}, "
-                f"vel={total_vel:.3f}, r={total_reward:.1f}")
+                  f"vel={total_vel:.3f}, quat[0]={quat[0]:.3f}, r={total_reward:.1f}")
+            print(f"  Components: height={height_reward:.1f}, upright={upright_reward:.1f}, "
+                  f"vel={velocity_penalty:.1f}, ang={angular_penalty:.1f}, "
+                  f"pos={position_penalty:.1f}, ctrl={control_penalty:.1f}")
             
         return total_reward, terminate
     
@@ -148,6 +180,7 @@ class StandingEnv(gym.Wrapper):
             'x_velocity': self.env.unwrapped.data.qvel[0],
             'y_velocity': self.env.unwrapped.data.qvel[1],
             'z_velocity': self.env.unwrapped.data.qvel[2],
+            'quaternion_w': self.env.unwrapped.data.qpos[3],
         }
     
     def get_observation_info(self):
@@ -159,6 +192,23 @@ class StandingEnv(gym.Wrapper):
         print(f"Root quaternion w (qpos[3]): {self.env.unwrapped.data.qpos[3]}")
         print(f"Linear vel x,y,z (qvel[0:3]): {self.env.unwrapped.data.qvel[0:3]}")
         return obs
+    
+    def get_reward_analysis(self):
+        """Analyze reward components over episode"""
+        if not any(self.reward_history.values()):
+            return None
+            
+        analysis = {}
+        for component, values in self.reward_history.items():
+            if values:
+                analysis[component] = {
+                    'mean': np.mean(values),
+                    'std': np.std(values),
+                    'min': np.min(values),
+                    'max': np.max(values),
+                    'total': np.sum(values)
+                }
+        return analysis
 
 
 def make_standing_env(render_mode=None, config=None):
@@ -168,8 +218,8 @@ def make_standing_env(render_mode=None, config=None):
 
 def test_environment():
     """Test the fixed environment"""
-    print("Testing Fixed Humanoid Environment")
-    print("=" * 40)
+    print("Testing OPTIMIZED Humanoid Standing Environment")
+    print("=" * 60)
     
     # Test with random policy
     env = make_standing_env(render_mode=None, config=None)
@@ -180,21 +230,37 @@ def test_environment():
     obs, info = env.reset()
     total_reward = 0
     
+    print("\nRunning 200 steps with random policy...")
     for step in range(200):
         action = env.action_space.sample()
         obs, reward, terminated, truncated, info = env.step(action)
         total_reward += reward
         
         if step % 50 == 0:
-            print(f"Step {step}: height={info['height']:.3f}, "
-                  f"reward={reward:.3f}, total_reward={total_reward:.2f}")
+            print(f"\nStep {step}:")
+            print(f"  Height: {info['height']:.3f} (target: 1.4)")
+            print(f"  Quaternion w: {info['quaternion_w']:.3f}")
+            print(f"  Reward: {reward:.3f}")
+            print(f"  Total reward: {total_reward:.2f}")
         
         if terminated or truncated:
-            print(f"Episode ended at step {step} ({'terminated' if terminated else 'truncated'})")
+            print(f"\nEpisode ended at step {step} ({'terminated' if terminated else 'truncated'})")
             break
     
+    # Show reward analysis
+    print("\n" + "=" * 60)
+    print("Reward Component Analysis:")
+    print("=" * 60)
+    analysis = env.get_reward_analysis()
+    if analysis:
+        for component, stats in analysis.items():
+            print(f"\n{component.upper()}:")
+            print(f"  Mean: {stats['mean']:.2f}")
+            print(f"  Total contribution: {stats['total']:.2f}")
+            print(f"  Range: [{stats['min']:.2f}, {stats['max']:.2f}]")
+    
     env.close()
-    print(f"Final total reward: {total_reward:.2f}")
+    print(f"\nFinal total reward: {total_reward:.2f}")
 
 
 if __name__ == "__main__":
