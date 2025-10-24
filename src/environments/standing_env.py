@@ -95,7 +95,7 @@ class StandingEnv(gym.Wrapper):
         
     def _compute_task_reward(self, obs, base_reward, info, action):
         """
-        FIXED reward function - uses correct target height and proper scaling
+        FIXED reward function - correct target height and anti-exploitation
         """
         # State extraction
         height = self.env.unwrapped.data.qpos[2]
@@ -104,91 +104,88 @@ class StandingEnv(gym.Wrapper):
         angular_vel = self.env.unwrapped.data.qvel[3:6]
         root_x, root_y = self.env.unwrapped.data.qpos[0:2]
         
-        # CRITICAL FIX: Correct target height for Humanoid-v5
-        self.target_height = 1.25  # NOT 1.4! That's too tall!
+        # CORRECT target height based on our history
+        self.target_height = 1.3  # This is what we've been using!
         
         height_error = abs(height - self.target_height)
-        total_vel = np.linalg.norm(vel[:2])  # Only x,y velocity matters
+        xy_vel = np.sqrt(vel[0]**2 + vel[1]**2)  # Horizontal velocity
+        z_vel = abs(vel[2])  # Vertical velocity
         xy_dist = np.sqrt(root_x**2 + root_y**2)
+        angular_vel_mag = np.linalg.norm(angular_vel)
         
-        # 1. HEIGHT REWARD - Dominant signal with correct target
-        if height_error < 0.02:  # Within 2cm - PERFECT
-            height_reward = 100.0
-        elif height_error < 0.05:  # Within 5cm - GREAT
-            height_reward = 75.0
-        elif height_error < 0.10:  # Within 10cm - GOOD
+        # 1. HEIGHT REWARD - Exponential with cap
+        # Much stricter - only reward when VERY close to 1.3m
+        if height_error < 0.03:  # Within 3cm
             height_reward = 50.0
-        elif height_error < 0.15:  # Within 15cm - OK
-            height_reward = 25.0
-        else:  # Too far
-            height_reward = 10.0 * np.exp(-10.0 * height_error)
+        elif height_error < 0.05:  # Within 5cm
+            height_reward = 40.0
+        elif height_error < 0.10:  # Within 10cm
+            height_reward = 20.0
+        else:
+            height_reward = max(0, 10.0 * np.exp(-20.0 * height_error))
         
-        # 2. UPRIGHT BONUS - Critical for stability
-        # quat[0] is w component, should be near 1.0 when upright
-        if quat[0] > 0.95:  # Very upright
-            upright_reward = 30.0
-        elif quat[0] > 0.90:  # Mostly upright
-            upright_reward = 20.0
-        elif quat[0] > 0.85:  # Somewhat upright
+        # 2. UPRIGHT REWARD - Only if actually upright
+        if quat[0] > 0.95:
             upright_reward = 10.0
+        elif quat[0] > 0.9:
+            upright_reward = 5.0
         else:
             upright_reward = 0.0
         
-        # 3. STILLNESS BONUS - Reward not moving (key for indefinite standing)
-        if total_vel < 0.1:  # Nearly still
-            stillness_bonus = 20.0
-        elif total_vel < 0.2:  # Mostly still
-            stillness_bonus = 10.0
-        elif total_vel < 0.5:  # Some movement
-            stillness_bonus = 5.0
+        # 3. PENALTIES - Strong enough to prevent movement
+        # Horizontal movement penalty (very harsh)
+        xy_vel_penalty = -15.0 * xy_vel  # Increased from -10
+        
+        # Vertical movement penalty (extremely harsh - prevents bouncing)
+        z_vel_penalty = -30.0 * z_vel  # Increased from -20
+        
+        # Position drift penalty (progressive)
+        position_penalty = -10.0 * xy_dist  # Increased from -5
+        
+        # Angular velocity penalty
+        angular_penalty = -10.0 * angular_vel_mag  # Increased from -5
+        
+        # Control penalty
+        control_penalty = -0.02 * np.sum(np.square(action))  # Doubled
+        
+        # 4. SURVIVAL - Only if meeting strict conditions
+        if height_error < 0.05 and quat[0] > 0.9 and xy_vel < 0.1:
+            survival_bonus = 10.0
         else:
-            stillness_bonus = 0.0
+            survival_bonus = 0.0
         
-        # 4. POSITION BONUS - Stay near origin
-        if xy_dist < 0.1:  # Very centered
-            position_bonus = 10.0
-        elif xy_dist < 0.3:  # Near center
-            position_bonus = 5.0
-        else:
-            position_bonus = 0.0
-        
-        # 5. PENALTIES - Keep small to not overwhelm rewards
-        velocity_penalty = -1.0 * total_vel  # Small linear penalty
-        angular_penalty = -0.5 * np.linalg.norm(angular_vel)
-        control_penalty = -0.001 * np.sum(np.square(action))  # Tiny
-        
-        # 6. SURVIVAL - Base reward for not terminating
-        survival_bonus = 5.0
-        
-        # Total reward
+        # Total reward (strictly capped)
         total_reward = (
             height_reward +
             upright_reward +
-            stillness_bonus +
-            position_bonus +
             survival_bonus +
-            velocity_penalty +
+            xy_vel_penalty +
+            z_vel_penalty +
+            position_penalty +
             angular_penalty +
             control_penalty
         )
         
+        # STRICT CAP to prevent any exploitation
+        total_reward = np.clip(total_reward, -100, 60)  # Lower cap than before
+        
         # Store for debugging
         self.reward_history['height'].append(height_reward)
         self.reward_history['upright'].append(upright_reward)
-        self.reward_history['velocity'].append(velocity_penalty)
+        self.reward_history['velocity'].append(xy_vel_penalty + z_vel_penalty)
         self.reward_history['angular'].append(angular_penalty)
-        self.reward_history['position'].append(position_bonus)
+        self.reward_history['position'].append(position_penalty)
         self.reward_history['control'].append(control_penalty)
         
-        # Detailed logging every 100 steps
+        # Logging
         if self.current_step % 100 == 0:
-            print(f"Step {self.current_step}: h={height:.3f} (err={height_error:.3f}), "
-                f"vel={total_vel:.3f}, quat_w={quat[0]:.3f}, xy={xy_dist:.3f}, "
-                f"r={total_reward:.1f} (h={height_reward:.1f}, up={upright_reward:.1f}, "
-                f"still={stillness_bonus:.1f}, pos={position_bonus:.1f})")
+            print(f"Step {self.current_step}: h={height:.3f} (target=1.3, err={height_error:.3f}), "
+                f"xy_vel={xy_vel:.3f}, z_vel={z_vel:.3f}, xy_dist={xy_dist:.3f}, "
+                f"r={total_reward:.1f} (h_rew={height_reward:.1f}, "
+                f"xy_pen={xy_vel_penalty:.1f}, z_pen={z_vel_penalty:.1f})")
         
-        # LENIENT TERMINATION - Give robot time to learn
-        terminate = height < 0.5 or height > 2.0 or quat[0] < 0.3
+        # Termination - reasonable
+        terminate = height < 0.7 or height > 1.8 or quat[0] < 0.5
         
         return total_reward, terminate
     
