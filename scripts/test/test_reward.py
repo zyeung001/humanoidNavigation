@@ -1,97 +1,110 @@
+
 import sys
 import os
+import numpy as np
 
-# Add the project root to Python path for Google Colab compatibility
+# Add project root to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from src.environments.standing_env import make_standing_env
-import numpy as np
 
-def test_new_reward():
-    """Test the new reward function"""
+def test_actual_rewards():
+    """Test the ACTUAL reward function in the environment"""
+    print("=" * 70)
+    print("TESTING ACTUAL ENVIRONMENT REWARDS")
+    print("=" * 70)
+    
     config = {'target_height': 1.3, 'max_episode_steps': 5000}
     env = make_standing_env(render_mode=None, config=config)
     
-    print("Testing NEW reward function")
-    print("=" * 60)
-    
-    # Test 1: Perfect standing should give ~60-70 reward
+    # Test 1: Zero actions (should be ~40)
+    print("\n1️⃣  TEST: Zero actions (perfect stillness)")
+    print("-" * 70)
     obs, _ = env.reset()
-    
-    # Simulate perfect standing (no movement)
-    print("\nTest 1: Zero actions (perfect stillness)")
-    total = 0
+    rewards = []
     for i in range(10):
         obs, reward, term, trunc, info = env.step(np.zeros(env.action_space.shape))
-        total += reward
+        rewards.append(reward)
         if i == 0:
-            print(f"  First step reward: {reward:.1f}")
-    print(f"  Average reward: {total/10:.1f} (should be ~25-40)")
+            print(f"   First reward: {reward:.2f}")
+            print(f"   Height: {info.get('height', 'N/A'):.3f}")
+    avg = np.mean(rewards)
+    print(f"   Average: {avg:.2f}")
+    print(f"   ✓ PASS" if 35 <= avg <= 45 else f"   ✗ FAIL (expected 35-45)")
     
-    # Test 2: Small actions
-    print("\nTest 2: Small actions")
+    # Test 2: Small random actions (should be ~30-35)
+    print("\n2️⃣  TEST: Small random actions (gentle corrections)")
+    print("-" * 70)
     obs, _ = env.reset()
-    total = 0
+    rewards = []
     for i in range(10):
-        action = np.random.randn(*env.action_space.shape) * 0.1
+        action = np.random.randn(*env.action_space.shape) * 0.1  # Small actions
         obs, reward, term, trunc, info = env.step(action)
-        total += reward
+        rewards.append(reward)
         if i == 0:
-            print(f"  First step reward: {reward:.1f}")
-    print(f"  Average reward: {total/10:.1f}")
+            print(f"   First reward: {reward:.2f}")
+            print(f"   Action magnitude: {np.abs(action).mean():.3f}")
+    avg = np.mean(rewards)
+    print(f"   Average: {avg:.2f}")
+    print(f"   ✓ PASS" if 25 <= avg <= 40 else f"   ✗ FAIL (expected 25-40)")
     
-    # Test 3: Large actions (should be penalized)
-    print("\nTest 3: Large random actions")
+    # Test 3: Large random actions (should be NEGATIVE!)
+    print("\n3️⃣  TEST: Large random actions (thrashing)")
+    print("-" * 70)
     obs, _ = env.reset()
-    total = 0
+    rewards = []
     for i in range(10):
-        action = env.action_space.sample()
+        action = env.action_space.sample()  # Full random in [-1, 1]
         obs, reward, term, trunc, info = env.step(action)
-        total += reward
+        rewards.append(reward)
         if i == 0:
-            print(f"  First step reward: {reward:.1f}")
+            print(f"   First reward: {reward:.2f}")
+            print(f"   Action magnitude: {np.abs(action).mean():.3f}")
+            print(f"   Action squared sum: {np.sum(np.square(action)):.2f}")
         if term:
-            print(f"  Terminated at step {i}")
+            print(f"   ⚠️  Terminated at step {i}")
             break
-    print(f"  Average reward: {total/max(1,i):.1f} (should be negative)")
+    avg = np.mean(rewards)
+    print(f"   Average: {avg:.2f}")
+    print(f"   ✓ PASS - NEGATIVE!" if avg < 0 else f"   ✗ FAIL (should be negative, got {avg:.2f})")
     
-    # Test 4: Test reward components breakdown
-    print("\nTest 4: Reward component analysis")
+    # Test 4: Maximum thrashing (should be very negative)
+    print("\n4️⃣  TEST: Maximum actions (worst case)")
+    print("-" * 70)
     obs, _ = env.reset()
-    obs, reward, term, trunc, info = env.step(np.zeros(env.action_space.shape))
-    
-    # Get detailed info about the state
-    height = info.get('height', 0)
-    quat_w = info.get('quaternion_w', 0)
-    x_vel = info.get('x_velocity', 0)
-    y_vel = info.get('y_velocity', 0)
-    z_vel = info.get('z_velocity', 0)
-    
-    print(f"  Height: {height:.3f} (target: 1.3)")
-    print(f"  Quaternion w: {quat_w:.3f}")
-    print(f"  Velocities: x={x_vel:.3f}, y={y_vel:.3f}, z={z_vel:.3f}")
-    print(f"  Reward: {reward:.3f}")
-    
-    # Calculate expected reward components
-    height_error = abs(height - 1.3)
-    expected_height_reward = 15.0 * np.exp(-8.0 * height_error**2)
-    expected_stability = 10.0 * (1.0 - height_error / 0.1) if height_error < 0.1 else 0.0
-    expected_upright = 8.0 * quat_w if quat_w > 0 else 0
-    expected_alive = 5.0
-    xy_vel = np.sqrt(x_vel**2 + y_vel**2)
-    expected_vel_penalty = -3.0 * xy_vel - 5.0 * abs(z_vel)
-    
-    print(f"  Expected components:")
-    print(f"    Alive: {expected_alive:.1f}")
-    print(f"    Height: {expected_height_reward:.1f}")
-    print(f"    Stability: {expected_stability:.1f}")
-    print(f"    Upright: {expected_upright:.1f}")
-    print(f"    Vel penalty: {expected_vel_penalty:.1f}")
+    rewards = []
+    for i in range(5):
+        action = np.ones(env.action_space.shape)  # All actions = 1.0
+        obs, reward, term, trunc, info = env.step(action)
+        rewards.append(reward)
+        if i == 0:
+            print(f"   First reward: {reward:.2f}")
+            print(f"   Action squared sum: {np.sum(np.square(action)):.2f}")
+        if term:
+            print(f"   ⚠️  Terminated at step {i}")
+            break
+    avg = np.mean(rewards)
+    print(f"   Average: {avg:.2f}")
+    print(f"   ✓ PASS - VERY NEGATIVE!" if avg < -10 else f"   ✗ FAIL (should be < -10, got {avg:.2f})")
     
     env.close()
-    print("\n✅ If perfect standing gives 25-40 and large actions give negative, the reward is fixed!")
+    
+    print("\n" + "=" * 70)
+    print("REWARD FUNCTION DIAGNOSIS")
+    print("=" * 70)
+    print("If Test 3 and Test 4 are NOT negative, your reward function is broken!")
+    print("The control cost penalty is either:")
+    print("  1. Not implemented correctly")
+    print("  2. Too weak (coefficient < 0.5)")
+    print("  3. Not being applied to the action")
+    print("\nExpected behavior:")
+    print("  Test 1 (no action):      +35 to +45")
+    print("  Test 2 (small action):   +25 to +40")
+    print("  Test 3 (random action):  -5 to -20  ⚠️ MUST BE NEGATIVE")
+    print("  Test 4 (max action):     -20 to -80 ⚠️ MUST BE VERY NEGATIVE")
+    print("=" * 70)
 
 if __name__ == "__main__":
-    test_new_reward()
+    test_actual_rewards()
