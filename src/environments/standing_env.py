@@ -94,32 +94,56 @@ class StandingEnv(gym.Wrapper):
         return observation, reward, terminated, truncated, info
         
     def _compute_task_reward(self, obs, base_reward, info, action):
-        """SIMPLIFIED: Only 3 components"""
-        # State extraction
-        height = self.env.unwrapped.data.qpos[2]
-        quat = self.env.unwrapped.data.qpos[3:7]
         
-        target_height = 1.3
+        # ========== STATE EXTRACTION ==========
+        height = self.env.unwrapped.data.qpos[2]
+        quat = self.env.unwrapped.data.qpos[3:7]  # Quaternion [w, x, y, z]
+        
+        # Target height from config
+        target_height = 1.3  # Will be overridden by config if present
+        if hasattr(self, 'base_target_height'):
+            target_height = self.base_target_height
+        
         height_error = abs(height - target_height)
         
-        # === ONLY 3 REWARD COMPONENTS ===
+        # ========== REWARD COMPONENTS (ONLY 3!) ==========
+        
+        # 1. HEIGHT REWARD: Primary objective (max 30 points)
+        #    Perfect height = 30, Small error (5cm) = 20, Large error (15cm+) = 0
         height_reward = 30.0 * np.exp(-10.0 * height_error**2)
-        upright_reward = 10.0 * max(0, quat[0] - 0.5) / 0.5
+        
+        # 2. UPRIGHT REWARD: Secondary objective (max 10 points)
+        #    quat[0] is the 'w' component of quaternion (1.0 = perfectly upright)
+        #    This ensures the humanoid stays vertical
+        upright_reward = 10.0 * max(0.0, (quat[0] - 0.5) / 0.5)
+        
+        # 3. CONTROL COST: Penalty for large actions (negative)
+        #    Small corrections = small penalty (-1 to -5)
+        #    Large thrashing = large penalty (-10 to -50)
+        #    This is CRITICAL - without this, random actions get positive reward!
         control_cost = -0.5 * np.sum(np.square(action))
         
+        # ========== TOTAL REWARD ==========
         total_reward = height_reward + upright_reward + control_cost
         
-        # Lenient termination
-        terminate = height < 0.6 or height > 2.0 or quat[0] < 0.3
+        # ========== TERMINATION ==========
+        # Very lenient - only terminate if completely fallen
+        terminate = (
+            height < 0.6 or      # Fallen down
+            height > 2.0 or      # Jumped too high
+            quat[0] < 0.3        # Completely tipped over
+        )
         
-        # Debug logging
+        # ========== DEBUG LOGGING ==========
         if self.current_step % 100 == 0:
-            print(f"Step {self.current_step}: h={height:.3f}, quat={quat[0]:.3f}, "
-                f"r={total_reward:.1f} (h={height_reward:.1f}, u={upright_reward:.1f}, "
-                f"c={control_cost:.1f})")
+            print(f"Step {self.current_step:4d}: "
+                f"h={height:.3f} (err={height_error:.3f}), "
+                f"quat_w={quat[0]:.3f}, "
+                f"r={total_reward:6.1f} "
+                f"[h={height_reward:5.1f} + u={upright_reward:5.1f} + c={control_cost:6.1f}]")
         
         return total_reward, terminate
-    
+        
     def _get_task_info(self):
         """Get task-specific information"""
         root_x, root_y = self.env.unwrapped.data.qpos[0:2]
