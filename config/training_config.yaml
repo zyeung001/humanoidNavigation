@@ -18,16 +18,16 @@ logging:
 # Standing task
 standing:
   algorithm: "PPO"
-  total_timesteps: 1000000
+  total_timesteps: 500000
   learning_rate: 0.0003
 
-  batch_size: 2048
+  batch_size: 512
   n_steps: 2048
   n_epochs: 10
   gamma: 0.99
   gae_lambda: 0.95
   clip_range: 0.2
-  ent_coef: 0.001  # Slight exploration
+  ent_coef: 0.01 
   vf_coef: 0.5
   max_grad_norm: 0.5
 
@@ -36,10 +36,10 @@ standing:
   
   policy_kwargs:
     net_arch:
-      pi: [256, 256]
-      vf: [256, 256]
+      pi: [128, 128]
+      vf: [128, 128]
     activation_fn: "relu"
-    log_std_init: -1.0 
+    log_std_init: -0.5
   
   use_wandb: true
   wandb_project: "humanoid-standing-improved"
@@ -47,9 +47,9 @@ standing:
   video_freq: 50000
   
 
-  target_reward_threshold: 5000  # Higher threshold for aggressive height rewards
-  height_stability_threshold: 0.10  # Stricter for stability
-  height_error_threshold: 0.15  # Stricter for height error
+  target_reward_threshold: 1000
+  height_stability_threshold: 0.1
+  height_error_threshold: 0.1
   
   normalize: true
   n_envs: 8
