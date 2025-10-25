@@ -127,7 +127,7 @@ class StandingEnv(gym.Wrapper):
         
         # 4. CONTROL COST (Efficiency: negative)
         #    No action = 0, Small corrections = -1 to -3, Large actions = -5 to -10
-        control_cost = -0.5 * np.sum(np.square(action))
+        control_cost = -3.0 * np.sum(np.square(action))
         
         # 5. POSITION PENALTY (Prevent drift: negative)
         #    Stay at origin = 0, Drift away = -1 to -10
