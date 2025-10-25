@@ -18,7 +18,7 @@ logging:
 # Standing task
 standing:
   algorithm: "PPO"
-  total_timesteps: 300000  # Increased for better convergence
+  total_timesteps: 1000000
   learning_rate: 0.0003
 
   batch_size: 2048
