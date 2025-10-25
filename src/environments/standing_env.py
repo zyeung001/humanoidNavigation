@@ -95,7 +95,7 @@ class StandingEnv(gym.Wrapper):
         
     def _compute_task_reward(self, obs, base_reward, info, action):
         """
-        COMPLETELY FIXED reward function - actually works for standing
+        IMPROVED reward function - encourages STABLE standing, not bouncing
         """
         # State extraction
         height = self.env.unwrapped.data.qpos[2]
@@ -113,28 +113,42 @@ class StandingEnv(gym.Wrapper):
         xy_dist = np.sqrt(root_x**2 + root_y**2)
         angular_vel_mag = np.linalg.norm(angular_vel)
         
+        # Calculate height change penalty for stability
+        if hasattr(self, 'prev_height'):
+            height_change = abs(height - self.prev_height)
+            height_change_penalty = -5.0 * height_change  # Penalize rapid height changes
+        else:
+            height_change_penalty = 0.0
+        self.prev_height = height
+        
         # 1. ALIVE BONUS - Always positive base
         alive_bonus = 5.0
         
-        # 2. HEIGHT REWARD - Gaussian centered at target
-        # This gives smooth gradient toward target height
-        height_reward = 20.0 * np.exp(-10.0 * height_error**2)
+        # 2. HEIGHT REWARD - Gaussian centered at target, but with stability bonus
+        height_reward = 15.0 * np.exp(-8.0 * height_error**2)  # Slightly less aggressive
         
-        # 3. UPRIGHT BONUS - Proportional, not binary
-        upright_bonus = 10.0 * quat[0] if quat[0] > 0 else 0
+        # 3. STABILITY BONUS - Reward for being close to target AND stable
+        if height_error < 0.1:  # Within 10cm of target
+            stability_bonus = 10.0 * (1.0 - height_error / 0.1)  # 0-10 points
+        else:
+            stability_bonus = 0.0
         
-        # 4. PENALTIES - Scaled appropriately
-        # Small penalties that don't overwhelm rewards
-        velocity_penalty = -2.0 * xy_vel - 3.0 * z_vel
-        position_penalty = -1.0 * xy_dist
-        angular_penalty = -1.0 * angular_vel_mag
-        control_penalty = -0.01 * np.sum(np.square(action))
+        # 4. UPRIGHT BONUS - Proportional, not binary
+        upright_bonus = 8.0 * quat[0] if quat[0] > 0 else 0
+        
+        # 5. PENALTIES - Stronger to discourage bouncing
+        velocity_penalty = -3.0 * xy_vel - 5.0 * z_vel  # Stronger velocity penalties
+        position_penalty = -2.0 * xy_dist  # Stronger position penalty
+        angular_penalty = -2.0 * angular_vel_mag  # Stronger angular penalty
+        control_penalty = -0.02 * np.sum(np.square(action))  # Slightly stronger control penalty
         
         # Total reward
         total_reward = (
             alive_bonus +
             height_reward +
+            stability_bonus +
             upright_bonus +
+            height_change_penalty +
             velocity_penalty +
             position_penalty +
             angular_penalty +
@@ -154,7 +168,8 @@ class StandingEnv(gym.Wrapper):
             print(f"Step {self.current_step}: h={height:.3f} (target={self.target_height:.1f}, err={height_error:.3f}), "
                 f"vel={xy_vel:.3f}, quat_w={quat[0]:.3f}, "
                 f"r={total_reward:.1f} (alive={alive_bonus:.1f}, h={height_reward:.1f}, "
-                f"up={upright_bonus:.1f}, vel_pen={velocity_penalty:.1f})")
+                f"stab={stability_bonus:.1f}, up={upright_bonus:.1f}, h_change={height_change_penalty:.1f}, "
+                f"vel_pen={velocity_penalty:.1f})")
         
         # LENIENT termination - only if really fallen
         terminate = height < 0.8 or height > 2.0 or quat[0] < 0

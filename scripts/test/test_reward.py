@@ -28,7 +28,7 @@ def test_new_reward():
         total += reward
         if i == 0:
             print(f"  First step reward: {reward:.1f}")
-    print(f"  Average reward: {total/10:.1f} (should be ~35-50)")
+    print(f"  Average reward: {total/10:.1f} (should be ~25-40)")
     
     # Test 2: Small actions
     print("\nTest 2: Small actions")
@@ -76,20 +76,22 @@ def test_new_reward():
     
     # Calculate expected reward components
     height_error = abs(height - 1.3)
-    expected_height_reward = 20.0 * np.exp(-10.0 * height_error**2)
-    expected_upright = 10.0 * quat_w if quat_w > 0 else 0
+    expected_height_reward = 15.0 * np.exp(-8.0 * height_error**2)
+    expected_stability = 10.0 * (1.0 - height_error / 0.1) if height_error < 0.1 else 0.0
+    expected_upright = 8.0 * quat_w if quat_w > 0 else 0
     expected_alive = 5.0
     xy_vel = np.sqrt(x_vel**2 + y_vel**2)
-    expected_vel_penalty = -2.0 * xy_vel - 3.0 * abs(z_vel)
+    expected_vel_penalty = -3.0 * xy_vel - 5.0 * abs(z_vel)
     
     print(f"  Expected components:")
     print(f"    Alive: {expected_alive:.1f}")
     print(f"    Height: {expected_height_reward:.1f}")
+    print(f"    Stability: {expected_stability:.1f}")
     print(f"    Upright: {expected_upright:.1f}")
     print(f"    Vel penalty: {expected_vel_penalty:.1f}")
     
     env.close()
-    print("\n✅ If perfect standing gives 35-50 and large actions give negative, the reward is fixed!")
+    print("\n✅ If perfect standing gives 25-40 and large actions give negative, the reward is fixed!")
 
 if __name__ == "__main__":
     test_new_reward()
