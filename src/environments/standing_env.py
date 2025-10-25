@@ -94,53 +94,71 @@ class StandingEnv(gym.Wrapper):
         return observation, reward, terminated, truncated, info
         
     def _compute_task_reward(self, obs, base_reward, info, action):
+        """
+        Balanced 5-component reward for stable standing
+        """
         
         # ========== STATE EXTRACTION ==========
         height = self.env.unwrapped.data.qpos[2]
-        quat = self.env.unwrapped.data.qpos[3:7]  # Quaternion [w, x, y, z]
+        root_x, root_y = self.env.unwrapped.data.qpos[0:2]
+        quat = self.env.unwrapped.data.qpos[3:7]
         
-        # Target height from config
-        target_height = 1.3  # Will be overridden by config if present
-        if hasattr(self, 'base_target_height'):
-            target_height = self.base_target_height
+        linear_vel = self.env.unwrapped.data.qvel[0:3]
+        angular_vel = self.env.unwrapped.data.qvel[3:6]
         
+        # Target height
+        target_height = self.base_target_height if hasattr(self, 'base_target_height') else 1.3
         height_error = abs(height - target_height)
         
-        # ========== REWARD COMPONENTS (ONLY 3!) ==========
+        # ========== REWARD COMPONENTS ==========
         
-        # 1. HEIGHT REWARD: Primary objective (max 30 points)
-        #    Perfect height = 30, Small error (5cm) = 20, Large error (15cm+) = 0
-        height_reward = 30.0 * np.exp(-10.0 * height_error**2)
+        # 1. HEIGHT REWARD (Primary objective: 0-40 points)
+        #    Perfect height = 40, 5cm error = 25, 10cm error = 10, 15cm+ = 0
+        height_reward = 40.0 * np.exp(-12.0 * height_error**2)
         
-        # 2. UPRIGHT REWARD: Secondary objective (max 10 points)
-        #    quat[0] is the 'w' component of quaternion (1.0 = perfectly upright)
-        #    This ensures the humanoid stays vertical
-        upright_reward = 10.0 * max(0.0, (quat[0] - 0.5) / 0.5)
+        # 2. UPRIGHT REWARD (Secondary: 0-10 points)
+        #    Perfectly vertical (quat_w=1.0) = 10 points
+        #    Slightly tilted (quat_w=0.95) = 5 points
+        upright_reward = 10.0 * np.exp(-10.0 * (1.0 - abs(quat[0]))**2)
         
-        # 3. CONTROL COST: Penalty for large actions (negative)
-        #    Small corrections = small penalty (-1 to -5)
-        #    Large thrashing = large penalty (-10 to -50)
-        #    This is CRITICAL - without this, random actions get positive reward!
+        # 3. VELOCITY PENALTY (Stability: negative)
+        #    Standing still = 0, Small movement = -1 to -5, Large movement = -10+
+        velocity_penalty = -3.0 * np.sum(np.square(linear_vel))
+        
+        # 4. CONTROL COST (Efficiency: negative)
+        #    No action = 0, Small corrections = -1 to -3, Large actions = -5 to -10
         control_cost = -0.5 * np.sum(np.square(action))
         
+        # 5. POSITION PENALTY (Prevent drift: negative)
+        #    Stay at origin = 0, Drift away = -1 to -10
+        position_error = np.sqrt(root_x**2 + root_y**2)
+        position_penalty = -2.0 * position_error**2
+        
         # ========== TOTAL REWARD ==========
-        total_reward = height_reward + upright_reward + control_cost
+        total_reward = (
+            height_reward +
+            upright_reward +
+            velocity_penalty +
+            control_cost +
+            position_penalty
+        )
         
         # ========== TERMINATION ==========
-        # Very lenient - only terminate if completely fallen
+        # Lenient - only if completely fallen
         terminate = (
-            height < 0.6 or      # Fallen down
-            height > 2.0 or      # Jumped too high
-            quat[0] < 0.3        # Completely tipped over
+            height < 0.6 or 
+            height > 2.0 or 
+            abs(quat[0]) < 0.3
         )
         
         # ========== DEBUG LOGGING ==========
         if self.current_step % 100 == 0:
             print(f"Step {self.current_step:4d}: "
                 f"h={height:.3f} (err={height_error:.3f}), "
-                f"quat_w={quat[0]:.3f}, "
+                f"quat={quat[0]:.3f}, "
                 f"r={total_reward:6.1f} "
-                f"[h={height_reward:5.1f} + u={upright_reward:5.1f} + c={control_cost:6.1f}]")
+                f"[h={height_reward:5.1f}, u={upright_reward:5.1f}, "
+                f"v={velocity_penalty:5.1f}, c={control_cost:5.1f}, p={position_penalty:5.1f}]")
         
         return total_reward, terminate
         
