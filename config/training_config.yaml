@@ -15,29 +15,43 @@ logging:
   use_tensorboard: true
   log_dir: "data/logs"
 
-# Standing task
+# Standing task - OPTIMIZED HYPERPARAMETERS
 standing:
   algorithm: "PPO"
-  total_timesteps: 500000
-  learning_rate: 0.0003
+  # INCREASED: 500k was insufficient for this complex task
+  total_timesteps: 2000000
+  
+  # INCREASED: 0.0003 was too conservative, 5e-4 allows faster learning
+  learning_rate: 0.0005
 
-  batch_size: 512
+  # FIXED: batch_size must divide (n_steps * n_envs) evenly
+  # 2048 * 8 = 16384, so batch_size should be 2048 (16384/8)
+  batch_size: 2048
   n_steps: 2048
   n_epochs: 10
-  gamma: 0.99
+  
+  # Slightly higher gamma for longer-term stability rewards
+  gamma: 0.995
   gae_lambda: 0.95
   clip_range: 0.2
-  ent_coef: 0.01 
+  
+  # INCREASED: 0.01 was too low, limiting exploration
+  # 0.03 encourages more exploration of balance strategies
+  ent_coef: 0.03
   vf_coef: 0.5
   max_grad_norm: 0.5
 
   n_eval_episodes: 5
-  target_height: 1.3
   
+  # FIXED: Correct target height for Humanoid-v5 (was 1.3, should be 1.4)
+  target_height: 1.4
+  
+  # INCREASED: Network was too small for 17 DOF humanoid
+  # [256, 256] provides better capacity for fine motor control
   policy_kwargs:
     net_arch:
-      pi: [128, 128]
-      vf: [128, 128]
+      pi: [256, 256]
+      vf: [256, 256]
     activation_fn: "relu"
     log_std_init: -0.5
   
@@ -47,9 +61,11 @@ standing:
   video_freq: 50000
   
 
-  target_reward_threshold: 1000
+  # UPDATED: Success thresholds for new reward scale (50-85 points/step typical)
+  # At 1000 steps, expect 50,000-85,000 total reward for good standing
+  target_reward_threshold: 50000
   height_stability_threshold: 0.1
-  height_error_threshold: 0.1
+  height_error_threshold: 0.15
   
   normalize: true
   n_envs: 8

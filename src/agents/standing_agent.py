@@ -140,6 +140,16 @@ class StandingCallback(BaseCallback):
             self.episode_lengths = []
             self._current_episode_heights = []
             
+            # NEW: Track reward components for detailed logging
+            self.reward_components = {
+                'height_reward': [],
+                'upright_reward': [],
+                'stability_reward': [],
+                'smoothness_reward': [],
+                'control_cost': [],
+                'sustained_bonus': []
+            }
+            
 
             os.makedirs("models/saved_models", exist_ok=True)
 
@@ -237,7 +247,7 @@ class StandingCallback(BaseCallback):
         return True
 
     def _log_training_metrics(self):
-        """Log training metrics every log_freq steps using recent episode data"""
+        """ENHANCED: Log training metrics with reward components and policy stats"""
         if not (WANDB_AVAILABLE and wandb.run):
             return
         
@@ -248,6 +258,7 @@ class StandingCallback(BaseCallback):
         # Use last N completed episodes for current metrics (e.g., last 10 episodes)
         n_recent = min(10, len(self.episode_rewards))
         recent_lengths = self.episode_lengths[-n_recent:]
+        recent_rewards = self.episode_rewards[-n_recent:]
         
         # Get height data from recent episodes
         if hasattr(self, 'height_data') and self.height_data:
@@ -281,18 +292,49 @@ class StandingCallback(BaseCallback):
             action_mag_mean = float(np.abs(actions).mean())
             action_mag_max = float(np.abs(actions).max())
             
-            # Log the 8 core metrics
-            wandb.log({
+            # NEW: Get policy statistics
+            policy_stats = {}
+            if hasattr(self.model, 'policy'):
+                try:
+                    # Get learning rate (may be a schedule)
+                    lr = self.model.learning_rate
+                    if callable(lr):
+                        lr = lr(1.0)  # Get current LR
+                    policy_stats['learning_rate'] = float(lr)
+                    
+                    # Get policy entropy if available
+                    if hasattr(self.model.policy, 'log_std'):
+                        log_std = self.model.policy.log_std.detach().cpu().numpy()
+                        policy_stats['policy_std_mean'] = float(np.exp(log_std).mean())
+                        policy_stats['policy_std_max'] = float(np.exp(log_std).max())
+                except Exception:
+                    pass
+            
+            # Base metrics
+            metrics = {
                 "global_step": self.num_timesteps,
                 "train/episode_length": float(np.mean(recent_lengths)),
+                "train/episode_reward": float(np.mean(recent_rewards)),
                 "train/mean_height": float(mean_height),
                 "train/height_stability": float(height_stability),
                 "train/max_consecutive_in_range": float(max_consec),
-                "train/xy_drift": xy_drift,  # FIXED: Now calculated
-                "train/action_magnitude_mean": action_mag_mean,  # FIXED: Already calculated
-                "train/action_magnitude_max": action_mag_max,  # FIXED: Already calculated
+                "train/xy_drift": xy_drift,
+                "train/action_magnitude_mean": action_mag_mean,
+                "train/action_magnitude_max": action_mag_max,
                 "train/height_error": float(height_error),
-            }, step=self.num_timesteps)
+            }
+            
+            # NEW: Add reward component breakdown
+            for component, values in self.reward_components.items():
+                if values:
+                    recent_vals = values[-1000:]  # Last 1000 steps
+                    metrics[f"train/reward_components/{component}"] = float(np.mean(recent_vals))
+            
+            # NEW: Add policy stats
+            metrics.update({f"train/policy/{k}": v for k, v in policy_stats.items()})
+            
+            # Log all metrics
+            wandb.log(metrics, step=self.num_timesteps)
 
     def _record_and_log_video(self):
         if self.verbose:
@@ -331,11 +373,20 @@ class StandingCallback(BaseCallback):
             # FIXED: Better video logging with validation
             if len(frames) > 10 and WANDB_AVAILABLE and wandb.run:  # Need at least 10 frames
                 try:
-                    # Performance metrics from last info
+                    # ENHANCED: More informative video captions
                     height = info.get('height', 0) if isinstance(info, dict) else 0
                     height_error = abs(height - self.target_height)
+                    quat_w = info.get('quaternion_w', 0) if isinstance(info, dict) else 0
                     
-                    caption = f"Step {self.num_timesteps//1000}k | Height:{height:.2f} | Error:{height_error:.3f}"
+                    # Get recent episode stats for context
+                    recent_ep_len = np.mean(self.episode_lengths[-5:]) if self.episode_lengths else 0
+                    recent_ep_rew = np.mean(self.episode_rewards[-5:]) if self.episode_rewards else 0
+                    
+                    caption = (f"Step {self.num_timesteps//1000}k | "
+                              f"Height: {height:.2f}m (err: {height_error:.3f}m) | "
+                              f"Upright: {quat_w:.3f} | "
+                              f"Avg Ep Len: {recent_ep_len:.0f} | "
+                              f"Avg Ep Reward: {recent_ep_rew:.0f}")
                     
                     # Convert frames to proper format
                     video_array = np.array(frames)
@@ -575,11 +626,14 @@ class StandingAgent:
             vec = DummyVecEnv([self._make_single_env(seed, 0, render_mode=None)])
 
         if self.config.get("normalize", True):
+            # FIXED: Enable reward normalization for better value function learning
+            # With the new reward scale (10-100/step), normalization helps stabilize training
             self.env = VecNormalize(
                 vec,
                 norm_obs=True,
-                norm_reward=False,  # CRITICAL FIX: Don't normalize rewards
+                norm_reward=True,  # ENABLED: Normalize rewards for stable value learning
                 clip_obs=10.0,
+                clip_reward=10.0,  # Clip normalized rewards to prevent outliers
                 gamma=self.config.get("gamma"),
             )
         else:
@@ -677,8 +731,9 @@ class StandingAgent:
                     eval_env = VecNormalize(
                         base_eval_env,
                         norm_obs=True,
-                        norm_reward=False,
+                        norm_reward=True,  # Match training settings
                         clip_obs=10.0,
+                        clip_reward=10.0,  # Match training settings
                         gamma=self.config.get("gamma", 0.995),
                     )
                 
