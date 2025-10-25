@@ -121,26 +121,26 @@ class StandingEnv(gym.Wrapper):
             height_change_penalty = 0.0
         self.prev_height = height
         
-        # 1. ALIVE BONUS - Always positive base
-        alive_bonus = 5.0
-        
-        # 2. HEIGHT REWARD - Gaussian centered at target, but with stability bonus
-        height_reward = 15.0 * np.exp(-8.0 * height_error**2)  # Slightly less aggressive
-        
-        # 3. STABILITY BONUS - Reward for being close to target AND stable
-        if height_error < 0.1:  # Within 10cm of target
-            stability_bonus = 10.0 * (1.0 - height_error / 0.1)  # 0-10 points
+        # 1. ALIVE BONUS - Small base reward
+        alive_bonus = 2.0
+
+        # 2. HEIGHT REWARD - Aggressive Gaussian (narrow peak)
+        height_reward = 20.0 * np.exp(-15.0 * height_error**2)
+
+        # 3. STABILITY BONUS - Large reward only when very close
+        if height_error < 0.05:  # Within 5cm (tighter!)
+            stability_bonus = 15.0 * (1.0 - height_error / 0.05)
         else:
             stability_bonus = 0.0
-        
-        # 4. UPRIGHT BONUS - Proportional, not binary
-        upright_bonus = 8.0 * quat[0] if quat[0] > 0 else 0
-        
-        # 5. PENALTIES - Stronger to discourage bouncing
-        velocity_penalty = -3.0 * xy_vel - 5.0 * z_vel  # Stronger velocity penalties
-        position_penalty = -2.0 * xy_dist  # Stronger position penalty
-        angular_penalty = -2.0 * angular_vel_mag  # Stronger angular penalty
-        control_penalty = -0.02 * np.sum(np.square(action))  # Slightly stronger control penalty
+
+        # 4. UPRIGHT BONUS - Only reward if very upright
+        upright_bonus = 10.0 * (quat[0] ** 2) if quat[0] > 0.9 else 0
+
+        # 5. PENALTIES - Much stronger
+        velocity_penalty = -8.0 * xy_vel - 12.0 * z_vel
+        position_penalty = -5.0 * xy_dist
+        angular_penalty = -5.0 * angular_vel_mag
+        control_penalty = -0.1 * np.sum(np.square(action))  # 5x stronger!
         
         # Total reward
         total_reward = (
