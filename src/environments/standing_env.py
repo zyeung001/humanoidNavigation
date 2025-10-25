@@ -94,85 +94,29 @@ class StandingEnv(gym.Wrapper):
         return observation, reward, terminated, truncated, info
         
     def _compute_task_reward(self, obs, base_reward, info, action):
-        """
-        IMPROVED reward function - encourages STABLE standing, not bouncing
-        """
+        """SIMPLIFIED: Only 3 components"""
         # State extraction
         height = self.env.unwrapped.data.qpos[2]
-        vel = self.env.unwrapped.data.qvel[0:3]
         quat = self.env.unwrapped.data.qpos[3:7]
-        angular_vel = self.env.unwrapped.data.qvel[3:6]
-        root_x, root_y = self.env.unwrapped.data.qpos[0:2]
         
-        # Use config target height or default
-        self.target_height = self.base_target_height  # Should be 1.3 from config
+        target_height = 1.3
+        height_error = abs(height - target_height)
         
-        height_error = abs(height - self.target_height)
-        xy_vel = np.sqrt(vel[0]**2 + vel[1]**2)
-        z_vel = abs(vel[2])
-        xy_dist = np.sqrt(root_x**2 + root_y**2)
-        angular_vel_mag = np.linalg.norm(angular_vel)
+        # === ONLY 3 REWARD COMPONENTS ===
+        height_reward = 30.0 * np.exp(-10.0 * height_error**2)
+        upright_reward = 10.0 * max(0, quat[0] - 0.5) / 0.5
+        control_cost = -0.5 * np.sum(np.square(action))
         
-        # Calculate height change penalty for stability
-        if hasattr(self, 'prev_height'):
-            height_change = abs(height - self.prev_height)
-            height_change_penalty = -5.0 * height_change  # Penalize rapid height changes
-        else:
-            height_change_penalty = 0.0
-        self.prev_height = height
+        total_reward = height_reward + upright_reward + control_cost
         
-        # 1. ALIVE BONUS - Small base reward
-        alive_bonus = 2.0
-
-        # 2. HEIGHT REWARD - Aggressive Gaussian (narrow peak)
-        height_reward = 20.0 * np.exp(-15.0 * height_error**2)
-
-        # 3. STABILITY BONUS - Large reward only when very close
-        if height_error < 0.05:  # Within 5cm (tighter!)
-            stability_bonus = 15.0 * (1.0 - height_error / 0.05)
-        else:
-            stability_bonus = 0.0
-
-        # 4. UPRIGHT BONUS - Only reward if very upright
-        upright_bonus = 10.0 * (quat[0] ** 2) if quat[0] > 0.9 else 0
-
-        # 5. PENALTIES - Much stronger
-        velocity_penalty = -8.0 * xy_vel - 12.0 * z_vel
-        position_penalty = -5.0 * xy_dist
-        angular_penalty = -5.0 * angular_vel_mag
-        control_penalty = -0.1 * np.sum(np.square(action))  # 5x stronger!
-        
-        # Total reward
-        total_reward = (
-            alive_bonus +
-            height_reward +
-            stability_bonus +
-            upright_bonus +
-            height_change_penalty +
-            velocity_penalty +
-            position_penalty +
-            angular_penalty +
-            control_penalty
-        )
-        
-        # Store for debugging
-        self.reward_history['height'].append(height_reward)
-        self.reward_history['upright'].append(upright_bonus)
-        self.reward_history['velocity'].append(velocity_penalty)
-        self.reward_history['angular'].append(angular_penalty)
-        self.reward_history['position'].append(position_penalty)
-        self.reward_history['control'].append(control_penalty)
+        # Lenient termination
+        terminate = height < 0.6 or height > 2.0 or quat[0] < 0.3
         
         # Debug logging
         if self.current_step % 100 == 0:
-            print(f"Step {self.current_step}: h={height:.3f} (target={self.target_height:.1f}, err={height_error:.3f}), "
-                f"vel={xy_vel:.3f}, quat_w={quat[0]:.3f}, "
-                f"r={total_reward:.1f} (alive={alive_bonus:.1f}, h={height_reward:.1f}, "
-                f"stab={stability_bonus:.1f}, up={upright_bonus:.1f}, h_change={height_change_penalty:.1f}, "
-                f"vel_pen={velocity_penalty:.1f})")
-        
-        # LENIENT termination - only if really fallen
-        terminate = height < 0.8 or height > 2.0 or quat[0] < 0
+            print(f"Step {self.current_step}: h={height:.3f}, quat={quat[0]:.3f}, "
+                f"r={total_reward:.1f} (h={height_reward:.1f}, u={upright_reward:.1f}, "
+                f"c={control_cost:.1f})")
         
         return total_reward, terminate
     
