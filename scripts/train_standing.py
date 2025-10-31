@@ -134,10 +134,12 @@ def main():
         )
         standing_config['wandb_run'] = wandb_run
         
+        # ENHANCED: Define comprehensive W&B metrics
         wandb.define_metric("global_step")
 
         # Training metrics
         wandb.define_metric("train/episode_length", step_metric="global_step")
+        wandb.define_metric("train/episode_reward", step_metric="global_step")
         wandb.define_metric("train/mean_height", step_metric="global_step")
         wandb.define_metric("train/height_stability", step_metric="global_step")
         wandb.define_metric("train/max_consecutive_in_range", step_metric="global_step")
@@ -145,9 +147,23 @@ def main():
         wandb.define_metric("train/action_magnitude_mean", step_metric="global_step")
         wandb.define_metric("train/action_magnitude_max", step_metric="global_step")
         wandb.define_metric("train/height_error", step_metric="global_step")
+        
+        # NEW: Reward component metrics
+        wandb.define_metric("train/reward_components/height_reward", step_metric="global_step")
+        wandb.define_metric("train/reward_components/upright_reward", step_metric="global_step")
+        wandb.define_metric("train/reward_components/stability_reward", step_metric="global_step")
+        wandb.define_metric("train/reward_components/smoothness_reward", step_metric="global_step")
+        wandb.define_metric("train/reward_components/control_cost", step_metric="global_step")
+        wandb.define_metric("train/reward_components/sustained_bonus", step_metric="global_step")
+        
+        # NEW: Policy metrics
+        wandb.define_metric("train/policy/learning_rate", step_metric="global_step")
+        wandb.define_metric("train/policy/policy_std_mean", step_metric="global_step")
+        wandb.define_metric("train/policy/policy_std_max", step_metric="global_step")
 
         # Evaluation metrics
         wandb.define_metric("eval/episode_length", step_metric="global_step")
+        wandb.define_metric("eval/mean_reward", step_metric="global_step")
         wandb.define_metric("eval/mean_height", step_metric="global_step")
         wandb.define_metric("eval/height_stability", step_metric="global_step")
         wandb.define_metric("eval/max_consecutive_in_range", step_metric="global_step")
