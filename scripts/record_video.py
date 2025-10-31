@@ -7,9 +7,17 @@ import cv2
 import gymnasium as gym
 import numpy as np
 
-# Add src to path for imports
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
-from utils.visualization import setup_display, test_environment  # noqa: E402
+# Ensure project root is on sys.path (so `src.*` imports work like in training)
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+# Also add `src` for direct package-style imports without the `src.` prefix if needed
+SRC_DIR = os.path.join(PROJECT_ROOT, 'src')
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
+
+from src.utils.visualization import setup_display, test_environment  # noqa: E402
 
 # Optional: import SB3 algorithms we support
 try:
@@ -19,12 +27,19 @@ try:
 except Exception:
     SB3_AVAILABLE = False
 
-# Try to import custom environment
+# Try to import custom environment with robust fallbacks
+CUSTOM_ENV_AVAILABLE = False
+make_standing_env = None
 try:
-    from src.environments.standing_env import make_standing_env
+    from src.environments.standing_env import make_standing_env  # type: ignore
     CUSTOM_ENV_AVAILABLE = True
 except Exception:
-    CUSTOM_ENV_AVAILABLE = False
+    try:
+        # Fallback if only `src` is on sys.path as a package root
+        from environments.standing_env import make_standing_env  # type: ignore
+        CUSTOM_ENV_AVAILABLE = True
+    except Exception:
+        CUSTOM_ENV_AVAILABLE = False
 
 # Suppress Gymnasium warnings
 import warnings
@@ -65,6 +80,11 @@ def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnor
             print(f"⚠ WARNING: No VecNormalize file found at {vecnorm_path}")
             print("Model will likely fail without normalization!")
             
+        # Debug: print observation space shape for verification
+        try:
+            print(f"Observation space (custom standing): {vec_env.observation_space.shape}")
+        except Exception:
+            pass
         return vec_env, True  # Return (env, is_vectorized)
     
     # Standard environment fallback for other tasks
@@ -332,6 +352,15 @@ def main():
         print("Failed to setup display. Exiting.")
         return 1
 
+    # Autofill VecNormalize path for standing task if not provided
+    if (args.task == "standing") and (not args.vecnorm or not os.path.exists(args.vecnorm)):
+        default_vecnorm = os.path.join("models", "saved_models", "vecnorm.pkl")
+        if os.path.exists(default_vecnorm):
+            args.vecnorm = default_vecnorm
+            print(f"Using default VecNormalize stats: {args.vecnorm}")
+        else:
+            print(f"WARNING: VecNormalize stats not found at provided path; looked for {default_vecnorm}")
+
     # Create environment (handles both standard and custom)
     env, is_vectorized = create_environment(
         env_name=args.env,
@@ -343,6 +372,12 @@ def main():
     if env is None:
         print("Failed to create environment")
         return 1
+
+    # Print obs space to confirm correct dimension (should be 350 for standing)
+    try:
+        print(f"Observation space: {env.observation_space}")
+    except Exception:
+        pass
 
     # Test environment if it's not vectorized
     if not is_vectorized and not test_environment(env):

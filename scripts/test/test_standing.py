@@ -19,7 +19,7 @@ def verify_standing(model_path="models/saved_models/best_standing_model.zip"):
     print("Loading model...")
     model = PPO.load(model_path)
     
-    config = {'target_height': 1.25, 'max_episode_steps': 10000}
+    config = {'target_height': 1.4, 'max_episode_steps': 10000}
     env = make_standing_env(render_mode=None, config=config)
     
     print("Testing standing duration...")
@@ -32,7 +32,7 @@ def verify_standing(model_path="models/saved_models/best_standing_model.zip"):
         action, _ = model.predict(obs, deterministic=True)
         obs, reward, terminated, truncated, info = env.step(action)
         
-        height_error = abs(info['height'] - 1.25)
+        height_error = abs(info['height'] - 1.4)
         height_errors.append(height_error)
         step_count += 1
         
