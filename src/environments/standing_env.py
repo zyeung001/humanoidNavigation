@@ -76,6 +76,20 @@ class StandingEnv(gym.Wrapper):
         
         obs_space = env.observation_space
         print(f"Observation space shape for standing: {obs_space.shape}")
+
+        # Adjust observation_space if enhanced observation processing is enabled
+        try:
+            base_dim = int(obs_space.shape[0])
+            extra_dim = 6 if self.include_com else 0  # COM pos (3) + COM vel (3)
+            stack = self.history_len if self.enable_history else 1
+            new_dim = (base_dim + extra_dim) * stack
+            if new_dim != base_dim:
+                from gymnasium.spaces import Box
+                self.observation_space = Box(low=-np.inf, high=np.inf, shape=(new_dim,), dtype=np.float32)
+                print(f"Adjusted observation space for processing: base={base_dim}, extra={extra_dim}, stack={stack} -> {new_dim}")
+        except Exception:
+            # Fallback: keep original observation_space
+            pass
     
     def reset(self, seed: Optional[int] = None): 
         observation, info = self.env.reset(seed=seed)
