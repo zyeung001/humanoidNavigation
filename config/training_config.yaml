@@ -21,9 +21,10 @@ standing:
   # INCREASED: 500k was insufficient for this complex task
   total_timesteps: 2000000
   
-  # INCREASED: 0.0003 was too conservative, 5e-4 allows faster learning
-  learning_rate: 0.0005
-
+  # OPTIMIZED: Start higher LR for exploration, decay for fine-tuning
+  learning_rate: 0.0003
+  final_learning_rate: 0.0001
+  
   # FIXED: batch_size must divide (n_steps * n_envs) evenly
   # 2048 * 8 = 16384, so batch_size should be 2048 (16384/8)
   batch_size: 2048
@@ -34,10 +35,11 @@ standing:
   gamma: 0.995
   gae_lambda: 0.95
   clip_range: 0.2
+  final_clip_range: 0.1  # Decay clip range for more conservative updates later
   
-  # INCREASED: 0.01 was too low, limiting exploration
-  # 0.03 encourages more exploration of balance strategies
-  ent_coef: 0.03
+  # OPTIMIZED: Higher initial entropy for exploration, decay for exploitation
+  ent_coef: 0.05
+  final_ent_coef: 0.01
   vf_coef: 0.5
   max_grad_norm: 0.5
 

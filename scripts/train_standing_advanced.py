@@ -113,6 +113,11 @@ def main():
     final_clip = float(standing.get('final_clip_range', 0.1))
     clip_fn = clip_schedule(initial_clip, final_clip, total_timesteps)
 
+    # Entropy coefficient schedule (for exploration -> exploitation)
+    initial_ent = float(standing.get('ent_coef', 0.05))
+    final_ent = float(standing.get('final_ent_coef', 0.01))
+    ent_fn = lr_schedule(initial_ent, final_ent, total_timesteps)
+
     # Policy/net arch
     policy_kwargs = standing.get('policy_kwargs', {
         'net_arch': [dict(pi=[512, 512, 256], vf=[512, 512, 256])],
@@ -138,7 +143,7 @@ def main():
         gamma=float(standing.get('gamma', 0.995)),
         gae_lambda=float(standing.get('gae_lambda', 0.95)),
         clip_range=clip_fn,
-        ent_coef=float(standing.get('ent_coef', 0.0)),
+        ent_coef=ent_fn,  # Use scheduled entropy
         vf_coef=float(standing.get('vf_coef', 0.5)),
         max_grad_norm=float(standing.get('max_grad_norm', 0.5)),
         policy_kwargs=policy_kwargs,

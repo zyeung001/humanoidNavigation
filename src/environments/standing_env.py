@@ -161,20 +161,22 @@ class StandingEnv(gym.Wrapper):
         
     def _compute_task_reward(self, obs, base_reward, info, action):
         """
-        REDESIGNED reward function for stable humanoid standing
+        OPTIMIZED reward function to solve the "crouching local optimum" problem
+        
+        CRITICAL FIX: Strong height penalty to escape low-height local minima
         
         Key improvements:
-        1. PREDOMINANTLY POSITIVE rewards (base reward of 10/step for good standing)
-        2. Removed velocity penalty conflict (balance requires movement!)
-        3. Better reward scaling with gentler exponentials
-        4. Correct target height (1.4m for Humanoid-v5)
-        5. Sparse bonus rewards for sustained standing
+        1. ASYMMETRIC height reward: HUGE penalty for low heights, lenient near target
+        2. Progressive height bonus: increasing rewards from 1.0m to 1.4m
+        3. Height gradient: agent MUST learn to stand taller to get positive reward
+        4. Stability comes AFTER height: don't reward stability at wrong height
         
-        Expected reward ranges:
-        - Perfect standing: 80-100 points/step
-        - Good standing (small errors): 50-80 points/step
-        - Poor standing (large errors): 10-30 points/step
-        - Falling: 0-10 points/step
+        Reward strategy:
+        - Below 1.0m: LARGE negative penalty (-100 points)
+        - 1.0-1.2m: Neutral/slightly negative (-10 to +20)
+        - 1.2-1.35m: Positive but not maximal (+20 to +60)
+        - 1.35-1.45m: Near-maximal (+60 to +100)
+        - Above 1.5m: Small penalty for overextension
         """
         
         # ========== STATE EXTRACTION ==========
@@ -186,98 +188,97 @@ class StandingEnv(gym.Wrapper):
         angular_vel = self.env.unwrapped.data.qvel[3:6]
         joint_vel = self.env.unwrapped.data.qvel[6:]  # Joint velocities
         
-        # Target height (fixed to correct value)
+        # Target height
         target_height = self.base_target_height
         height_error = abs(height - target_height)
         
-        # Foot contact info (if available)
-        foot_contact_reward = 0.0
-        try:
-            # Simple heuristic: encourage some vertical contact force on feet geoms
-            # This is conservative and avoids dependency on exact model names
-            cfrc = np.abs(self.env.unwrapped.data.cfrc_ext).sum()
-            foot_contact_reward = np.clip(cfrc * 0.0005, 0.0, 5.0)
-        except Exception:
-            pass
-
-        # ========== REWARD COMPONENTS (PREDOMINANTLY POSITIVE) ==========
+        # ========== CORE REWARD: ASYMMETRIC HEIGHT REWARD ==========
+        # This is THE KEY FIX - make low heights extremely unappealing
         
-        # 1. BASE STANDING REWARD (10 points/step just for existing upright)
-        #    This ensures the agent gets positive feedback for not falling
-        base_standing = 10.0
+        # CRITICAL: Penalize low heights HARD to escape crouching local optimum
+        if height < 1.0:
+            # EXTREME penalty for crouching: -100 to -20 points
+            height_reward = -100.0 + 80.0 * np.clip(height / 1.0, 0.0, 1.0)
+        elif height < 1.2:
+            # Still penalize for being too low: -10 to +10 points
+            # Create gradient forcing agent upward
+            height_reward = -10.0 + 20.0 * (height - 1.0) / 0.2
+        elif height < 1.35:
+            # Moderate reward for decent height: +10 to +50 points
+            height_reward = 10.0 + 40.0 * (height - 1.2) / 0.15
+        elif height < 1.45:
+            # EXCELLENT reward at target height: +50 to +100 points
+            height_reward = 50.0 + 50.0 * (height - 1.35) / 0.1
+        elif height < 1.6:
+            # Small penalty for overextending: +100 to +80 points
+            height_reward = 100.0 - 20.0 * (height - 1.45) / 0.15
+        else:
+            # Very tall = bad: +80 to +50 points
+            height_reward = 80.0 - 30.0 * np.clip((height - 1.6) / 0.2, 0.0, 1.0)
         
-        # 2. HEIGHT REWARD (0-50 points) - More lenient exponential
-        #    Perfect height (0cm error) = 50 points
-        #    5cm error = 40 points (was ~25 before)
-        #    10cm error = 25 points (was ~10 before)
-        #    20cm error = 5 points
-        height_reward = 50.0 * np.exp(-5.0 * height_error**2)
-        
-        # 3. UPRIGHT ORIENTATION REWARD (0-20 points) - More lenient
-        #    Perfectly vertical (quat_w ≈ 1.0) = 20 points
-        #    Slightly tilted (quat_w = 0.95) = 15 points
-        #    Moderately tilted (quat_w = 0.85) = 5 points
+        # ========== UPRIGHT ORIENTATION REWARD ==========
+        # Only reward upright IF already at decent height
         upright_error = 1.0 - abs(quat[0])
-        upright_reward = 20.0 * np.exp(-5.0 * upright_error**2)
+        if height >= 1.2:
+            # Full reward when tall enough
+            upright_reward = 25.0 * np.exp(-8.0 * upright_error**2)
+        elif height >= 1.0:
+            # Reduced reward when somewhat low
+            upright_reward = 15.0 * np.exp(-8.0 * upright_error**2)
+        else:
+            # No upright reward when crouching
+            upright_reward = 0.0
         
-        # 4. STABILITY REWARD (0-10 points) - Reward LOW angular momentum
-        #    This encourages smooth, controlled balance without penalizing necessary movements
-        #    Standing perfectly still = 10 points
-        #    Small corrective movements = 5-8 points
-        #    Large movements = 0-3 points
+        # ========== STABILITY REWARD ==========
+        # Only reward stability when at correct height
         angular_momentum = np.sum(np.square(angular_vel))
-        stability_reward = 10.0 * np.exp(-2.0 * angular_momentum)
+        if height >= 1.3:
+            stability_reward = 15.0 * np.exp(-2.0 * angular_momentum)
+        elif height >= 1.2:
+            stability_reward = 10.0 * np.exp(-2.0 * angular_momentum)
+        elif height >= 1.0:
+            stability_reward = 5.0 * np.exp(-2.0 * angular_momentum)
+        else:
+            stability_reward = 0.0
         
-        # 5. JOINT VELOCITY SMOOTHNESS (0-5 points)
-        #    Reward smooth, minimal joint movements (not zero - that's impossible!)
-        #    Smooth corrections = 5 points
-        #    Jerky movements = 0-2 points
+        # ========== SMOOTHNESS REWARD ==========
         joint_velocity_magnitude = np.sum(np.square(joint_vel))
         smoothness_reward = 5.0 * np.exp(-0.1 * joint_velocity_magnitude)
         
-        # 6. ACTION SMOOTHNESS PENALTY (small negative: 0 to -5)
-        #    Penalize large control actions, but keep it small
-        #    No action = 0, Small corrections = -0.5 to -2, Large actions = -3 to -5
-        control_cost = -0.5 * np.sum(np.square(action))
-
-        # 6b. VELOCITY PENALTIES (mild): discourage excessive linear speed when tall
+        # ========== CONTROL COST ==========
+        # Reduced penalty to not discourage exploration
+        control_cost = -0.2 * np.sum(np.square(action))
+        
+        # ========== VELOCITY PENALTY ==========
         speed = np.linalg.norm(linear_vel)
-        velocity_penalty = -1.0 * np.clip(speed - 0.5, 0.0, 3.0)  # allow small sway
+        velocity_penalty = -0.5 * np.clip(speed - 1.0, 0.0, 2.0)
         
-        # 7. SPARSE BONUS: Sustained standing bonus (every 50 steps)
-        #    Reward the agent for staying upright for extended periods
+        # ========== SPARSE BONUS ==========
+        # Huge bonus ONLY for sustained good standing
         sustained_bonus = 0.0
-        if self.current_step > 0 and self.current_step % 50 == 0:
-            if height_error < 0.15 and upright_error < 0.1:
-                sustained_bonus = 100.0  # Big bonus for 50 consecutive good steps
+        if self.current_step > 0 and self.current_step % 100 == 0:
+            if height_error < 0.10 and upright_error < 0.08 and height >= 1.3:
+                sustained_bonus = 200.0  # ENORMOUS bonus for sustained target performance
         
-        # ========== TOTAL REWARD (PREDOMINANTLY POSITIVE) ==========
+        # ========== TOTAL REWARD ==========
         total_reward = (
-            base_standing +          # +10 (always positive baseline)
-            height_reward +          # +0 to +50
-            upright_reward +         # +0 to +20
-            stability_reward +       # +0 to +10
+            height_reward +          # THE DOMINANT term (-100 to +100)
+            upright_reward +         # +0 to +25 (conditional)
+            stability_reward +       # +0 to +15 (conditional)
             smoothness_reward +      # +0 to +5
-            control_cost +           # -5 to 0
-            velocity_penalty +       # 0 to -3
-            foot_contact_reward +    # +0 to +5 (shaping)
-            sustained_bonus          # +0 or +100 (sparse)
+            control_cost +           # -4 to 0 (small)
+            velocity_penalty +       # 0 to -1 (small)
+            sustained_bonus          # 0 or +200 (rare)
         )
-        # Expected range: 10-100 points/step (mostly 50-85 for good standing)
         
-        # ========== IMPROVED TERMINATION CONDITIONS ==========
-        # More reasonable thresholds - terminate when clearly falling
+        # ========== TERMINATION CONDITIONS ==========
         terminate = (
-            height < 0.8 or          # Below 0.8m (was 0.6m - too lenient)
+            height < 0.75 or         # Below 0.75m = fallen
             height > 2.0 or          # Unrealistic height
-            abs(quat[0]) < 0.7       # Torso angle > 45 degrees (was 0.3 - too lenient)
+            abs(quat[0]) < 0.6       # Torso > 53 degrees
         )
-
-        # Recovery shaping: if near failure but improving, add small shaping to encourage recovery
-        if terminate and height > 0.7 and abs(quat[0]) > 0.6:
-            total_reward += 1.0
         
-        # ========== TRACK REWARD COMPONENTS FOR ANALYSIS ==========
+        # ========== TRACK REWARD COMPONENTS ==========
         self.reward_history['height'].append(height_reward)
         self.reward_history['upright'].append(upright_reward)
         self.reward_history['velocity'].append(stability_reward)
@@ -289,9 +290,8 @@ class StandingEnv(gym.Wrapper):
                 f"h={height:.3f} (err={height_error:.3f}), "
                 f"quat_w={quat[0]:.3f}, "
                 f"r={total_reward:6.1f} "
-                f"[base={base_standing:.0f}, h={height_reward:5.1f}, u={upright_reward:5.1f}, "
-                f"stab={stability_reward:4.1f}, smooth={smoothness_reward:3.1f}, "
-                f"ctrl={control_cost:4.1f}, bonus={sustained_bonus:.0f}]")
+                f"[h={height_reward:6.1f}, u={upright_reward:4.1f}, "
+                f"stab={stability_reward:4.1f}, bonus={sustained_bonus:.0f}]")
         
         return total_reward, terminate
 
