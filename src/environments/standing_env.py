@@ -73,6 +73,7 @@ class StandingEnv(gym.Wrapper):
         self.obs_history = []
         self.include_com = bool(self.cfg.get('obs_include_com', False))
         self.feature_norm = bool(self.cfg.get('obs_feature_norm', False))
+        self._proc_obs_dim: Optional[int] = None  # will be frozen after first processed obs
         
         obs_space = env.observation_space
         print(f"Observation space shape for standing: {obs_space.shape}")
@@ -121,9 +122,18 @@ class StandingEnv(gym.Wrapper):
                 size=self.env.unwrapped.model.geom_friction.shape[0]
             )
         
-        # Process initial observation if using enhanced obs
+        # Process initial observation if using enhanced obs and freeze processed dim
         if self.enable_history or self.include_com or self.feature_norm:
             observation = self._process_observation(observation)
+            # Freeze processed observation dimension and update observation_space accordingly
+            if self._proc_obs_dim is None:
+                self._proc_obs_dim = int(np.asarray(observation, dtype=np.float32).shape[0])
+                try:
+                    from gymnasium.spaces import Box
+                    self.observation_space = Box(low=-np.inf, high=np.inf, shape=(self._proc_obs_dim,), dtype=np.float32)
+                    print(f"Frozen processed observation dim: {self._proc_obs_dim}")
+                except Exception:
+                    pass
 
         return observation, info
     
@@ -350,6 +360,14 @@ class StandingEnv(gym.Wrapper):
             else:
                 stacked = self.obs_history
             feat_vec = np.concatenate(stacked, axis=0)
+
+        # Ensure fixed processed dimension by padding/truncating to frozen size
+        if self._proc_obs_dim is not None:
+            if feat_vec.shape[0] < self._proc_obs_dim:
+                pad = np.zeros((self._proc_obs_dim - feat_vec.shape[0],), dtype=np.float32)
+                feat_vec = np.concatenate([feat_vec, pad], axis=0)
+            elif feat_vec.shape[0] > self._proc_obs_dim:
+                feat_vec = feat_vec[:self._proc_obs_dim]
 
         return feat_vec
         

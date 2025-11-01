@@ -59,9 +59,7 @@ class StandingCurriculumEnv(StandingEnv):
             cfg['rand_friction_range'] = [0.9, 1.1]
             cfg['action_smoothing'] = True
             cfg['action_symmetry'] = True
-            cfg['obs_history'] = max(int(cfg.get('obs_history', 0)), 4)
-            cfg['obs_include_com'] = True
-            cfg['obs_feature_norm'] = True
+            # Do NOT change observation-related options mid-training; keep initial obs dimension fixed
             cfg['max_episode_steps'] = int(cfg.get('max_episode_steps', 5000))
 
     def reset(self, seed: Optional[int] = None):
@@ -96,10 +94,7 @@ class StandingCurriculumEnv(StandingEnv):
                     self.enable_action_smoothing = cfg.get('action_smoothing', self.enable_action_smoothing)
                     self.action_smoothing_tau = cfg.get('action_smoothing_tau', self.action_smoothing_tau)
                     self.enable_action_symmetry = cfg.get('action_symmetry', self.enable_action_symmetry)
-                    self.enable_history = int(cfg.get('obs_history', 0)) > 0
-                    self.history_len = int(cfg.get('obs_history', 0))
-                    self.include_com = cfg.get('obs_include_com', self.include_com)
-                    self.feature_norm = cfg.get('obs_feature_norm', self.feature_norm)
+                    # Do not modify observation processing flags after initialization
                     self.cfg = cfg
                     info['curriculum_stage_advanced'] = self.stage
 
