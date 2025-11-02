@@ -60,7 +60,8 @@ def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnor
         
         print(f"Creating custom {task_type} environment...")
         # Create the base custom environment
-        base_env = make_standing_env(task_type=task_type, render_mode=render_mode)
+        # FIXED: make_standing_env signature is (render_mode, config)
+        base_env = make_standing_env(render_mode=render_mode, config=None)
         
         # Wrap in VecEnv
         vec_env = DummyVecEnv([lambda: base_env])
