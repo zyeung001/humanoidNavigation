@@ -60,8 +60,16 @@ def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnor
         
         print(f"Creating custom {task_type} environment...")
         # Create the base custom environment
-        # FIXED: make_standing_env signature is (render_mode, config)
-        base_env = make_standing_env(render_mode=render_mode, config=None)
+        # CRITICAL: Must match training configuration for VecNormalize compatibility
+        # Training used enhanced observations: history=4, COM features, feature normalization
+        training_config = {
+            'obs_history': 4,              # History stacking (matches training)
+            'obs_include_com': True,        # COM features (matches training)
+            'obs_feature_norm': True,       # Feature normalization (matches training)
+            'action_smoothing': True,       # Action smoothing (matches training)
+            'action_smoothing_tau': 0.2,   # Smoothing parameter (matches training)
+        }
+        base_env = make_standing_env(render_mode=render_mode, config=training_config)
         
         # Wrap in VecEnv
         vec_env = DummyVecEnv([lambda: base_env])
