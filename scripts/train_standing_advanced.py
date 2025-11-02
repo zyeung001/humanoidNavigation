@@ -1,5 +1,6 @@
 """
 Advanced PPO training for humanoid standing with curriculum, schedules, and diagnostics.
+FIXED: Entropy coefficient scheduling issue resolved
 """
 
 import os
@@ -22,7 +23,7 @@ import numpy as np
 import torch
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
-from stable_baselines3.common.callbacks import CallbackList
+from stable_baselines3.common.callbacks import CallbackList, BaseCallback
 
 from src.environments.standing_curriculum import make_standing_curriculum_env
 from src.agents.diagnostics import DiagnosticsCallback
@@ -70,6 +71,32 @@ def make_env_fns(n_envs: int, seed: int, cfg: dict):
     return DummyVecEnv([make(0)])
 
 
+class EntropyScheduleCallback(BaseCallback):
+    """
+    Custom callback to schedule entropy coefficient during training.
+    PPO doesn't natively support ent_coef scheduling like it does for learning_rate.
+    """
+    def __init__(self, initial_ent: float, final_ent: float, total_timesteps: int, verbose: int = 0):
+        super().__init__(verbose)
+        self.initial_ent = initial_ent
+        self.final_ent = final_ent
+        self.total_timesteps = total_timesteps
+        
+    def _on_step(self) -> bool:
+        # Calculate current entropy coefficient based on progress
+        progress = self.num_timesteps / self.total_timesteps
+        current_ent = self.initial_ent * (1.0 - progress) + self.final_ent * progress
+        
+        # Update the model's entropy coefficient
+        self.model.ent_coef = current_ent
+        
+        # Log occasionally
+        if self.verbose and self.num_timesteps % 50000 == 0:
+            print(f"Entropy coefficient updated to: {current_ent:.6f}")
+        
+        return True
+
+
 def main():
     cfg = load_yaml('config/training_config.yaml')
     standing = cfg.get('standing', {}).copy()
@@ -113,10 +140,9 @@ def main():
     final_clip = float(standing.get('final_clip_range', 0.1))
     clip_fn = clip_schedule(initial_clip, final_clip, total_timesteps)
 
-    # Entropy coefficient schedule (for exploration -> exploitation)
+    # Entropy coefficient - FIXED: Use initial value, schedule via callback
     initial_ent = float(standing.get('ent_coef', 0.05))
     final_ent = float(standing.get('final_ent_coef', 0.01))
-    ent_fn = lr_schedule(initial_ent, final_ent, total_timesteps)
 
     # Policy/net arch
     policy_kwargs = standing.get('policy_kwargs', {
@@ -132,7 +158,7 @@ def main():
         act = policy_kwargs['activation_fn'].lower()
         policy_kwargs['activation_fn'] = getattr(nn, act_map.get(act, 'ReLU'))
 
-    # PPO model
+    # PPO model - FIXED: Use initial_ent as float, not schedule
     model = PPO(
         policy='MlpPolicy',
         env=env,
@@ -143,7 +169,7 @@ def main():
         gamma=float(standing.get('gamma', 0.995)),
         gae_lambda=float(standing.get('gae_lambda', 0.95)),
         clip_range=clip_fn,
-        ent_coef=ent_fn,  # Use scheduled entropy
+        ent_coef=initial_ent,  # FIXED: Use float, not schedule function
         vf_coef=float(standing.get('vf_coef', 0.5)),
         max_grad_norm=float(standing.get('max_grad_norm', 0.5)),
         policy_kwargs=policy_kwargs,
@@ -152,7 +178,7 @@ def main():
         device=standing.get('device', 'cuda' if torch.cuda.is_available() else 'cpu'),
     )
 
-    # Callbacks: diagnostics + periodic vecnorm save
+    # Callbacks: entropy schedule + diagnostics + periodic vecnorm save
     class SaveVecNormCallback(DiagnosticsCallback):
         def __init__(self, path: str, freq: int = 100_000):
             super().__init__(log_freq=freq, verbose=1)
@@ -170,11 +196,13 @@ def main():
             return ok
 
     callbacks = CallbackList([
+        EntropyScheduleCallback(initial_ent, final_ent, total_timesteps, verbose=1),
         SaveVecNormCallback(vecnorm_path, freq=int(standing.get('save_freq', 100_000)))
     ])
 
     # Train
     print(f"Starting advanced standing training for {total_timesteps:,} timesteps (n_envs={n_envs})...")
+    print(f"Entropy coefficient will decay from {initial_ent} to {final_ent}")
     model.learn(total_timesteps=total_timesteps, callback=callbacks)
 
     # Save final model + vecnorm
@@ -191,5 +219,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
