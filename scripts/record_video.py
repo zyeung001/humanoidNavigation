@@ -30,13 +30,16 @@ except Exception:
 # Try to import custom environment with robust fallbacks
 CUSTOM_ENV_AVAILABLE = False
 make_standing_env = None
+make_standing_curriculum_env = None
 try:
     from src.environments.standing_env import make_standing_env  # type: ignore
+    from src.environments.standing_curriculum import make_standing_curriculum_env  # type: ignore
     CUSTOM_ENV_AVAILABLE = True
 except Exception:
     try:
         # Fallback if only `src` is on sys.path as a package root
         from environments.standing_env import make_standing_env  # type: ignore
+        from environments.standing_curriculum import make_standing_curriculum_env  # type: ignore
         CUSTOM_ENV_AVAILABLE = True
     except Exception:
         CUSTOM_ENV_AVAILABLE = False
@@ -60,16 +63,20 @@ def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnor
         
         print(f"Creating custom {task_type} environment...")
         # Create the base custom environment
-        # CRITICAL: Must match training configuration for VecNormalize compatibility
-        # Training used enhanced observations: history=4, COM features, feature normalization
+        # CRITICAL: Must match training configuration EXACTLY
+        # Training used CURRICULUM environment with these settings
         training_config = {
             'obs_history': 4,              # History stacking (matches training)
             'obs_include_com': True,        # COM features (matches training)
             'obs_feature_norm': True,       # Feature normalization (matches training)
             'action_smoothing': True,       # Action smoothing (matches training)
             'action_smoothing_tau': 0.2,   # Smoothing parameter (matches training)
+            # Curriculum settings (will stay at final stage for inference)
+            'curriculum_start_stage': 3,   # Start at final stage
+            'curriculum_max_stage': 3,     # Stay at final stage
         }
-        base_env = make_standing_env(render_mode=render_mode, config=training_config)
+        # Use curriculum environment to match training exactly
+        base_env = make_standing_curriculum_env(render_mode=render_mode, config=training_config)
         
         # Wrap in VecEnv
         vec_env = DummyVecEnv([lambda: base_env])
