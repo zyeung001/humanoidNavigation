@@ -78,7 +78,14 @@ def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnor
         # Use curriculum environment to match training exactly
         base_env = make_standing_curriculum_env(render_mode=render_mode, config=training_config)
         
-        # Wrap in VecEnv
+        # CRITICAL FIX: Reset the environment BEFORE wrapping in VecEnv
+        # This allows the observation space to freeze to the correct dimension (1484)
+        # Otherwise VecEnv allocates buffer for the initial size (1424)
+        print("Pre-warming environment to freeze observation dimension...")
+        _ = base_env.reset()
+        print(f"Environment observation space after reset: {base_env.observation_space.shape}")
+        
+        # Now wrap in VecEnv with the correct frozen dimension
         vec_env = DummyVecEnv([lambda: base_env])
         
         # CRITICAL: Load VecNormalize stats if available
