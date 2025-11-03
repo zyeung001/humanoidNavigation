@@ -4,11 +4,36 @@ Quick test to determine the exact observation space dimension from training conf
 import os
 import sys
 
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-sys.path.insert(0, PROJECT_ROOT)
-sys.path.insert(0, os.path.join(PROJECT_ROOT, 'src'))
+# Get the script's directory and navigate to project root
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, '..', '..'))
+SRC_DIR = os.path.join(PROJECT_ROOT, 'src')
 
-from src.environments.standing_curriculum import make_standing_curriculum_env
+# Add to path
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
+
+print(f"Project root: {PROJECT_ROOT}")
+print(f"Src dir: {SRC_DIR}")
+
+try:
+    from environments.standing_curriculum import make_standing_curriculum_env
+    print("✓ Imported from environments.standing_curriculum")
+except ImportError:
+    try:
+        from src.environments.standing_curriculum import make_standing_curriculum_env
+        print("✓ Imported from src.environments.standing_curriculum")
+    except ImportError as e:
+        print(f"✗ Import failed: {e}")
+        print("\nTrying direct import...")
+        # Last resort: add the environments directory directly
+        env_dir = os.path.join(PROJECT_ROOT, 'src', 'environments')
+        sys.path.insert(0, env_dir)
+        from standing_curriculum import make_standing_curriculum_env
+        print("✓ Imported directly from standing_curriculum")
+
 from stable_baselines3.common.vec_env import DummyVecEnv
 
 # Match training config EXACTLY
