@@ -18,7 +18,7 @@ import gymnasium as gym
 from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv
 
 # Import the CORRECT environment - the one used during training
-from src.environments.standing_curriculum_env import make_standing_curriculum_env
+from src.environments.standing_curriculum import make_standing_curriculum_env
 
 def main():
     parser = argparse.ArgumentParser(description="Diagnose standing model performance")
