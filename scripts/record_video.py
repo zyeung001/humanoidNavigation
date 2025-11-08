@@ -95,12 +95,12 @@ def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnor
                 vec_env = VecNormalize.load(vecnorm_path, vec_env)
                 vec_env.training = False  # IMPORTANT: Set to eval mode
                 vec_env.norm_reward = False  # Don't normalize rewards during inference
-                print(f"✓ VecNormalize loaded and configured for inference")
+                print(f" VecNormalize loaded and configured for inference")
             except Exception as e:
-                print(f"✗ VecNormalize loading failed: {e}")
+                print(f" VecNormalize loading failed: {e}")
                 raise
         else:
-            print(f"⚠ WARNING: No VecNormalize file found at {vecnorm_path}")
+            print(f" WARNING: No VecNormalize file found at {vecnorm_path}")
             print("Model will likely fail without normalization!")
             
         # Debug: print observation space shape for verification
@@ -331,11 +331,11 @@ def record_video(env, model, args, is_vectorized=False):
                 # Print why it failed
                 if is_vectorized and len(info) > 0:
                     height = info[0].get('height', 'unknown')
-                    print(f"  ✗ Episode terminated at step {episode_steps}, height={height}")
+                    print(f"   Episode terminated at step {episode_steps}, height={height}")
                 break
         
         if episode_steps >= args.steps:
-            print(f"  ✓ Episode {episode + 1} SUCCESS: {episode_steps} steps")
+            print(f"   Episode {episode + 1} SUCCESS: {episode_steps} steps")
         
         print(f"  Recorded {episode_steps} steps, total frames: {total_frames}")
     

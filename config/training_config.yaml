@@ -1,80 +1,62 @@
-# Training Configuration for Humanoid Standing
 # training_config.yaml
 
-# General settings
 general:
   seed: 42
-  device: "auto" 
+  device: "auto"
   verbose: 1
   save_freq: 50000
   eval_freq: 25000
   eval_episodes: 10
 
-# Logging
 logging:
   use_tensorboard: true
   log_dir: "data/logs"
 
-# Standing task - OPTIMIZED HYPERPARAMETERS
 standing:
   algorithm: "PPO"
-  # INCREASED: 500k was insufficient for this complex task
-  total_timesteps: 2000000
+  total_timesteps: 3000000  
   
-  # OPTIMIZED: Start higher LR for exploration, decay for fine-tuning
   learning_rate: 0.0003
-  final_learning_rate: 0.0001
+  final_learning_rate: 0.00005  
   
-  # FIXED: batch_size must divide (n_steps * n_envs) evenly
-  # 2048 * 8 = 16384, so batch_size should be 2048 (16384/8)
   batch_size: 2048
   n_steps: 2048
   n_epochs: 10
   
-  # Slightly higher gamma for longer-term stability rewards
   gamma: 0.995
   gae_lambda: 0.95
   clip_range: 0.2
-  final_clip_range: 0.1  # Decay clip range for more conservative updates later
+  final_clip_range: 0.05  
   
-  # OPTIMIZED: Higher initial entropy for exploration, decay for exploitation
   ent_coef: 0.05
-  final_ent_coef: 0.01
+  final_ent_coef: 0.005  
   vf_coef: 0.5
   max_grad_norm: 0.5
 
   n_eval_episodes: 5
-  
-  # FIXED: Correct target height for Humanoid-v5 (was 1.3, should be 1.4)
   target_height: 1.4
   
-  # INCREASED: Network was too small for 17 DOF humanoid
-  # [256, 256] provides better capacity for fine motor control
   policy_kwargs:
     net_arch:
-      pi: [256, 256]
-      vf: [256, 256]
-    activation_fn: "relu"
+      pi: [512, 512, 256] 
+      vf: [512, 512, 256]
+    activation_fn: "SiLU" 
     log_std_init: -0.5
   
   use_wandb: true
-  wandb_project: "humanoid-standing-improved"
+  wandb_project: "humanoid-standing-fixed"
   wandb_log_freq: 2000
   video_freq: 50000
-  
 
-  # UPDATED: Success thresholds for new reward scale (50-85 points/step typical)
-  # At 1000 steps, expect 50,000-85,000 total reward for good standing
-  target_reward_threshold: 50000
-  height_stability_threshold: 0.1
-  height_error_threshold: 0.15
+  target_reward_threshold: 60000  
+  height_stability_threshold: 0.08  
+  height_error_threshold: 0.10  
   
   normalize: true
   n_envs: 8
   
   video_n_episodes: 2
   video_max_steps: 500
-
   episode_print_freq: 1000
   
   final_model_path: "models/saved_models/final_standing_model"
@@ -83,13 +65,24 @@ standing:
   checkpoint_prefix: "checkpoint"
   best_model_path: "models/saved_models/best_standing_model"
 
-  max_episode_steps: 5000  # Longer episodes for proper evaluation
+  max_episode_steps: 5000
 
+  curriculum_start_stage: 0
+  curriculum_max_stage: 4  
+  curriculum_advance_after: 30  
+  curriculum_success_rate: 0.85  
+  
+  
+  action_smoothing: true
+  action_smoothing_tau: 0.2
+  obs_include_com: true
+  obs_feature_norm: true
+  obs_history: 4
+  
   domain_rand: false
   rand_mass_range: [0.95, 1.05]
   rand_friction_range: [0.95, 1.05]
 
-# Evaluation
 evaluation:
   render_eval: false
   record_video: true
@@ -102,5 +95,5 @@ simulation:
   save_frames: true
 
 early_stop:
-  target_length: 2000  
-  patience: 5
+  target_length: 2000
+  patience: 10  

@@ -1,8 +1,5 @@
-#!/usr/bin/env python3
-"""
-Fixed diagnostic script for standing model with proper environment matching.
-This version creates the environment EXACTLY as it was during training.
-"""
+# standing_plot.py
+
 import sys
 import os
 import argparse
@@ -110,9 +107,9 @@ def main():
     # Create base environment - MUST reset before wrapping in VecEnv!
     base_env = make_standing_curriculum_env(render_mode=None, config=training_config)
     
-    # CRITICAL: Reset the environment first to freeze observation space
+    # Reset the environment first to freeze observation space
     _ = base_env.reset()
-    print(f"✓ Environment observation space: {base_env.observation_space.shape}")
+    print(f" Environment observation space: {base_env.observation_space.shape}")
     
     # Now wrap in VecEnv
     vec_env = DummyVecEnv([lambda: base_env])
@@ -122,19 +119,19 @@ def main():
         env = VecNormalize.load(args.vecnorm, vec_env)
         env.training = False
         env.norm_reward = False
-        print("✓ Loaded VecNormalize stats")
+        print(" Loaded VecNormalize stats")
     except Exception as e:
         env = vec_env
-        print(f"⚠ No VecNormalize found: {e}")
+        print(f" No VecNormalize found: {e}")
         print("  Continuing without normalization...")
     
     # Load model
     try:
         model = PPO.load(args.model, env=env)
-        print(f"✓ Model loaded successfully")
+        print(f" Model loaded successfully")
         print(f"  Model observation space: {model.observation_space.shape}\n")
     except Exception as e:
-        print(f"❌ Error loading model: {e}")
+        print(f" Error loading model: {e}")
         print("\nRun with --list-models to see available models")
         if env is not None:
             env.close()
@@ -174,7 +171,7 @@ def main():
     env.close()
     
     if len(heights) == 0:
-        print("❌ No data collected. Check environment configuration.")
+        print(" No data collected. Check environment configuration.")
         return
     
     # Create comprehensive plot
@@ -233,18 +230,18 @@ def main():
     print(f"{'DIAGNOSTIC RESULTS':^50}")
     print(f"{'='*50}")
     
-    print(f"\n📊 Height Metrics:")
+    print(f"\n Height Metrics:")
     print(f"   Mean height:           {mean_height:.3f}m")
     print(f"   Target height:         {args.target_height:.3f}m")
     print(f"   Height error:          {height_error:.3f}m ({height_error*100:.1f}cm)")
     print(f"   Std deviation:         {std_height:.3f}m")
     print(f"   Time in range (±5cm):  {percent_in_range:.1f}%")
     
-    print(f"\n🎮 Action Metrics:")
+    print(f"\n Action Metrics:")
     print(f"   Mean action magnitude: {mean_action:.3f}")
     print(f"   Std action magnitude:  {np.std(actions_taken):.3f}")
     
-    print(f"\n🎯 Performance Metrics:")
+    print(f"\n Performance Metrics:")
     print(f"   Episode length:        {len(heights)} steps")
     print(f"   Total reward:          {total_reward:.1f}")
     print(f"   Mean reward:           {mean_reward:.2f}")
@@ -256,43 +253,43 @@ def main():
     
     # Height assessment
     if height_error < 0.05:
-        print("✅ Height: EXCELLENT (within 5cm of target)")
+        print(" Height: EXCELLENT (within 5cm of target)")
     elif height_error < 0.10:
-        print("⚠️  Height: GOOD (within 10cm of target)")
+        print("  Height: GOOD (within 10cm of target)")
     elif height_error < 0.20:
-        print("⚠️  Height: FAIR (within 20cm of target)")
+        print("  Height: FAIR (within 20cm of target)")
     else:
-        print(f"❌ Height: POOR (error {height_error*100:.1f}cm)")
+        print(f" Height: POOR (error {height_error*100:.1f}cm)")
     
     # Stability assessment
     if std_height < 0.05:
-        print("✅ Stability: EXCELLENT (std < 5cm)")
+        print(" Stability: EXCELLENT (std < 5cm)")
     elif std_height < 0.08:
-        print("⚠️  Stability: GOOD (std < 8cm)")
+        print("  Stability: GOOD (std < 8cm)")
     elif std_height < 0.12:
-        print("⚠️  Stability: FAIR (std < 12cm)")
+        print("  Stability: FAIR (std < 12cm)")
     else:
-        print(f"❌ Stability: POOR (std {std_height*100:.1f}cm)")
+        print(f" Stability: POOR (std {std_height*100:.1f}cm)")
     
     # Consistency assessment
     if percent_in_range > 80:
-        print(f"✅ Consistency: EXCELLENT ({percent_in_range:.1f}% in range)")
+        print(f" Consistency: EXCELLENT ({percent_in_range:.1f}% in range)")
     elif percent_in_range > 60:
-        print(f"⚠️  Consistency: GOOD ({percent_in_range:.1f}% in range)")
+        print(f"  Consistency: GOOD ({percent_in_range:.1f}% in range)")
     elif percent_in_range > 40:
-        print(f"⚠️  Consistency: FAIR ({percent_in_range:.1f}% in range)")
+        print(f"  Consistency: FAIR ({percent_in_range:.1f}% in range)")
     else:
-        print(f"❌ Consistency: POOR ({percent_in_range:.1f}% in range)")
+        print(f" Consistency: POOR ({percent_in_range:.1f}% in range)")
     
     # Episode length assessment
     if len(heights) >= 500:
-        print("✅ Duration: EXCELLENT (completed full episode)")
+        print(" Duration: EXCELLENT (completed full episode)")
     elif len(heights) > 400:
-        print("⚠️  Duration: GOOD (survived > 400 steps)")
+        print("  Duration: GOOD (survived > 400 steps)")
     elif len(heights) > 200:
-        print("⚠️  Duration: FAIR (survived > 200 steps)")
+        print("  Duration: FAIR (survived > 200 steps)")
     else:
-        print(f"❌ Duration: POOR (only {len(heights)} steps)")
+        print(f" Duration: POOR (only {len(heights)} steps)")
     
     print(f"\n{'='*50}\n")
 

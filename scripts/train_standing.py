@@ -1,388 +1,221 @@
-"""
-Humanoid standing PPO training with parallel VecEnvs and reward shaping
-Colab-optimised for headless MuJoCo + T4 GPU with WandB logging
 
-train_standing.py
-"""
 
-# ======================================================
-# EARLY ENVIRONMENT CONFIGURATION (before any Mujoco/Gym imports)
-# ======================================================
+# train_standing.py
+
+
 import os
+import sys
 import warnings
-# Suppress WandB system messages
-os.environ["WANDB_SILENT"] = "true"
-os.environ["WANDB__SERVICE_WAIT"] = "300"
+from datetime import datetime
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-# Suppress Gym and TensorFlow warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)  
-warnings.filterwarnings("ignore", message="Gym has been unmaintained")  
-warnings.filterwarnings("ignore", category=UserWarning, module="tensorflow")  
+# Ensure project root & src on path
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+SRC_DIR = os.path.join(PROJECT_ROOT, 'src')
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
 
-os.environ.setdefault("MUJOCO_GL", "egl")       # Headless rendering backend
-os.environ.setdefault("OMP_NUM_THREADS", "1")   # Limit CPU threading
-os.environ.setdefault("MKL_NUM_THREADS", "1")
-
-
-import sys
 import yaml
-from datetime import datetime
+import numpy as np
 import torch
-torch.set_num_threads(1)
-from stable_baselines3.common.callbacks import BaseCallback
-
-# WandB import
-try:
-    import wandb
-except ImportError:
-    print("Installing wandb...")
-    os.system("pip install wandb")
-    import wandb
-
-# PROJECT IMPORTS
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-
-from src.agents.standing_agent import StandingAgent 
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
-from src.environments.standing_env import make_standing_env
-from datetime import datetime
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
+from stable_baselines3.common.callbacks import CallbackList, BaseCallback
+
+from src.environments.standing_curriculum import make_standing_curriculum_env
+from src.agents.diagnostics import DiagnosticsCallback
 
 
-warnings.filterwarnings("ignore", message="Unable to register")  # CUDA noise
+def load_yaml(path: str):
+    with open(path, 'r') as f:
+        return yaml.safe_load(f)
 
 
-# SETUP HELPERS
-def setup_colab_environment():
-    """Quick setup for Colab runtime."""
-    os.environ.setdefault("MUJOCO_GL", "egl")
-
-    try:
-        import gymnasium as gym
-        import stable_baselines3
-    except ImportError:
-        print("Installing dependencies...")
-        os.system(
-            "gymnasium[mujoco] "
-            "stable-baselines3[extra] "
-            "tensorboard pyyaml wandb"
-        )
-
-    try:
-        if torch.cuda.is_available():
-            print(f"GPU detected: {torch.cuda.get_device_name(0)}")
-            return 'cuda'
-        else:
-            print("Using CPU (training will be slower)")
-            return 'cpu'
-    except Exception:
-        return 'cpu'
+def lr_schedule(initial_lr: float, final_lr: float, total_steps: int):
+    def schedule(progress_remaining: float):
+        # SB3 passes progress_remaining in [1..0]
+        step = (1.0 - progress_remaining) * total_steps
+        ratio = float(np.clip(step / max(total_steps, 1), 0.0, 1.0))
+        return initial_lr * (1.0 - ratio) + final_lr * ratio
+    return schedule
 
 
-def load_config():
-    """Load config from YAML file only"""
-    config_path = 'config/training_config.yaml'
-    
-    if not os.path.exists(config_path):
-        raise FileNotFoundError(f"Config file not found: {config_path}")
-    
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
-    
-    print(f"Loaded config from {config_path}")
-    return config
+def clip_schedule(initial: float, final: float, total_steps: int):
+    def schedule(progress_remaining: float):
+        step = (1.0 - progress_remaining) * total_steps
+        ratio = float(np.clip(step / max(total_steps, 1), 0.0, 1.0))
+        return initial * (1.0 - ratio) + final * ratio
+    return schedule
 
-# TRAINING MAIN
+
+def make_env_fns(n_envs: int, seed: int, cfg: dict):
+    def make(rank: int):
+        def _init():
+            os.environ.setdefault("MUJOCO_GL", "egl")
+            env = make_standing_curriculum_env(render_mode=None, config=cfg)
+            if hasattr(env, 'reset'):
+                env.reset(seed=seed + rank)
+            try:
+                env.action_space.seed(seed + rank)
+                env.observation_space.seed(seed + rank)
+            except Exception:
+                pass
+            return env
+        return _init
+
+    if n_envs > 1:
+        return SubprocVecEnv([make(i) for i in range(n_envs)])
+    return DummyVecEnv([make(0)])
+
+
+class EntropyScheduleCallback(BaseCallback):
+    """
+    Custom callback to schedule entropy coefficient during training.
+    PPO doesn't natively support ent_coef scheduling like it does for learning_rate.
+    """
+    def __init__(self, initial_ent: float, final_ent: float, total_timesteps: int, verbose: int = 0):
+        super().__init__(verbose)
+        self.initial_ent = initial_ent
+        self.final_ent = final_ent
+        self.total_timesteps = total_timesteps
+        
+    def _on_step(self) -> bool:
+        # Calculate current entropy coefficient based on progress
+        progress = self.num_timesteps / self.total_timesteps
+        current_ent = self.initial_ent * (1.0 - progress) + self.final_ent * progress
+        
+        # Update the model's entropy coefficient
+        self.model.ent_coef = current_ent
+        
+        # Log occasionally
+        if self.verbose and self.num_timesteps % 50000 == 0:
+            print(f"Entropy coefficient updated to: {current_ent:.6f}")
+        
+        return True
+
 
 def main():
-    print("=== Humanoid Standing PPO Training with WandB ===")
-    device = setup_colab_environment()
+    cfg = load_yaml('config/training_config.yaml')
+    standing = cfg.get('standing', {}).copy()
 
-    # Load configuration
-    config = load_config()
-    standing_config = config.get('standing', {}).copy()
-    general_config = config.get('general', {})
+    # Overrides / advanced defaults
+    n_envs = int(standing.get('n_envs', 8))
+    seed = int(standing.get('seed', 42))
+    total_timesteps = int(standing.get('total_timesteps', 2_000_000))
 
-    for key in ['save_freq', 'eval_freq', 'eval_episodes', 'seed', 'device', 'verbose']:
-        if key in general_config and key not in standing_config:
-            standing_config[key] = general_config[key]
+    # Enable curriculum & enhanced env options by default here
+    standing.setdefault('curriculum_start_stage', 0)
+    standing.setdefault('curriculum_max_stage', 3)
+    standing.setdefault('curriculum_advance_after', 10)
+    standing.setdefault('curriculum_success_rate', 0.7)
+    standing.setdefault('action_smoothing', True)
+    standing.setdefault('action_smoothing_tau', 0.2)
+    standing.setdefault('obs_include_com', True)
+    standing.setdefault('obs_feature_norm', True)
+    standing.setdefault('obs_history', 4)
 
-    standing_config['device'] = device
+    # Vectorized env
+    vec = make_env_fns(n_envs, seed, standing)
 
-    # Experiment naming
-    timestamp = datetime.now().strftime("%m%d_%H%M")
-    experiment_name = f"standing_colab_{timestamp}"
-    standing_config['log_dir'] = f"data/logs/{experiment_name}"
-    os.makedirs(standing_config['log_dir'], exist_ok=True)
+    # Normalization
+    vecnorm_path = standing.get('vecnormalize_path', 'models/saved_models/vecnorm.pkl')
+    env = VecNormalize(
+        vec,
+        norm_obs=True,
+        norm_reward=True,
+        clip_obs=10.0,
+        clip_reward=10.0,
+        gamma=standing.get('gamma', 0.995),
+    )
 
-    # Initialize WandB with enhanced configuration
-    use_wandb = standing_config.get('use_wandb', True)
-    if use_wandb:
-        wandb_run = wandb.init(
-            project=standing_config.get('wandb_project', 'humanoid-standing'),
-            entity=standing_config.get('wandb_entity'),
-            name=experiment_name,
-            config=standing_config,
-            tags=standing_config.get('wandb_tags', ['ppo', 'humanoid', 'standing']),
-            notes=standing_config.get('wandb_notes', ''),
-            sync_tensorboard=True,
-            monitor_gym=True,
-            save_code=True,
-        )
-        standing_config['wandb_run'] = wandb_run
-        
-        # ENHANCED: Define comprehensive W&B metrics
-        wandb.define_metric("global_step")
+    # Schedules
+    initial_lr = float(standing.get('learning_rate', 3e-4))
+    final_lr = float(standing.get('final_learning_rate', 1e-4))
+    lr_fn = lr_schedule(initial_lr, final_lr, total_timesteps)
 
-        # Training metrics
-        wandb.define_metric("train/episode_length", step_metric="global_step")
-        wandb.define_metric("train/episode_reward", step_metric="global_step")
-        wandb.define_metric("train/mean_height", step_metric="global_step")
-        wandb.define_metric("train/height_stability", step_metric="global_step")
-        wandb.define_metric("train/max_consecutive_in_range", step_metric="global_step")
-        wandb.define_metric("train/xy_drift", step_metric="global_step")
-        wandb.define_metric("train/action_magnitude_mean", step_metric="global_step")
-        wandb.define_metric("train/action_magnitude_max", step_metric="global_step")
-        wandb.define_metric("train/height_error", step_metric="global_step")
-        
-        # NEW: Reward component metrics
-        wandb.define_metric("train/reward_components/height_reward", step_metric="global_step")
-        wandb.define_metric("train/reward_components/upright_reward", step_metric="global_step")
-        wandb.define_metric("train/reward_components/stability_reward", step_metric="global_step")
-        wandb.define_metric("train/reward_components/smoothness_reward", step_metric="global_step")
-        wandb.define_metric("train/reward_components/control_cost", step_metric="global_step")
-        wandb.define_metric("train/reward_components/sustained_bonus", step_metric="global_step")
-        
-        # NEW: Policy metrics
-        wandb.define_metric("train/policy/learning_rate", step_metric="global_step")
-        wandb.define_metric("train/policy/policy_std_mean", step_metric="global_step")
-        wandb.define_metric("train/policy/policy_std_max", step_metric="global_step")
+    initial_clip = float(standing.get('clip_range', 0.2))
+    final_clip = float(standing.get('final_clip_range', 0.1))
+    clip_fn = clip_schedule(initial_clip, final_clip, total_timesteps)
 
-        # Evaluation metrics
-        wandb.define_metric("eval/episode_length", step_metric="global_step")
-        wandb.define_metric("eval/mean_reward", step_metric="global_step")
-        wandb.define_metric("eval/mean_height", step_metric="global_step")
-        wandb.define_metric("eval/height_stability", step_metric="global_step")
-        wandb.define_metric("eval/max_consecutive_in_range", step_metric="global_step")
-        wandb.define_metric("eval/xy_drift", step_metric="global_step")
-        wandb.define_metric("eval/action_magnitude_mean", step_metric="global_step")
-        wandb.define_metric("eval/action_magnitude_max", step_metric="global_step")
-        wandb.define_metric("eval/height_error", step_metric="global_step")
+    # Entropy coefficient - FIXED: Use initial value, schedule via callback
+    initial_ent = float(standing.get('ent_coef', 0.05))
+    final_ent = float(standing.get('final_ent_coef', 0.01))
 
-        # Summary tracking for best values
-        wandb.run.summary.update({
-            "best_episode_length": 0,
-            "best_height_stability": float('inf'),
-            "best_max_consecutive": 0,
-            "best_height_error": float('inf'),
-        })
-        
-        print(f"WandB initialized with video logging every {standing_config.get('video_freq'):,} timesteps")
-    else:
-        standing_config['wandb_run'] = None
+    # Policy/net arch
+    policy_kwargs = standing.get('policy_kwargs', {
+        'net_arch': [dict(pi=[512, 512, 256], vf=[512, 512, 256])],
+        'activation_fn': 'SiLU',
+        'ortho_init': True,
+    })
 
-    print(f"Experiment: {experiment_name}")
-    print(f"Device: {device}")
-    print(f"Timesteps: {standing_config['total_timesteps']:,}")
-    print(f"Learning Rate: {standing_config['learning_rate']}")
-    print(f"Architecture: {standing_config['policy_kwargs']['net_arch']}")
-    print(f"Log dir: {standing_config['log_dir']}")
-    print(f"Estimated training time: {standing_config['total_timesteps'] / standing_config.get('n_envs', 4) / 400:.1f} minutes")
-    if use_wandb:
-        print(f"WandB run: {wandb.run.url if wandb.run else 'N/A'}")
+    # Convert activation if needed
+    import torch.nn as nn
+    act_map = {"relu":"ReLU","tanh":"Tanh","sigmoid":"Sigmoid","elu":"ELU","gelu":"GELU","leakyrelu":"LeakyReLU","silu":"SiLU","mish":"Mish"}
+    if isinstance(policy_kwargs.get('activation_fn'), str):
+        act = policy_kwargs['activation_fn'].lower()
+        policy_kwargs['activation_fn'] = getattr(nn, act_map.get(act, 'ReLU'))
 
+    # PPO model
+    model = PPO(
+        policy='MlpPolicy',
+        env=env,
+        learning_rate=lr_fn,
+        n_steps=int(standing.get('n_steps', 2048)),
+        batch_size=int(standing.get('batch_size', 256)),
+        n_epochs=int(standing.get('n_epochs', 10)),
+        gamma=float(standing.get('gamma', 0.995)),
+        gae_lambda=float(standing.get('gae_lambda', 0.95)),
+        clip_range=clip_fn,
+        ent_coef=initial_ent,  # FIXED: Use float, not schedule function
+        vf_coef=float(standing.get('vf_coef', 0.5)),
+        max_grad_norm=float(standing.get('max_grad_norm', 0.5)),
+        policy_kwargs=policy_kwargs,
+        seed=seed,
+        verbose=int(standing.get('verbose', 1)),
+        device=standing.get('device', 'cuda' if torch.cuda.is_available() else 'cpu'),
+    )
+
+    # Callbacks: entropy schedule + diagnostics + periodic vecnorm save
+    class SaveVecNormCallback(DiagnosticsCallback):
+        def __init__(self, path: str, freq: int = 100_000):
+            super().__init__(log_freq=freq, verbose=1)
+            self.path = path
+            self.freq = int(freq)
+
+        def _on_step(self) -> bool:
+            ok = super()._on_step()
+            if self.freq > 0 and (self.num_timesteps % self.freq == 0):
+                try:
+                    self.model.get_env().save(self.path)
+                    print(f" VecNormalize saved: {self.path}")
+                except Exception as e:
+                    print(f"VecNormalize save failed: {e}")
+            return ok
+
+    callbacks = CallbackList([
+        EntropyScheduleCallback(initial_ent, final_ent, total_timesteps, verbose=1),
+        SaveVecNormCallback(vecnorm_path, freq=int(standing.get('save_freq', 100_000)))
+    ])
+
+    # Train
+    print(f"Starting standing training for {total_timesteps:,} timesteps (n_envs={n_envs})...")
+    print(f"Entropy coefficient will decay from {initial_ent} to {final_ent}")
+    model.learn(total_timesteps=total_timesteps, callback=callbacks)
+
+    # Save final model + vecnorm
+    os.makedirs('models/saved_models', exist_ok=True)
+    final_path = standing.get('final_model_path', 'models/saved_models/final_standing_model')
+    model.save(final_path)
+    print(f" Final model saved: {final_path}.zip")
     try:
-        # Create and train agent
-        agent = StandingAgent(standing_config)
-        model = agent.train()
-
-        # Verify files were saved correctly
-        print("\n=== Verifying Saved Files ===")
-        import os.path as osp
-
-        files_to_check = [
-            "models/saved_models/best_standing_model.zip",
-            "models/saved_models/final_standing_model.zip", 
-            "models/saved_models/vecnorm.pkl"
-        ]
-
-        for filepath in files_to_check:
-            if osp.exists(filepath):
-                size = osp.getsize(filepath)
-                print(f"✓ {filepath} ({size:,} bytes)")
-                if 'vecnorm' in filepath and size < 100:
-                    print(f"  ⚠️  WARNING: VecNormalize file suspiciously small!")
-            else:
-                print(f"✗ {filepath} NOT FOUND")
-
-
-        # Extended evaluation for standing task
-        results = agent.evaluate(n_episodes=10, render=False)
-
-        # Check if standing was successfully learned
-        success_criteria = {
-            'reward': results.get('mean_reward') > standing_config.get('target_reward_threshold'),
-            'height_error': results.get('height_error', float('inf')) < standing_config.get('height_error_threshold'),
-            'height_stability': results.get('height_stability', float('inf')) < standing_config.get('height_stability_threshold'),
-        }
-        
-        standing_success = all(success_criteria.values())
-        
-        print(f"\n=== Standing Learning Assessment ===")
-        print(f"Mean Reward: {results.get('mean_reward'):.2f} (threshold: {standing_config.get('target_reward_threshold')}) {'✓' if success_criteria['reward'] else '✗'}")
-        if 'height_error' in results:
-            print(f"Height Error: {results['height_error']:.3f} (threshold: {standing_config.get('height_error_threshold')}) {'✓' if success_criteria['height_error'] else '✗'}")
-            print(f"Height Stability: {results['height_stability']:.3f} (threshold: {standing_config.get('height_stability_threshold')}) {'✓' if success_criteria['height_stability'] else '✗'}")
-        print(f"Overall Standing Success: {'✓ PASSED' if standing_success else '✗ NEEDS MORE TRAINING'}")
-
-            
-        # Save model to wandb (use config paths)
-        if use_wandb and wandb.run:
-            best_path = standing_config.get('best_model_path', 'models/standing_model/best_standing_model')
-            final_path = standing_config.get('final_model_path', 'models/standing_model/final_standing_model')
-            wandb.save(f"{best_path}.zip")
-            wandb.save(f"{final_path}.zip")
-
-        # Save final eval results
-        results_path = f"{standing_config['log_dir']}/final_results.txt"
-        with open(results_path, 'w') as f:
-            f.write(f"Standing Training Results\n")
-            f.write(f"========================\n")
-            f.write(f"Experiment: {experiment_name}\n")
-            f.write(f"Timestamp: {datetime.now().isoformat()}\n")
-            f.write(f"Standing Success: {standing_success}\n\n")
-            f.write(f"Performance Metrics:\n")
-            f.write(f"  Mean Reward: {results['mean_reward']:.2f} ± {results['std_reward']:.2f}\n")
-            f.write(f"  Mean Length: {results['mean_length']:.2f} ± {results['std_length']:.2f}\n")
-            if 'mean_height' in results:
-                f.write(f"  Mean Height: {results['mean_height']:.3f} ± {results['std_height']:.3f}\n")
-                f.write(f"  Height Error: {results['height_error']:.3f} (target: 1.300)\n")
-                f.write(f"  Height Stability: {results['height_stability']:.3f}\n")
-            f.write(f"\nConfiguration: {standing_config}\n")
-        print(f"Results saved to: {results_path}")
-
-        print("\nModel files:")
-        print("  Best model: models/saved_models/best_standing_model.zip")
-        print("  Final model: models/saved_models/final_standing_model.zip")
-
-    except KeyboardInterrupt:
-        print("\nTraining interrupted!")
-        if 'agent' in locals() and hasattr(agent, 'model') and agent.model is not None:
-            interrupted_path = f"models/saved_models/interrupted_standing_{timestamp}.zip"
-            agent.model.save(interrupted_path)
-            print(f"Progress saved to: {interrupted_path}")
-            if use_wandb and wandb.run:
-                wandb.save(interrupted_path)
-
-    finally:
-        if 'agent' in locals():
-            agent.close()
-        if use_wandb and wandb.run:
-            wandb.finish()
-        print("Cleanup complete.") 
-
-    # Upload training logs and data
-    if use_wandb and wandb.run:
-        # Upload log directory
-        for root, dirs, files in os.walk(standing_config['log_dir']):
-            for file in files:
-                if file.endswith(('.csv', '.txt', '.json')):
-                    wandb.save(os.path.join(root, file))
-
-def quick_test():
-    """Quick environment test"""
-    from src.environments.standing_env import test_environment
-    test_environment()
-
-def evaluate_standing_model(model_path, render=False):
-    """Evaluate a trained standing model"""
-    config = load_config()
-    standing_config = config['standing'].copy()
-    standing_config['device'] = 'cuda' if torch.cuda.is_available() else 'cpu'
-    
-    agent = StandingAgent(standing_config)
-    agent.load_model(model_path)
-    results = agent.evaluate(n_episodes=10, render=render)
-    
-    print("\n=== Model Evaluation Results ===")
-    print(f"Mean Reward: {results['mean_reward']:.2f}")
-    if 'height_error' in results:
-        print(f"Height Error: {results['height_error']:.3f}")
-        print(f"Height Stability: {results['height_stability']:.3f}")
-    
-    agent.close()
-    return results
+        env.save(vecnorm_path)
+        print(f" VecNormalize saved: {vecnorm_path}")
+    except Exception as e:
+        print(f"VecNormalize save failed: {e}")
 
 
 if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Train or test humanoid standing")
-    parser.add_argument("--test", action="store_true", help="Run quick environment test")
-    parser.add_argument("--eval", type=str, help="Evaluate model at path")
-    parser.add_argument("--render", action="store_true", help="Render during evaluation")
-    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
-    
-    args = parser.parse_args()
-    
-    if args.test:
-        quick_test()
-    elif args.eval:
-        evaluate_standing_model(args.eval, render=args.render)
-    elif args.resume:
-        print("=== Resuming Humanoid Standing Training ===")
-        device = setup_colab_environment()
-        config = load_config()
-        standing_config = config.get('standing', {}).copy()
-        general_config = config.get('general', {})
-        
-        for key in ['save_freq', 'eval_freq', 'eval_episodes', 'seed', 'device', 'verbose']:
-            if key in general_config and key not in standing_config:
-                standing_config[key] = general_config[key]
-        
-        standing_config['device'] = device
-        
-        # Create agent (this creates the environment)
-        agent = StandingAgent(standing_config)
-        
-        # CRITICAL: Create environment BEFORE loading model
-        agent.create_environment()
-        
-        # Load VecNormalize stats FIRST (before loading model)
-        vecnorm_path = standing_config.get('vecnormalize_path')
-        if os.path.exists(vecnorm_path):
-            print(f"Loading VecNormalize stats from: {vecnorm_path}")
-            from stable_baselines3.common.vec_env import VecNormalize
-            agent.env = VecNormalize.load(vecnorm_path, agent.env.venv)
-            agent.env.training = True  # Set back to training mode
-        
-        # NOW load the model with the environment
-        print(f"Loading checkpoint: {args.resume}")
-        agent.model = PPO.load(args.resume, env=agent.env, device=standing_config['device'])
-        
-        # Re-init WandB if enabled
-        if standing_config.get('use_wandb', True):
-            timestamp = datetime.now().strftime("%m%d_%H%M")
-            exp_name = f"standing_resume_{timestamp}"
-            wandb_run = wandb.init(
-                project=standing_config.get('wandb_project', 'humanoid-standing'),
-                name=exp_name,
-                config=standing_config,
-                dir=standing_config.get('log_dir', "data/logs"),
-                resume="allow"
-            )
-            standing_config['wandb_run'] = wandb_run
-        
-        # Continue training (reset_num_timesteps=False to continue counting)
-        print(f"Resuming training for {standing_config['total_timesteps']:,} more timesteps...")
-        agent.train(total_timesteps=standing_config['total_timesteps'])
-        
-        agent.close()
-        if 'wandb_run' in locals() and wandb.run:
-            wandb.finish()
-        print("Resume training complete.")
-    else:
-        main()
+    main()

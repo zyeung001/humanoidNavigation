@@ -50,11 +50,11 @@ def verify_standing(model_path="models/saved_models/best_standing_model.zip"):
     
     print(f"\n{'='*60}")
     if step_count >= 5000:
-        print("✅ SUCCESS: Model can stand for 5000+ steps!")
+        print(" SUCCESS: Model can stand for 5000+ steps!")
     elif step_count >= 1000:
-        print("⚠️ PARTIAL: Model stands for 1000+ steps but needs more training")
+        print(" PARTIAL: Model stands for 1000+ steps but needs more training")
     else:
-        print("❌ FAILURE: Model falls too quickly, needs different approach")
+        print(" FAILURE: Model falls too quickly, needs different approach")
     print(f"Total steps stood: {step_count}")
     print(f"Average height error: {np.mean(height_errors):.3f}")
     print(f"Height stability (std): {np.std(height_errors):.3f}")
