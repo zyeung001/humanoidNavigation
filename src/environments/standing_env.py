@@ -356,16 +356,17 @@ class StandingEnv(gym.Wrapper):
             # Stack all history
             feat_vec = np.concatenate(padded, axis=0)
 
-        if feat_vec.shape[0] != self.frozen_obs_dim:
-            # This should never happen if logic is correct, but safeguard anyway
-            if feat_vec.shape[0] < self.frozen_obs_dim:
+        current_dim = feat_vec.shape[0]
+        if current_dim != self.frozen_obs_dim:
+            # safeguard
+            if current_dim < self.frozen_obs_dim:
                 # Pad with zeros
-                pad = np.zeros((self.frozen_obs_dim - feat_vec.shape[0],), dtype=np.float32)
+                pad = np.zeros((self.frozen_obs_dim - current_dim,), dtype=np.float32)
                 feat_vec = np.concatenate([feat_vec, pad], axis=0)
-            else:
+            elif current_dim > self.frozen_obs_dim:
                 # Truncate (shouldn't happen)
+                print(f"WARNING: Had to truncate observation from {current_dim} to {self.frozen_obs_dim}")
                 feat_vec = feat_vec[:self.frozen_obs_dim]
-                print(f"WARNING: Had to truncate observation from {len(feat_vec)} to {self.frozen_obs_dim}")
 
         return feat_vec
         

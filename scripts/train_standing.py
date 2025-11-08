@@ -1,12 +1,10 @@
-
-
 # train_standing.py
-
 
 import os
 import sys
 import warnings
 from datetime import datetime
+import argparse
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -98,13 +96,19 @@ class EntropyScheduleCallback(BaseCallback):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model', type=str, default=None, help='Path to load model from (without .zip)')
+    parser.add_argument('--vecnorm', type=str, default=None, help='Path to load VecNormalize from')
+    parser.add_argument('--timesteps', type=int, default=None, help='Total timesteps for training (final total)')
+    args = parser.parse_args()
+
     cfg = load_yaml('config/training_config.yaml')
     standing = cfg.get('standing', {}).copy()
 
     # Overrides / advanced defaults
     n_envs = int(standing.get('n_envs', 8))
     seed = int(standing.get('seed', 42))
-    total_timesteps = int(standing.get('total_timesteps', 2_000_000))
+    total_timesteps = int(standing.get('total_timesteps', 2_000_000)) if args.timesteps is None else args.timesteps
 
     # Enable curriculum & enhanced env options by default here
     standing.setdefault('curriculum_start_stage', 0)
@@ -121,15 +125,20 @@ def main():
     vec = make_env_fns(n_envs, seed, standing)
 
     # Normalization
-    vecnorm_path = standing.get('vecnormalize_path', 'models/saved_models/vecnorm.pkl')
-    env = VecNormalize(
-        vec,
-        norm_obs=True,
-        norm_reward=True,
-        clip_obs=10.0,
-        clip_reward=10.0,
-        gamma=standing.get('gamma', 0.995),
-    )
+    vecnorm_path = standing.get('vecnormalize_path', 'vecnorm.pkl')
+    env_load_path = args.vecnorm if args.vecnorm else None
+
+    if env_load_path:
+        env = VecNormalize.load(env_load_path, vec)
+    else:
+        env = VecNormalize(
+            vec,
+            norm_obs=True,
+            norm_reward=True,
+            clip_obs=10.0,
+            clip_reward=10.0,
+            gamma=standing.get('gamma', 0.995),
+        )
 
     # Schedules
     initial_lr = float(standing.get('learning_rate', 3e-4))
@@ -158,25 +167,37 @@ def main():
         act = policy_kwargs['activation_fn'].lower()
         policy_kwargs['activation_fn'] = getattr(nn, act_map.get(act, 'ReLU'))
 
-    # PPO model
-    model = PPO(
-        policy='MlpPolicy',
-        env=env,
-        learning_rate=lr_fn,
-        n_steps=int(standing.get('n_steps', 2048)),
-        batch_size=int(standing.get('batch_size', 256)),
-        n_epochs=int(standing.get('n_epochs', 10)),
-        gamma=float(standing.get('gamma', 0.995)),
-        gae_lambda=float(standing.get('gae_lambda', 0.95)),
-        clip_range=clip_fn,
-        ent_coef=initial_ent,  # FIXED: Use float, not schedule function
-        vf_coef=float(standing.get('vf_coef', 0.5)),
-        max_grad_norm=float(standing.get('max_grad_norm', 0.5)),
-        policy_kwargs=policy_kwargs,
-        seed=seed,
-        verbose=int(standing.get('verbose', 1)),
-        device=standing.get('device', 'cuda' if torch.cuda.is_available() else 'cpu'),
-    )
+    resume = args.model is not None
+    device = standing.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
+
+    if resume:
+        model = PPO.load(args.model, env=env, device=device)
+        model.learning_rate = lr_fn
+        model.clip_range = clip_fn
+        learn_timesteps = total_timesteps
+        reset_num_timesteps = False
+        print(f"Resuming from model at {args.model} with {model.num_timesteps:,} timesteps already trained.")
+    else:
+        model = PPO(
+            policy='MlpPolicy',
+            env=env,
+            learning_rate=lr_fn,
+            n_steps=int(standing.get('n_steps', 2048)),
+            batch_size=int(standing.get('batch_size', 256)),
+            n_epochs=int(standing.get('n_epochs', 10)),
+            gamma=float(standing.get('gamma', 0.995)),
+            gae_lambda=float(standing.get('gae_lambda', 0.95)),
+            clip_range=clip_fn,
+            ent_coef=initial_ent,  # FIXED: Use float, not schedule function
+            vf_coef=float(standing.get('vf_coef', 0.5)),
+            max_grad_norm=float(standing.get('max_grad_norm', 0.5)),
+            policy_kwargs=policy_kwargs,
+            seed=seed,
+            verbose=int(standing.get('verbose', 1)),
+            device=device,
+        )
+        learn_timesteps = total_timesteps
+        reset_num_timesteps = True
 
     # Callbacks: entropy schedule + diagnostics + periodic vecnorm save
     class SaveVecNormCallback(DiagnosticsCallback):
@@ -196,18 +217,18 @@ def main():
             return ok
 
     callbacks = CallbackList([
-        EntropyScheduleCallback(initial_ent, final_ent, total_timesteps, verbose=1),
+        EntropyScheduleCallback(initial_ent, final_ent, learn_timesteps, verbose=1),
         SaveVecNormCallback(vecnorm_path, freq=int(standing.get('save_freq', 100_000)))
     ])
 
     # Train
-    print(f"Starting standing training for {total_timesteps:,} timesteps (n_envs={n_envs})...")
+    print(f"Starting standing training for {learn_timesteps:,} timesteps (n_envs={n_envs})...")
     print(f"Entropy coefficient will decay from {initial_ent} to {final_ent}")
-    model.learn(total_timesteps=total_timesteps, callback=callbacks)
+    model.learn(total_timesteps=learn_timesteps, callback=callbacks, reset_num_timesteps=reset_num_timesteps)
 
     # Save final model + vecnorm
     os.makedirs('models/saved_models', exist_ok=True)
-    final_path = standing.get('final_model_path', 'models/saved_models/final_standing_model')
+    final_path = standing.get('final_model_path', 'final_standing_model')
     model.save(final_path)
     print(f" Final model saved: {final_path}.zip")
     try:
