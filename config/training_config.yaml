@@ -59,11 +59,11 @@ standing:
   video_max_steps: 500
   episode_print_freq: 1000
   
-  final_model_path: "models/saved_models/final_standing_model"
-  vecnormalize_path: "models/saved_models/vecnorm.pkl"
+  final_model_path: "models/final_standing_model"
+  vecnormalize_path: "models/vecnorm.pkl"
   checkpoint_dir: "data/checkpoints"
   checkpoint_prefix: "checkpoint"
-  best_model_path: "models/saved_models/best_standing_model"
+  best_model_path: "models/best_standing_model"
 
   max_episode_steps: 5000
 
