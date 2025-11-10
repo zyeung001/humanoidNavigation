@@ -100,6 +100,7 @@ def main():
     parser.add_argument('--model', type=str, default=None, help='Path to load model from (without .zip)')
     parser.add_argument('--vecnorm', type=str, default=None, help='Path to load VecNormalize from')
     parser.add_argument('--timesteps', type=int, default=None, help='Total timesteps for training (final total)')
+    parser.add_argument('--reset-vecnorm', action='store_true', help='Reset VecNormalize statistics (fresh start)')
     args = parser.parse_args()
 
     cfg = load_yaml('config/training_config.yaml')
@@ -124,13 +125,30 @@ def main():
     # Vectorized env
     vec = make_env_fns(n_envs, seed, standing)
 
-    # Normalization
+    # Normalization path
     vecnorm_path = standing.get('vecnormalize_path', 'vecnorm.pkl')
-    env_load_path = args.vecnorm if args.vecnorm else None
+    env_load_path = args.vecnorm if args.vecnorm else vecnorm_path
 
-    if env_load_path:
-        env = VecNormalize.load(env_load_path, vec)
-    else:
+    # FIXED: Better VecNormalize loading logic with error handling
+    env = None
+    vecnorm_loaded = False
+    
+    if not args.reset_vecnorm and os.path.exists(env_load_path):
+        try:
+            print(f"Attempting to load VecNormalize from: {env_load_path}")
+            env = VecNormalize.load(env_load_path, vec)
+            vecnorm_loaded = True
+            print(f"✓ Successfully loaded VecNormalize statistics")
+            print(f"  - Mean: {env.obs_rms.mean[:5]}...")
+            print(f"  - Var: {env.obs_rms.var[:5]}...")
+        except Exception as e:
+            print(f"✗ Failed to load VecNormalize: {e}")
+            print(f"  Creating fresh VecNormalize wrapper instead...")
+            env = None
+    
+    if env is None:
+        # Create fresh VecNormalize
+        print(f"Creating new VecNormalize wrapper")
         env = VecNormalize(
             vec,
             norm_obs=True,
@@ -139,6 +157,7 @@ def main():
             clip_reward=10.0,
             gamma=standing.get('gamma', 0.995),
         )
+        vecnorm_loaded = False
 
     # Schedules
     initial_lr = float(standing.get('learning_rate', 3e-4))
@@ -149,7 +168,7 @@ def main():
     final_clip = float(standing.get('final_clip_range', 0.1))
     clip_fn = clip_schedule(initial_clip, final_clip, total_timesteps)
 
-    # Entropy coefficient - FIXED: Use initial value, schedule via callback
+    # Entropy coefficient
     initial_ent = float(standing.get('ent_coef', 0.05))
     final_ent = float(standing.get('final_ent_coef', 0.01))
 
@@ -171,13 +190,35 @@ def main():
     device = standing.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
 
     if resume:
-        model = PPO.load(args.model, env=env, device=device)
-        model.learning_rate = lr_fn
-        model.clip_range = clip_fn
-        learn_timesteps = total_timesteps
-        reset_num_timesteps = False
-        print(f"Resuming from model at {args.model} with {model.num_timesteps:,} timesteps already trained.")
-    else:
+        # FIXED: Better model loading with error handling
+        try:
+            print(f"Loading model from: {args.model}")
+            model = PPO.load(args.model, env=env, device=device)
+            
+            # Update schedules for continued training
+            model.learning_rate = lr_fn
+            model.clip_range = clip_fn
+            
+            current_timesteps = model.num_timesteps
+            remaining_timesteps = total_timesteps - current_timesteps
+            
+            if remaining_timesteps <= 0:
+                print(f"✗ Model already trained for {current_timesteps:,} steps (target: {total_timesteps:,})")
+                print(f"  To continue training, specify --timesteps with a value > {current_timesteps:,}")
+                return
+            
+            learn_timesteps = remaining_timesteps
+            reset_num_timesteps = False
+            
+            print(f"✓ Resuming from model with {current_timesteps:,} timesteps already trained")
+            print(f"  Will train for {remaining_timesteps:,} more steps to reach {total_timesteps:,} total")
+            
+        except Exception as e:
+            print(f"✗ Failed to load model: {e}")
+            print(f"  Starting fresh training instead...")
+            resume = False
+    
+    if not resume:
         model = PPO(
             policy='MlpPolicy',
             env=env,
@@ -188,7 +229,7 @@ def main():
             gamma=float(standing.get('gamma', 0.995)),
             gae_lambda=float(standing.get('gae_lambda', 0.95)),
             clip_range=clip_fn,
-            ent_coef=initial_ent,  # FIXED: Use float, not schedule function
+            ent_coef=initial_ent, 
             vf_coef=float(standing.get('vf_coef', 0.5)),
             max_grad_norm=float(standing.get('max_grad_norm', 0.5)),
             policy_kwargs=policy_kwargs,
@@ -211,9 +252,9 @@ def main():
             if self.freq > 0 and (self.num_timesteps % self.freq == 0):
                 try:
                     self.model.get_env().save(self.path)
-                    print(f" VecNormalize saved: {self.path}")
+                    print(f"✓ VecNormalize saved: {self.path}")
                 except Exception as e:
-                    print(f"VecNormalize save failed: {e}")
+                    print(f"✗ VecNormalize save failed: {e}")
             return ok
 
     callbacks = CallbackList([
@@ -222,20 +263,29 @@ def main():
     ])
 
     # Train
-    print(f"Starting standing training for {learn_timesteps:,} timesteps (n_envs={n_envs})...")
-    print(f"Entropy coefficient will decay from {initial_ent} to {final_ent}")
+    print(f"\n{'='*60}")
+    print(f"Starting standing training:")
+    print(f"  Mode: {'RESUME' if resume else 'FRESH START'}")
+    print(f"  Training steps: {learn_timesteps:,}")
+    print(f"  Target total: {total_timesteps:,}")
+    print(f"  Environments: {n_envs}")
+    print(f"  Device: {device}")
+    print(f"  VecNormalize: {'LOADED' if vecnorm_loaded else 'NEW'}")
+    print(f"{'='*60}\n")
+    
     model.learn(total_timesteps=learn_timesteps, callback=callbacks, reset_num_timesteps=reset_num_timesteps)
 
     # Save final model + vecnorm
     os.makedirs('models/saved_models', exist_ok=True)
     final_path = standing.get('final_model_path', 'final_standing_model')
     model.save(final_path)
-    print(f" Final model saved: {final_path}.zip")
+    print(f"✓ Final model saved: {final_path}.zip")
+    
     try:
         env.save(vecnorm_path)
-        print(f" VecNormalize saved: {vecnorm_path}")
+        print(f"✓ VecNormalize saved: {vecnorm_path}")
     except Exception as e:
-        print(f"VecNormalize save failed: {e}")
+        print(f"✗ VecNormalize save failed: {e}")
 
 
 if __name__ == "__main__":
