@@ -1,5 +1,3 @@
-
-
 # standing_env.py
 
 import gymnasium as gym
@@ -11,19 +9,18 @@ from gymnasium.spaces import Box
 class StandingEnv(gym.Wrapper):
     """Wrapper for MuJoCo Humanoid environment optimized for standing task
 
-    CRITICAL FIX: Observation dimension is now frozen at initialization,
-    preventing VecNormalize statistics corruption.
+    CRITICAL FIX: Observation dimension calculation now accounts for actual base observation size.
     """
     
     def __init__(self, render_mode: Optional[str] = None, config=None):
         env_id = "Humanoid-v5"
         print(f"Using {env_id} for standing task")
         
-       
+        # Create base environment
         env = gym.make(
             env_id, 
             render_mode=render_mode,
-            exclude_current_positions_from_observation=False  
+            exclude_current_positions_from_observation=False  # Includes x,y position
         )
         super().__init__(env)
         
@@ -59,8 +56,10 @@ class StandingEnv(gym.Wrapper):
         self.include_com = bool(self.cfg.get('obs_include_com', False))
         self.feature_norm = bool(self.cfg.get('obs_feature_norm', False))
         
-        # ========== Calculate final observation dimension at init ==========
-        base_obs_dim = int(env.observation_space.shape[0])
+        # ========== FIXED: Calculate observation dimension correctly ==========
+        # Get ACTUAL base observation size from environment
+        dummy_obs, _ = env.reset()
+        base_obs_dim = int(dummy_obs.shape[0])  # This is the TRUE dimension (376 for Humanoid-v5)
         
         # Calculate dimension after all processing steps
         extra_dim = 6 if self.include_com else 0  # COM pos (3) + COM vel (3)
@@ -120,7 +119,7 @@ class StandingEnv(gym.Wrapper):
                 size=self.env.unwrapped.model.geom_friction.shape[0]
             )
         
-        # CRITICAL FIX: Process observation with guaranteed dimension
+        # Process observation with guaranteed dimension
         if self.enable_history or self.include_com or self.feature_norm:
             observation = self._process_observation(observation)
             
@@ -164,8 +163,6 @@ class StandingEnv(gym.Wrapper):
         return observation, reward, terminated, truncated, info
         
     def _compute_task_reward(self, obs, base_reward, info, action):
-
-        
         # ========== STATE EXTRACTION ==========
         height = self.env.unwrapped.data.qpos[2]
         root_x, root_y = self.env.unwrapped.data.qpos[0:2]
@@ -180,15 +177,11 @@ class StandingEnv(gym.Wrapper):
         height_error = abs(height - target_height)
         
         # ========== CORE REWARD: ASYMMETRIC HEIGHT REWARD ==========
-        # This is THE KEY FIX - make low heights extremely unappealing
-        
-        # CRITICAL: Penalize low heights HARD to escape crouching local optimum
         if height < 1.0:
             # EXTREME penalty for crouching: -100 to -20 points
             height_reward = -100.0 + 80.0 * np.clip(height / 1.0, 0.0, 1.0)
         elif height < 1.2:
             # Still penalize for being too low: -10 to +10 points
-            # Create gradient forcing agent upward
             height_reward = -10.0 + 20.0 * (height - 1.0) / 0.2
         elif height < 1.35:
             # Moderate reward for decent height: +10 to +50 points
@@ -204,20 +197,15 @@ class StandingEnv(gym.Wrapper):
             height_reward = 80.0 - 30.0 * np.clip((height - 1.6) / 0.2, 0.0, 1.0)
         
         # ========== UPRIGHT ORIENTATION REWARD ==========
-        # Only reward upright IF already at decent height
         upright_error = 1.0 - abs(quat[0])
         if height >= 1.2:
-            # Full reward when tall enough
             upright_reward = 25.0 * np.exp(-8.0 * upright_error**2)
         elif height >= 1.0:
-            # Reduced reward when somewhat low
             upright_reward = 15.0 * np.exp(-8.0 * upright_error**2)
         else:
-            # No upright reward when crouching
             upright_reward = 0.0
         
         # ========== STABILITY REWARD ==========
-        # Only reward stability when at correct height
         angular_momentum = np.sum(np.square(angular_vel))
         if height >= 1.3:
             stability_reward = 15.0 * np.exp(-2.0 * angular_momentum)
@@ -233,7 +221,6 @@ class StandingEnv(gym.Wrapper):
         smoothness_reward = 5.0 * np.exp(-0.1 * joint_velocity_magnitude)
         
         # ========== CONTROL COST ==========
-        # Reduced penalty to not discourage exploration
         control_cost = -0.2 * np.sum(np.square(action))
         
         # ========== VELOCITY PENALTY ==========
@@ -241,28 +228,27 @@ class StandingEnv(gym.Wrapper):
         velocity_penalty = -0.5 * np.clip(speed - 1.0, 0.0, 2.0)
         
         # ========== SPARSE BONUS ==========
-        # Huge bonus ONLY for sustained good standing
         sustained_bonus = 0.0
         if self.current_step > 0 and self.current_step % 100 == 0:
             if height_error < 0.10 and upright_error < 0.08 and height >= 1.3:
-                sustained_bonus = 200.0  # ENORMOUS bonus for sustained target performance
+                sustained_bonus = 200.0
         
         # ========== TOTAL REWARD ==========
         total_reward = (
-            height_reward +          # THE DOMINANT term (-100 to +100)
-            upright_reward +         # +0 to +25 (conditional)
-            stability_reward +       # +0 to +15 (conditional)
-            smoothness_reward +      # +0 to +5
-            control_cost +           # -4 to 0 (small)
-            velocity_penalty +       # 0 to -1 (small)
-            sustained_bonus          # 0 or +200 (rare)
+            height_reward +
+            upright_reward +
+            stability_reward +
+            smoothness_reward +
+            control_cost +
+            velocity_penalty +
+            sustained_bonus
         )
         
         # ========== TERMINATION CONDITIONS ==========
         terminate = (
-            height < 0.75 or         # Below 0.75m = fallen
-            height > 2.0 or          # Unrealistic height
-            abs(quat[0]) < 0.6       # Torso > 53 degrees
+            height < 0.75 or
+            height > 2.0 or
+            abs(quat[0]) < 0.6
         )
         
         # ========== TRACK REWARD COMPONENTS ==========
@@ -286,9 +272,7 @@ class StandingEnv(gym.Wrapper):
 
     def _process_action(self, action: np.ndarray) -> np.ndarray:
         """Process actions with optional smoothing, symmetry, and PD control."""
-        # Symmetry constraint (optional): average symmetric joints if configured
         if self.enable_action_symmetry:
-            # Generic symmetry: pair even/odd indices
             half = action.shape[-1] // 2
             if half > 0:
                 left = action[:half]
@@ -297,34 +281,32 @@ class StandingEnv(gym.Wrapper):
                 action[:half] = mean_lr
                 action[-half:] = mean_lr
 
-        # PD assist (optional): small stabilizing term towards zero position
         if self.enable_pd_assist and (self.pd_kp > 0.0 or self.pd_kd > 0.0):
             try:
-                qpos = self.env.unwrapped.data.qpos[7:7+action.shape[-1]]  # skip root
+                qpos = self.env.unwrapped.data.qpos[7:7+action.shape[-1]]
                 qvel = self.env.unwrapped.data.qvel[6:6+action.shape[-1]]
                 pd = (-self.pd_kp * qpos) + (-self.pd_kd * qvel)
                 action = np.clip(action + pd, -1.0, 1.0)
             except Exception:
                 pass
 
-        # Low-pass smoothing (optional)
         if self.enable_action_smoothing:
             tau = np.clip(self.action_smoothing_tau, 0.0, 1.0)
             action = (1.0 - tau) * self.prev_action + tau * action
 
-        # Clip to action space
         low, high = self.env.action_space.low, self.env.action_space.high
         action = np.clip(action, low, high)
         self.prev_action = action.copy()
         return action
 
     def _process_observation(self, obs: np.ndarray) -> np.ndarray:
+        """Process observation with correct dimension handling."""
         features = [obs]
 
         # Add COM features if enabled
         if self.include_com:
             try:
-                com_pos = self.env.unwrapped.data.subtree_com[0]  # root subtree COM
+                com_pos = self.env.unwrapped.data.subtree_com[0]
                 com_vel = self.env.unwrapped.data.cdof_dot[:3] if hasattr(self.env.unwrapped.data, 'cdof_dot') else self.env.unwrapped.data.qvel[:3]
                 features.append(np.asarray(com_pos, dtype=np.float32))
                 features.append(np.asarray(com_vel, dtype=np.float32))
@@ -334,39 +316,34 @@ class StandingEnv(gym.Wrapper):
         # Concatenate base + COM features
         feat_vec = np.concatenate([np.atleast_1d(f).ravel() for f in features]).astype(np.float32)
 
-        # Feature normalization (simple running scale-free tanh)
+        # Feature normalization
         if self.feature_norm:
             feat_vec = np.tanh(feat_vec * 0.1)
 
-        # History stacking (k previous obs)
+        # History stacking
         if self.enable_history:
             self.obs_history.append(feat_vec)
             
-            # Keep only last history_len observations
             if len(self.obs_history) > self.history_len:
                 self.obs_history = self.obs_history[-self.history_len:]
             
-            # Pad with zeros if not enough history yet
             if len(self.obs_history) < self.history_len:
                 pad_count = self.history_len - len(self.obs_history)
                 padded = [np.zeros_like(feat_vec) for _ in range(pad_count)] + self.obs_history
             else:
                 padded = self.obs_history
             
-            # Stack all history
             feat_vec = np.concatenate(padded, axis=0)
 
+        # REMOVED: No more dimension correction - should match exactly
         current_dim = feat_vec.shape[0]
         if current_dim != self.frozen_obs_dim:
-            # safeguard
-            if current_dim < self.frozen_obs_dim:
-                # Pad with zeros
-                pad = np.zeros((self.frozen_obs_dim - current_dim,), dtype=np.float32)
-                feat_vec = np.concatenate([feat_vec, pad], axis=0)
-            elif current_dim > self.frozen_obs_dim:
-                # Truncate (shouldn't happen)
-                print(f"WARNING: Had to truncate observation from {current_dim} to {self.frozen_obs_dim}")
-                feat_vec = feat_vec[:self.frozen_obs_dim]
+            raise RuntimeError(
+                f"CRITICAL: Observation dimension mismatch!\n"
+                f"  Expected: {self.frozen_obs_dim}\n"
+                f"  Got: {current_dim}\n"
+                f"  This should never happen with correct initialization."
+            )
 
         return feat_vec
         
@@ -422,7 +399,6 @@ def test_environment():
     print("Testing Humanoid Standing Environment")
     print("=" * 60)
     
-    # Test with observation processing enabled
     config = {
         'obs_history': 4,
         'obs_include_com': True,
@@ -433,13 +409,12 @@ def test_environment():
     
     env = make_standing_env(render_mode=None, config=config)
     
-    # Show observation info
     obs = env.get_observation_info()
     
     obs, info = env.reset()
-    print(f"\n Reset observation shape: {obs.shape}")
-    print(f" Expected frozen dimension: {env.frozen_obs_dim}")
-    print(f" Observation space shape: {env.observation_space.shape}")
+    print(f"\n✓ Reset observation shape: {obs.shape}")
+    print(f"✓ Expected frozen dimension: {env.frozen_obs_dim}")
+    print(f"✓ Observation space shape: {env.observation_space.shape}")
     
     assert obs.shape[0] == env.frozen_obs_dim, "Dimension mismatch detected!"
     
@@ -451,7 +426,6 @@ def test_environment():
         obs, reward, terminated, truncated, info = env.step(action)
         total_reward += reward
         
-        # Verify dimension consistency
         assert obs.shape[0] == env.frozen_obs_dim, f"Step {step}: dimension changed!"
         
         if step % 50 == 0:
@@ -465,17 +439,16 @@ def test_environment():
             print(f"\nEpisode ended at step {step}")
             break
     
-    # Test multiple resets
     print("\n" + "=" * 60)
     print("Testing multiple resets for dimension consistency...")
     for i in range(3):
         obs, info = env.reset()
         assert obs.shape[0] == env.frozen_obs_dim, f"Reset {i}: dimension mismatch!"
-        print(f"Reset {i+1}:  Shape {obs.shape} matches frozen {env.frozen_obs_dim}")
+        print(f"Reset {i+1}: ✓ Shape {obs.shape} matches frozen {env.frozen_obs_dim}")
     
     env.close()
-    print(f"\n All dimension checks passed!")
-    print(f" Environment is ready for VecNormalize wrapping")
+    print(f"\n✓ All dimension checks passed!")
+    print(f"✓ Environment is ready for VecNormalize wrapping")
 
 
 if __name__ == "__main__":
