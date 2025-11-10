@@ -89,18 +89,29 @@ def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnor
         vec_env = DummyVecEnv([lambda: base_env])
         
         # CRITICAL: Load VecNormalize stats if available
-        if vecnorm_path and os.path.exists(vecnorm_path):
-            print(f"Loading VecNormalize from {vecnorm_path}")
-            try:
-                vec_env = VecNormalize.load(vecnorm_path, vec_env)
-                vec_env.training = False  # IMPORTANT: Set to eval mode
-                vec_env.norm_reward = False  # Don't normalize rewards during inference
-                print(f" VecNormalize loaded and configured for inference")
-            except Exception as e:
-                print(f" VecNormalize loading failed: {e}")
-                raise
+        if vecnorm_path:
+            # Try relative path first, then absolute from PROJECT_ROOT
+            if not os.path.exists(vecnorm_path):
+                alt_vecnorm = os.path.join(PROJECT_ROOT, vecnorm_path)
+                if os.path.exists(alt_vecnorm):
+                    vecnorm_path = alt_vecnorm
+            
+            if os.path.exists(vecnorm_path):
+                print(f"Loading VecNormalize from {vecnorm_path}")
+                try:
+                    vec_env = VecNormalize.load(vecnorm_path, vec_env)
+                    vec_env.training = False  # IMPORTANT: Set to eval mode
+                    vec_env.norm_reward = False  # Don't normalize rewards during inference
+                    print(f" VecNormalize loaded and configured for inference")
+                except Exception as e:
+                    print(f" VecNormalize loading failed: {e}")
+                    raise
+            else:
+                print(f" WARNING: No VecNormalize file found at {vecnorm_path}")
+                print(f" Current working directory: {os.getcwd()}")
+                print("Model will likely fail without normalization!")
         else:
-            print(f" WARNING: No VecNormalize file found at {vecnorm_path}")
+            print(f" WARNING: No VecNormalize path provided")
             print("Model will likely fail without normalization!")
             
         # Debug: print observation space shape for verification
@@ -117,9 +128,21 @@ def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnor
 
 def load_model(model_path, env, algo, is_vectorized=False):
     """Load a Stable-Baselines3 model from .zip."""
-    if model_path is None or not os.path.exists(model_path):
+    if model_path is None:
         print("No valid model provided, using random policy")
         return None
+    
+    # Try relative path first, then absolute from PROJECT_ROOT
+    if not os.path.exists(model_path):
+        alt_path = os.path.join(PROJECT_ROOT, model_path)
+        if os.path.exists(alt_path):
+            model_path = alt_path
+            print(f"Found model at: {model_path}")
+        else:
+            print(f"Model file not found at: {model_path}")
+            print(f"Also tried: {alt_path}")
+            print(f"Current working directory: {os.getcwd()}")
+            return None
 
     if not SB3_AVAILABLE:
         print("Stable-Baselines3 not installed. Using random policy.")
@@ -376,13 +399,19 @@ def main():
         return 1
 
     # Autofill VecNormalize path for standing task if not provided
-    if (args.task == "standing") and (not args.vecnorm or not os.path.exists(args.vecnorm)):
-        default_vecnorm = os.path.join("models", "saved_models", "vecnorm.pkl")
-        if os.path.exists(default_vecnorm):
-            args.vecnorm = default_vecnorm
-            print(f"Using default VecNormalize stats: {args.vecnorm}")
+    if (args.task == "standing") and not args.vecnorm:
+        # Try both possible default names
+        default_paths = [
+            os.path.join(PROJECT_ROOT, "models", "saved_models", "vecnorm_standing.pkl"),
+            os.path.join(PROJECT_ROOT, "models", "saved_models", "vecnorm.pkl"),
+        ]
+        for default_vecnorm in default_paths:
+            if os.path.exists(default_vecnorm):
+                args.vecnorm = default_vecnorm
+                print(f"Using default VecNormalize stats: {args.vecnorm}")
+                break
         else:
-            print(f"WARNING: VecNormalize stats not found at provided path; looked for {default_vecnorm}")
+            print(f"WARNING: No VecNormalize stats found. Tried: {default_paths}")
 
     # Create environment (handles both standard and custom)
     env, is_vectorized = create_environment(
