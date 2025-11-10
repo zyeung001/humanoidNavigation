@@ -305,7 +305,7 @@ def record_video(env, model, args, is_vectorized=False):
         
         while episode_steps < args.steps and total_frames < max_frames:
             # Get action using the correct observation
-            action, _ = model.predict(obs, deterministic=True)
+            action = get_action(model, obs, env, is_vectorized)
             if is_vectorized:
                 obs, reward, done, info = safe_step(env, action, is_vectorized)
             else:
