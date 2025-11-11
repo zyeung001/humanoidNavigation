@@ -209,12 +209,21 @@ class StandingEnv(gym.Wrapper):
         joint_velocity_magnitude = np.sum(np.square(joint_vel))
         smoothness_reward = 5.0 * np.exp(-0.1 * joint_velocity_magnitude)
         
-        # ========== CONTROL COST ==========
-        control_cost = -0.2 * np.sum(np.square(action))
+        # ========== CONTROL COST ========== 
+        # FIXED: Reduced from -0.2 to -0.05 to encourage sufficient actuation
+        control_cost = -0.05 * np.sum(np.square(action))
+        
+        # ========== HEIGHT VELOCITY PENALTY ==========
+        # NEW: Penalize losing height (falling)
+        height_velocity = height - self.prev_height if hasattr(self, 'prev_height') else 0.0
+        if height_velocity < -0.01:  # Losing height
+            height_vel_penalty = -50.0 * abs(height_velocity)
+        else:
+            height_vel_penalty = 0.0
         
         # ========== VELOCITY PENALTY ==========
         speed = np.linalg.norm(linear_vel)
-        velocity_penalty = -0.5 * np.clip(speed - 1.0, 0.0, 2.0)
+        velocity_penalty = -2.0 * np.clip(speed - 1.0, 0.0, 2.0)  # Increased from -0.5
         
         # ========== SPARSE BONUS ==========
         sustained_bonus = 0.0
@@ -229,9 +238,13 @@ class StandingEnv(gym.Wrapper):
             stability_reward +
             smoothness_reward +
             control_cost +
+            height_vel_penalty +
             velocity_penalty +
             sustained_bonus
         )
+        
+        # Update previous height for next step
+        self.prev_height = height
         
         # ========== TERMINATION CONDITIONS ==========
         terminate = (
