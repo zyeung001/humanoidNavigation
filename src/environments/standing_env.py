@@ -107,7 +107,7 @@ class StandingEnv(gym.Wrapper):
         self.current_step = 0
         self.prev_height = default_height
         self.target_height = self.base_target_height
-        #self.prev_action[:] = 0.0
+        self.prev_action[:] = 0.0
         self.obs_history = []  # Clear history
         
         # Clear reward history
