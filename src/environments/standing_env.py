@@ -213,13 +213,15 @@ class StandingEnv(gym.Wrapper):
         # FIXED: Reduced from -0.2 to -0.01 (even lower) to encourage sufficient actuation
         control_cost = -0.01 * np.sum(np.square(action))
         
-        # ========== HEIGHT VELOCITY PENALTY ==========
-        # NEW: Much stronger penalty for losing height (falling)
+        # ========== HEIGHT MAINTENANCE REWARD ==========
+        # NEW: Reward for maintaining height, penalty for losing it
         height_velocity = height - self.prev_height if hasattr(self, 'prev_height') else 0.0
-        if height_velocity < -0.005:  # Losing height (more sensitive threshold)
-            height_vel_penalty = -200.0 * abs(height_velocity)  # 4x stronger!
-        else:
-            height_vel_penalty = 0.0
+        if height_velocity < -0.003:  # Losing height
+            height_maintenance = -300.0 * abs(height_velocity)  # Massive penalty for falling
+        elif abs(height_velocity) < 0.003:  # Maintaining height (±3mm)
+            height_maintenance = 10.0  # Reward for stability
+        else:  # Gaining height (not penalized)
+            height_maintenance = 0.0
         
         # ========== VELOCITY PENALTY ==========
         speed = np.linalg.norm(linear_vel)
@@ -238,7 +240,7 @@ class StandingEnv(gym.Wrapper):
             stability_reward +
             smoothness_reward +
             control_cost +
-            height_vel_penalty +
+            height_maintenance +
             velocity_penalty +
             sustained_bonus
         )

@@ -27,15 +27,15 @@ class StandingCurriculumEnv(StandingEnv):
         self.max_stage = int(cfg.get('curriculum_max_stage', 4))
         self.advance_after = int(cfg.get('curriculum_advance_after', 30))
         self.success_buffer = []
-        self.stage_success_threshold = float(cfg.get('curriculum_success_rate', 0.85))
+        self.stage_success_threshold = float(cfg.get('curriculum_success_rate', 0.50))  
 
 
         self.height_targets = [1.00, 1.15, 1.25, 1.35, 1.40]
         
 
-        self.height_tolerances = [0.15, 0.12, 0.10, 0.08, 0.06]
+        self.height_tolerances = [0.20, 0.18, 0.15, 0.12, 0.10]  
         
-        self.min_episode_lengths = [300, 500, 700, 900, 1200]
+        self.min_episode_lengths = [100, 200, 400, 600, 900] 
         
         self._apply_stage_settings(cfg, self.stage)
         super().__init__(render_mode=render_mode, config=cfg)
@@ -118,7 +118,7 @@ class StandingCurriculumEnv(StandingEnv):
                     self.success_buffer = []
                     
                     print(f"\n{'='*60}")
-                    print(f"✓ CURRICULUM ADVANCED: Stage {old_stage} → {self.stage}")
+                    print(f" CURRICULUM ADVANCED: Stage {old_stage} → {self.stage}")
                     print(f"  New target: {self.base_target_height:.2f}m ± {self.height_tolerances[self.stage]:.2f}m")
                     print(f"  Min episode length: {self.min_episode_lengths[self.stage]} steps")
                     print(f"  Domain randomization: {self.domain_rand}")
@@ -127,7 +127,7 @@ class StandingCurriculumEnv(StandingEnv):
                     info['curriculum_stage_advanced'] = self.stage
                 elif self.stage == self.max_stage:
                     # Already at final stage, log mastery
-                    print(f"✓ Stage {self.stage} MASTERED (success rate: {np.mean(self.success_buffer):.1%})")
+                    print(f" Stage {self.stage} MASTERED (success rate: {np.mean(self.success_buffer):.1%})")
 
             # ENHANCED INFO: Always log curriculum progress
             info['curriculum_stage'] = self.stage

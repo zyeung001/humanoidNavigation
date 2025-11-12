@@ -19,7 +19,7 @@ standing:
   learning_rate: 0.0003
   final_learning_rate: 0.00005  
   
-  batch_size: 2048
+  batch_size: 256  # FIXED: Smaller batch for larger network
   n_steps: 2048
   n_epochs: 10
   
@@ -28,8 +28,8 @@ standing:
   clip_range: 0.2
   final_clip_range: 0.05  
   
-  ent_coef: 0.05
-  final_ent_coef: 0.005  
+  ent_coef: 0.02  # FIXED: Higher entropy for more exploration
+  final_ent_coef: 0.01  
   vf_coef: 0.5
   max_grad_norm: 0.5
 
@@ -38,8 +38,8 @@ standing:
   
   policy_kwargs:
     net_arch:
-      pi: [512, 512, 256] 
-      vf: [512, 512, 256]
+      pi: [1024, 1024, 512]  # FIXED: 3x larger network!
+      vf: [1024, 1024, 512]  # FIXED: 3x larger network!
     activation_fn: "SiLU" 
     log_std_init: -0.5
   
@@ -70,7 +70,7 @@ standing:
   curriculum_start_stage: 0
   curriculum_max_stage: 4  
   curriculum_advance_after: 30  
-  curriculum_success_rate: 0.85  
+  curriculum_success_rate: 0.50  # FIXED: Much easier (was 0.85)  
   
   
   action_smoothing: true
