@@ -249,6 +249,10 @@ def main():
             self.path = path
             self.freq = int(freq)
 
+            from pathlib import Path
+            Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+            print(f"✓ VecNormalize will save to: {self.path}")
+
         def _on_step(self) -> bool:
             ok = super()._on_step()
             if self.freq > 0 and (self.num_timesteps % self.freq == 0):
