@@ -9,7 +9,7 @@ from gymnasium.spaces import Box
 class StandingEnv(gym.Wrapper):
     """Wrapper for MuJoCo Humanoid environment optimized for standing task
 
-    CRITICAL FIX: Humanoid-v5 with exclude_current_positions_from_observation=False
+    Humanoid-v5 with exclude_current_positions_from_observation=False
     adds 2 extra dimensions (x,y position) that aren't reflected in observation_space
     until after the first reset. We account for this manually.
     """
@@ -58,15 +58,10 @@ class StandingEnv(gym.Wrapper):
         self.include_com = bool(self.cfg.get('obs_include_com', False))
         self.feature_norm = bool(self.cfg.get('obs_feature_norm', False))
         
-        # ========== FIXED: Manual calculation accounting for Gymnasium quirk ==========
         # Humanoid-v5 base observation_space.shape[0] = 350
-        # BUT exclude_current_positions_from_observation=False adds x,y position (+2)
-        # HOWEVER, env.observation_space isn't updated until after first reset!
-        # So we need to calculate the TRUE base dimension manually
-        
         base_obs_from_space = int(env.observation_space.shape[0])  # 350
         
-        # CRITICAL: Actual observations have 15 MORE dimensions than observation_space reports
+        # Actual observations have 15 MORE dimensions than observation_space reports
         # This is due to exclude_current_positions_from_observation=False quirk in Gymnasium
         base_obs_dim = base_obs_from_space + 15  # Actual observations are 365 dims
         
@@ -173,65 +168,81 @@ class StandingEnv(gym.Wrapper):
         
         # ========== CORE REWARD: ASYMMETRIC HEIGHT REWARD ==========
         if height < 1.0:
-            height_reward = -100.0 + 80.0 * np.clip(height / 1.0, 0.0, 1.0)
+            height_reward = -50.0 + 40.0 * np.clip(height / 1.0, 0.0, 1.0)  
         elif height < 1.2:
-            height_reward = -10.0 + 20.0 * (height - 1.0) / 0.2
+            height_reward = -10.0 + 15.0 * (height - 1.0) / 0.2  
         elif height < 1.35:
-            height_reward = 10.0 + 40.0 * (height - 1.2) / 0.15
-        elif height < 1.45:
-            height_reward = 50.0 + 50.0 * (height - 1.35) / 0.1
+            height_reward = 5.0 + 20.0 * (height - 1.2) / 0.15 
+        elif height < 1.45:  # Peak reward zone around 1.40m
+            height_reward = 25.0 + 25.0 * (1.0 - abs(height - 1.40) / 0.05)  
         elif height < 1.6:
-            height_reward = 100.0 - 20.0 * (height - 1.45) / 0.15
+            height_reward = 40.0 - 15.0 * (height - 1.45) / 0.15  
         else:
-            height_reward = 80.0 - 30.0 * np.clip((height - 1.6) / 0.2, 0.0, 1.0)
+            height_reward = 25.0 - 20.0 * np.clip((height - 1.6) / 0.2, 0.0, 1.0)  
         
-        # ========== UPRIGHT ORIENTATION REWARD ==========
+        # ========== UPRIGHT ORIENTATION REWARD  ==========
         upright_error = 1.0 - abs(quat[0])
         if height >= 1.2:
-            upright_reward = 25.0 * np.exp(-8.0 * upright_error**2)
+            upright_reward = 12.0 * np.exp(-8.0 * upright_error**2)  
         elif height >= 1.0:
-            upright_reward = 15.0 * np.exp(-8.0 * upright_error**2)
+            upright_reward = 7.0 * np.exp(-8.0 * upright_error**2)  
         else:
             upright_reward = 0.0
         
-        # ========== STABILITY REWARD ==========
+        # ========== STABILITY REWARD (RESCALED) ==========
         angular_momentum = np.sum(np.square(angular_vel))
         if height >= 1.3:
-            stability_reward = 15.0 * np.exp(-2.0 * angular_momentum)
+            stability_reward = 7.0 * np.exp(-2.0 * angular_momentum)
         elif height >= 1.2:
-            stability_reward = 10.0 * np.exp(-2.0 * angular_momentum)
+            stability_reward = 5.0 * np.exp(-2.0 * angular_momentum) 
         elif height >= 1.0:
-            stability_reward = 5.0 * np.exp(-2.0 * angular_momentum)
+            stability_reward = 2.5 * np.exp(-2.0 * angular_momentum)
         else:
             stability_reward = 0.0
         
         # ========== SMOOTHNESS REWARD ==========
         joint_velocity_magnitude = np.sum(np.square(joint_vel))
-        smoothness_reward = 5.0 * np.exp(-0.1 * joint_velocity_magnitude)
+        smoothness_reward = 2.5 * np.exp(-0.1 * joint_velocity_magnitude) 
         
         # ========== CONTROL COST ========== 
-        # FIXED: Reduced from -0.2 to -0.01 (even lower) to encourage sufficient actuation
-        control_cost = -0.01 * np.sum(np.square(action))
+        control_cost = -0.005 * np.sum(np.square(action))
         
-        # ========== HEIGHT MAINTENANCE REWARD ==========
-        # NEW: Reward for maintaining height, penalty for losing it
+        # ========== HEIGHT MAINTENANCE REWARD  ==========
+        # Reward for maintaining height, penalty for losing it
         height_velocity = height - self.prev_height if hasattr(self, 'prev_height') else 0.0
         if height_velocity < -0.003:  # Losing height
-            height_maintenance = -300.0 * abs(height_velocity)  # Massive penalty for falling
-        elif abs(height_velocity) < 0.003:  # Maintaining height (±3mm)
-            height_maintenance = 10.0  # Reward for stability
+            height_maintenance = -150.0 * abs(height_velocity)  
+        elif abs(height_velocity) < 0.003:  
+            height_maintenance = 5.0  
         else:  # Gaining height (not penalized)
             height_maintenance = 0.0
         
-        # ========== VELOCITY PENALTY ==========
+        # ========== VELOCITY PENALTY  ==========
         speed = np.linalg.norm(linear_vel)
-        velocity_penalty = -2.0 * np.clip(speed - 1.0, 0.0, 2.0)  # Increased from -0.5
+        velocity_penalty = -1.0 * np.clip(speed - 1.0, 0.0, 2.0)  
         
-        # ========== SPARSE BONUS ==========
+        # ========== SPARSE BONUS (RESCALED) ==========
         sustained_bonus = 0.0
         if self.current_step > 0 and self.current_step % 100 == 0:
-            if height_error < 0.10 and upright_error < 0.08 and height >= 1.3:
-                sustained_bonus = 200.0
+           
+            if height_error < 0.08 and upright_error < 0.08 and height >= 1.32:
+                sustained_bonus = 100.0
+        
+        # ========== TERMINATION PENALTY ==========
+        termination_penalty = 0.0
+        
+        # ========== TERMINATION CONDITIONS (check before penalty) ==========
+        terminate = (
+            height < 0.75 or
+            height > 2.0 or
+            abs(quat[0]) < 0.6
+        )
+        
+        # Apply termination penalty if about to terminate
+        if terminate:
+            # Penalty proportional to how far from end of episode
+            steps_remaining = self.max_episode_steps - self.current_step
+            termination_penalty = -100.0 * (steps_remaining / self.max_episode_steps)  # Up to -100
         
         # ========== TOTAL REWARD ==========
         total_reward = (
@@ -242,18 +253,12 @@ class StandingEnv(gym.Wrapper):
             control_cost +
             height_maintenance +
             velocity_penalty +
-            sustained_bonus
+            sustained_bonus +
+            termination_penalty
         )
         
         # Update previous height for next step
         self.prev_height = height
-        
-        # ========== TERMINATION CONDITIONS ==========
-        terminate = (
-            height < 0.75 or
-            height > 2.0 or
-            abs(quat[0]) < 0.6
-        )
         
         # ========== TRACK REWARD COMPONENTS ==========
         self.reward_history['height'].append(height_reward)
@@ -261,7 +266,7 @@ class StandingEnv(gym.Wrapper):
         self.reward_history['velocity'].append(stability_reward)
         self.reward_history['control'].append(control_cost)
         
-        # ========== DEBUG LOGGING (less frequent) ==========
+        # ========== DEBUG LOGGING  ==========
         if self.current_step % 500 == 0:
             print(f"Step {self.current_step:4d}: "
                 f"h={height:.3f} (err={height_error:.3f}), "

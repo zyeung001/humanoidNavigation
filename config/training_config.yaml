@@ -14,22 +14,22 @@ logging:
 
 standing:
   algorithm: "PPO"
-  total_timesteps: 3000000  
+  total_timesteps: 5000000  # FIXED: Increased from 3M to 5M for better convergence
   
   learning_rate: 0.0003
-  final_learning_rate: 0.00005  
+  final_learning_rate: 0.0001  # FIXED: Increased final LR from 5e-5 to 1e-4 to maintain plasticity
   
-  batch_size: 256  # FIXED: Smaller batch for larger network
+  batch_size: 512  # FIXED: Increased from 256 to 512 for better gradient estimates
   n_steps: 2048
   n_epochs: 10
   
   gamma: 0.995
-  gae_lambda: 0.95
+  gae_lambda: 0.90  # FIXED: Reduced from 0.95 to 0.90 to improve credit assignment
   clip_range: 0.2
-  final_clip_range: 0.05  
+  final_clip_range: 0.10  # FIXED: Increased from 0.05 to 0.10 to allow more policy updates
   
-  ent_coef: 0.02  # FIXED: Higher entropy for more exploration
-  final_ent_coef: 0.01  
+  ent_coef: 0.02  # FIXED: Keep positive always
+  final_ent_coef: 0.005  # FIXED: Changed from 0.01 to 0.005 (NEVER negative!)
   vf_coef: 0.5
   max_grad_norm: 0.5
 
@@ -38,10 +38,11 @@ standing:
   
   policy_kwargs:
     net_arch:
-      pi: [1024, 1024, 512]  # FIXED: 3x larger network!
-      vf: [1024, 1024, 512]  # FIXED: 3x larger network!
+      pi: [512, 512, 256]  # FIXED: Reduced from [1024, 1024, 512] to prevent overfitting
+      vf: [512, 512, 256]  # FIXED: Match policy network size
     activation_fn: "SiLU" 
-    log_std_init: -0.5
+    log_std_init: -0.5  # Allows for sufficient exploration initially
+    ortho_init: true  # ADDED: Orthogonal initialization for better gradient flow
   
   use_wandb: true
   wandb_project: "humanoid-standing-fixed"
@@ -68,9 +69,9 @@ standing:
   max_episode_steps: 5000
 
   curriculum_start_stage: 0
-  curriculum_max_stage: 4  
-  curriculum_advance_after: 30  
-  curriculum_success_rate: 0.50  # FIXED: Much easier (was 0.85)  
+  curriculum_max_stage: 4 
+  curriculum_advance_after: 20 
+  curriculum_success_rate: 0.60  
   
   
   action_smoothing: true

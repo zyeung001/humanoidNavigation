@@ -129,7 +129,6 @@ def main():
     vecnorm_path = standing.get('vecnormalize_path', 'vecnorm.pkl')
     env_load_path = args.vecnorm if args.vecnorm else vecnorm_path
 
-    # FIXED: Better VecNormalize loading logic with error handling
     env = None
     vecnorm_loaded = False
     
@@ -168,9 +167,13 @@ def main():
     final_clip = float(standing.get('final_clip_range', 0.1))
     clip_fn = clip_schedule(initial_clip, final_clip, total_timesteps)
 
-    # Entropy coefficient
-    initial_ent = float(standing.get('ent_coef', 0.05))
-    final_ent = float(standing.get('final_ent_coef', 0.01))
+    # Entropy coefficient 
+    initial_ent = float(standing.get('ent_coef', 0.02))
+    final_ent = float(standing.get('final_ent_coef', 0.005))
+    # Safety check: entropy must always be positive
+    if final_ent <= 0:
+        print(f"  WARNING: final_ent_coef={final_ent} is non-positive, forcing to 0.005")
+        final_ent = 0.005
 
     # Policy/net arch
     policy_kwargs = standing.get('policy_kwargs', {
@@ -190,7 +193,6 @@ def main():
     device = standing.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
 
     if resume:
-        # FIXED: Better model loading with error handling
         try:
             print(f"Loading model from: {args.model}")
             model = PPO.load(args.model, env=env, device=device)

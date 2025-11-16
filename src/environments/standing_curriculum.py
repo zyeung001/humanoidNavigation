@@ -25,17 +25,16 @@ class StandingCurriculumEnv(StandingEnv):
         cfg = (config or {}).copy()
         self.stage = int(cfg.get('curriculum_start_stage', 0))
         self.max_stage = int(cfg.get('curriculum_max_stage', 4))
-        self.advance_after = int(cfg.get('curriculum_advance_after', 30))
+        self.advance_after = int(cfg.get('curriculum_advance_after', 20))  
         self.success_buffer = []
-        self.stage_success_threshold = float(cfg.get('curriculum_success_rate', 0.50))  
+        self.stage_success_threshold = float(cfg.get('curriculum_success_rate', 0.60))  
 
 
         self.height_targets = [1.00, 1.15, 1.25, 1.35, 1.40]
         
-
-        self.height_tolerances = [0.20, 0.18, 0.15, 0.12, 0.10]  
+        self.height_tolerances = [0.20, 0.15, 0.12, 0.10, 0.08]  
         
-        self.min_episode_lengths = [100, 200, 400, 600, 900] 
+        self.min_episode_lengths = [100, 200, 400, 800, 1200] 
         
         self._apply_stage_settings(cfg, self.stage)
         super().__init__(render_mode=render_mode, config=cfg)
