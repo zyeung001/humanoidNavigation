@@ -1,5 +1,6 @@
 # standing_env.py
 
+
 import gymnasium as gym
 import numpy as np
 from typing import Dict, Any, Tuple, Optional
@@ -7,12 +8,7 @@ from gymnasium.spaces import Box
 
 
 class StandingEnv(gym.Wrapper):
-    """Wrapper for MuJoCo Humanoid environment optimized for standing task
 
-    Humanoid-v5 with exclude_current_positions_from_observation=False
-    adds 2 extra dimensions (x,y position) that aren't reflected in observation_space
-    until after the first reset. We account for this manually.
-    """
     
     def __init__(self, render_mode: Optional[str] = None, config=None):
         env_id = "Humanoid-v5"
@@ -36,6 +32,17 @@ class StandingEnv(gym.Wrapper):
         self.rand_mass_range = self.cfg.get('rand_mass_range', [0.95, 1.05])
         self.rand_friction_range = self.cfg.get('rand_friction_range', [0.95, 1.05])
         
+        #Random height initialization for recovery training
+        self.random_height_init = self.cfg.get('random_height_init', True)
+        self.random_height_prob = self.cfg.get('random_height_prob', 0.3)
+        self.random_height_range = self.cfg.get('random_height_range', [-0.3, 0.1])
+        
+        # Reward caps from config
+        reward_caps = self.cfg.get('reward_caps', {})
+        self.max_height_maintenance_penalty = reward_caps.get('max_height_maintenance_penalty', 15.0)
+        self.recovery_bonus_scale = reward_caps.get('recovery_bonus_scale', 50.0)
+        self.termination_penalty_constant = reward_caps.get('termination_penalty_constant', 50.0)
+        
         self.reward_history = {
             'height': [], 'upright': [], 'velocity': [], 
             'angular': [], 'position': [], 'control': []
@@ -44,7 +51,7 @@ class StandingEnv(gym.Wrapper):
         # ======== Enhanced controls (all optional via config) ========
         # Action preprocessing
         self.enable_action_smoothing = bool(self.cfg.get('action_smoothing', False))
-        self.action_smoothing_tau = float(self.cfg.get('action_smoothing_tau', 0.15))
+        self.action_smoothing_tau = float(self.cfg.get('action_smoothing_tau', 0.5))  # Default 0.5 now
         self.enable_action_symmetry = bool(self.cfg.get('action_symmetry', False))
         self.enable_pd_assist = bool(self.cfg.get('pd_assist', False))
         self.pd_kp = float(self.cfg.get('pd_kp', 0.0))
@@ -59,10 +66,9 @@ class StandingEnv(gym.Wrapper):
         self.feature_norm = bool(self.cfg.get('obs_feature_norm', False))
         
         # Humanoid-v5 base observation_space.shape[0] = 350
-        base_obs_from_space = int(env.observation_space.shape[0])  # 350
+        base_obs_from_space = int(env.observation_space.shape[0])  
         
         # Actual observations have 15 MORE dimensions than observation_space reports
-        # This is due to exclude_current_positions_from_observation=False quirk in Gymnasium
         base_obs_dim = base_obs_from_space + 15  # Actual observations are 365 dims
         
         # Calculate dimension after all processing steps
@@ -88,11 +94,16 @@ class StandingEnv(gym.Wrapper):
         
         print(f"Observation space configuration:")
         print(f"  Base from env.observation_space: {base_obs_from_space}")
-        print(f"  + Position inclusion adjustment: +21 → {base_obs_dim}")
+        print(f"  + Position inclusion adjustment: +15 → {base_obs_dim}")
         print(f"  + COM features: {extra_dim} → {feature_dim}")
         print(f"  × History stack: {self.history_len if self.enable_history else 1}")
         print(f"  = FROZEN dimension: {self.frozen_obs_dim}")
         print(f"  Feature normalization: {self.feature_norm}")
+        print(f"  Action smoothing tau: {self.action_smoothing_tau}")
+        print(f"  Random height init: {self.random_height_init} (prob={self.random_height_prob})")
+        print(f"  Max height maintenance penalty: {self.max_height_maintenance_penalty}")
+        print(f"  Recovery bonus scale: {self.recovery_bonus_scale}")
+        print(f"  Termination penalty (constant): {self.termination_penalty_constant}")
     
     def reset(self, seed: Optional[int] = None): 
         observation, info = self.env.reset(seed=seed)
@@ -123,6 +134,22 @@ class StandingEnv(gym.Wrapper):
                 self.rand_friction_range[0], self.rand_friction_range[1],
                 size=self.env.unwrapped.model.geom_friction.shape[0]
             )
+        
+        # Random height initialization for recovery training
+        if self.random_height_init and np.random.random() < self.random_height_prob:
+            perturb = np.random.uniform(self.random_height_range[0], self.random_height_range[1])
+            new_height = default_height + perturb
+            # Clamp to reasonable range
+            new_height = np.clip(new_height, 0.6, 1.6)
+            self.env.unwrapped.data.qpos[2] = new_height
+            self.prev_height = new_height
+            
+            # Also add small velocity perturbation
+            vel_perturb = np.random.uniform(-0.1, 0.1, size=self.env.unwrapped.data.qvel.shape)
+            self.env.unwrapped.data.qvel[:] += vel_perturb
+            
+            # Re-get observation after perturbation
+            observation = self.env.unwrapped._get_obs()
         
         # Process observation with guaranteed dimension
         if self.enable_history or self.include_com or self.feature_norm:
@@ -207,42 +234,54 @@ class StandingEnv(gym.Wrapper):
         # ========== CONTROL COST ========== 
         control_cost = -0.005 * np.sum(np.square(action))
         
-        # ========== HEIGHT MAINTENANCE REWARD  ==========
-        # Reward for maintaining height, penalty for losing it
+        # ==========  CAPPED HEIGHT MAINTENANCE PENALTY ==========
         height_velocity = height - self.prev_height if hasattr(self, 'prev_height') else 0.0
         if height_velocity < -0.003:  # Losing height
-            height_maintenance = -150.0 * abs(height_velocity)  
+            # CAP the penalty to prevent catastrophic negative rewards
+            capped_velocity = np.clip(abs(height_velocity), 0.0, 0.1)
+            height_maintenance = -150.0 * capped_velocity  # Max penalty: -15
         elif abs(height_velocity) < 0.003:  
             height_maintenance = 5.0  
         else:  # Gaining height (not penalized)
             height_maintenance = 0.0
         
-        # ========== VELOCITY PENALTY  ==========
-        speed = np.linalg.norm(linear_vel)
-        velocity_penalty = -1.0 * np.clip(speed - 1.0, 0.0, 2.0)  
+        # ==========  RECOVERY BONUS ==========
+        # Explicitly reward recovering from low heights
+        recovery_bonus = 0.0
+        if height < 1.0 and height_velocity > 0.01:  # Rising from low height
+            # Scale bonus by how low we are (lower = more bonus for rising)
+            recovery_scale = (1.0 - height) / 0.4  # 0 at h=1.0, 1.0 at h=0.6
+            recovery_bonus = self.recovery_bonus_scale * height_velocity * recovery_scale
         
-        # ========== SPARSE BONUS (RESCALED) ==========
+        # ========== VELOCITY PENALTY  ==========
+        speed = np.linalg.norm(linear_vel[:2])  # XY velocity only
+        velocity_penalty = -1.0 * np.clip(speed - 0.5, 0.0, 2.0)  
+        
+        # ========== SPARSE BONUS ==========
         sustained_bonus = 0.0
         if self.current_step > 0 and self.current_step % 100 == 0:
-           
             if height_error < 0.08 and upright_error < 0.08 and height >= 1.32:
                 sustained_bonus = 100.0
         
-        # ========== TERMINATION PENALTY ==========
+        # ========== : CONSTANT TERMINATION PENALTY ==========
+        # No longer scales with time - removes learned helplessness
         termination_penalty = 0.0
         
-        # ========== TERMINATION CONDITIONS (check before penalty) ==========
+        # ========== TERMINATION CONDITIONS ==========
         terminate = (
             height < 0.75 or
             height > 2.0 or
             abs(quat[0]) < 0.6
         )
         
-        # Apply termination penalty if about to terminate
+        #  Apply CONSTANT termination penalty (not time-dependent)
         if terminate:
-            # Penalty proportional to how far from end of episode
-            steps_remaining = self.max_episode_steps - self.current_step
-            termination_penalty = -100.0 * (steps_remaining / self.max_episode_steps)  # Up to -100
+            if height < 0.75:  # Fell too low
+                termination_penalty = -self.termination_penalty_constant
+            elif abs(quat[0]) < 0.6:  # Tipped over
+                termination_penalty = -self.termination_penalty_constant
+            else:  # Other terminations (height too high)
+                termination_penalty = -self.termination_penalty_constant * 0.5
         
         # ========== TOTAL REWARD ==========
         total_reward = (
@@ -252,6 +291,7 @@ class StandingEnv(gym.Wrapper):
             smoothness_reward +
             control_cost +
             height_maintenance +
+            recovery_bonus +  
             velocity_penalty +
             sustained_bonus +
             termination_penalty
@@ -273,7 +313,8 @@ class StandingEnv(gym.Wrapper):
                 f"quat_w={quat[0]:.3f}, "
                 f"r={total_reward:6.1f} "
                 f"[h={height_reward:6.1f}, u={upright_reward:4.1f}, "
-                f"stab={stability_reward:4.1f}, bonus={sustained_bonus:.0f}]")
+                f"stab={stability_reward:4.1f}, recov={recovery_bonus:4.1f}, "
+                f"bonus={sustained_bonus:.0f}]")
         
         return total_reward, terminate
 
@@ -405,8 +446,8 @@ def make_standing_env(render_mode=None, config=None):
     return StandingEnv(render_mode=render_mode, config=config)
 
 
-def test_environment():
-    print("Testing Humanoid Standing Environment")
+if __name__ == "__main__":
+    print("Testing Standing Environment")
     print("=" * 60)
     
     config = {
@@ -414,32 +455,34 @@ def test_environment():
         'obs_include_com': True,
         'obs_feature_norm': True,
         'action_smoothing': True,
-        'action_smoothing_tau': 0.2,
+        'action_smoothing_tau': 0.5,  
+        'random_height_init': True,
+        'random_height_prob': 0.3,
+        'reward_caps': {
+            'max_height_maintenance_penalty': 15.0,
+            'recovery_bonus_scale': 50.0,
+            'termination_penalty_constant': 50.0
+        }
     }
     
     env = make_standing_env(render_mode=None, config=config)
     
-    obs = env.get_observation_info()
-    
     obs, info = env.reset()
-    print(f"\n✓ Reset observation shape: {obs.shape}")
-    print(f"✓ Expected frozen dimension: {env.frozen_obs_dim}")
+    print(f"\n Reset observation shape: {obs.shape}")
+    print(f" Expected frozen dimension: {env.frozen_obs_dim}")
     
     print("\nRunning 200 steps...")
     for step in range(200):
         action = env.action_space.sample()
         obs, reward, terminated, truncated, info = env.step(action)
         
-        if step == 0:
-            print(f"First step - obs shape: {obs.shape}, expected: {env.frozen_obs_dim}")
+        if step % 50 == 0:
+            print(f"Step {step}: height={info['height']:.3f}, reward={reward:.2f}")
         
         if terminated or truncated:
             print(f"\nEpisode ended at step {step}")
             break
     
     env.close()
-    print(f"\n✓ Test completed!")
+    print(f"\n Test completed!")
 
-
-if __name__ == "__main__":
-    test_environment()

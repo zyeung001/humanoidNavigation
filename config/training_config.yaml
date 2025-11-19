@@ -1,100 +1,141 @@
-# training_config.yaml
-
-general:
-  seed: 42
-  device: "auto"
-  verbose: 1
-  save_freq: 50000
-  eval_freq: 25000
-  eval_episodes: 10
-
-logging:
-  use_tensorboard: true
-  log_dir: "data/logs"
 
 standing:
-  algorithm: "PPO"
-  total_timesteps: 5000000  # FIXED: Increased from 3M to 5M for better convergence
+  # ========== ENVIRONMENT CONFIGURATION ==========
   
-  learning_rate: 0.0003
-  final_learning_rate: 0.0001  # FIXED: Increased final LR from 5e-5 to 1e-4 to maintain plasticity
+  # Basic settings
+  seed: 42
+  n_envs: 8  # Parallel environments
+  device: cuda  # 'cuda' or 'cpu'
   
-  batch_size: 512  # FIXED: Increased from 256 to 512 for better gradient estimates
-  n_steps: 2048
-  n_epochs: 10
+  # Episode settings
+  max_episode_steps: 5000
   
-  gamma: 0.995
-  gae_lambda: 0.90  # FIXED: Reduced from 0.95 to 0.90 to improve credit assignment
-  clip_range: 0.2
-  final_clip_range: 0.10  # FIXED: Increased from 0.05 to 0.10 to allow more policy updates
+  # ========== OBSERVATION PROCESSING ==========
+  # Enhanced observations for better state estimation
   
-  ent_coef: 0.02  # FIXED: Keep positive always
-  final_ent_coef: 0.005  # FIXED: Changed from 0.01 to 0.005 (NEVER negative!)
-  vf_coef: 0.5
-  max_grad_norm: 0.5
+  obs_history: 4  # Stack 4 frames for temporal information
+  obs_include_com: true  # Include center-of-mass features
+  obs_feature_norm: true  # Normalize features with tanh
+  
+  # ========== ACTION PREPROCESSING ==========
+  
+  action_smoothing: true
+  action_smoothing_tau: 0.5
+  
+  action_symmetry: false  # Don't enforce left-right symmetry
+  pd_assist: false  # No PD control assistance
+  
+  # ========== CURRICULUM LEARNING ==========
+  curriculum_start_stage: 0
+  curriculum_max_stage: 4  
+  curriculum_advance_after: 20  # Episodes before considering advancement
+  curriculum_success_rate: 0.60  # Success rate needed to advance
+  
+  
+  # ========== DOMAIN RANDOMIZATION ==========
+  
+  domain_rand: true
+  rand_mass_range: [0.95, 1.05]  
+  rand_friction_range: [0.95, 1.05]  
+  
+  # ========== REWARD FUNCTION  ==========
+  target_height: 1.40
+  height_error_threshold: 0.08
+  height_stability_threshold: 0.15
+  
 
-  n_eval_episodes: 5
-  target_height: 1.4
+  reward_caps:
+    max_height_maintenance_penalty: 15.0  
+    recovery_bonus_scale: 50.0  
+    termination_penalty_constant: 50.0  
+  
+  # ========== PPO HYPERPARAMETERS ==========
+  
+  # Training schedule
+  total_timesteps: 5_000_000
+  learning_rate: 0.0003
+  final_learning_rate: 0.00005  # Linear decay
+  
+  # PPO algorithm parameters
+  n_steps: 2048  # Steps per environment per update
+  batch_size: 256  # Minibatch size
+  n_epochs: 10  # Gradient steps per update
+  
+  gamma: 0.995  # Discount factor (long horizon for standing)
+  gae_lambda: 0.95  # GAE parameter
+  
+  # Policy optimization
+  clip_range: 0.2
+  final_clip_range: 0.1  # Linear decay
+  
+  # Entropy regularization
+  ent_coef: 0.02  # Initial exploration
+  final_ent_coef: 0.005  # Final exploitation
+  
+  # Value function
+  vf_coef: 0.5
+  
+  # Gradient clipping
+  max_grad_norm: 0.5
+  
+  # ========== VECNORMALIZE CONFIGURATION ==========
+  
+  normalize: true
+  vecnormalize_clip_obs: 50.0 
+  vecnormalize_clip_reward: 50.0  
+  
+  
+  # ========== NETWORK ARCHITECTURE ==========
   
   policy_kwargs:
     net_arch:
-      pi: [512, 512, 256]  # FIXED: Reduced from [1024, 1024, 512] to prevent overfitting
-      vf: [512, 512, 256]  # FIXED: Match policy network size
-    activation_fn: "SiLU" 
-    log_std_init: -0.5  # Allows for sufficient exploration initially
-    ortho_init: true  # ADDED: Orthogonal initialization for better gradient flow
+      - pi: [512, 512, 256]  # Policy network
+        vf: [512, 512, 256]  # Value network
+    activation_fn: SiLU  # Smooth activation (better than ReLU)
+    ortho_init: true  # Orthogonal initialization
   
-  use_wandb: true
-  wandb_project: "humanoid-standing-fixed"
-  wandb_log_freq: 2000
-  video_freq: 50000
-
-  target_reward_threshold: 60000  
-  height_stability_threshold: 0.08  
-  height_error_threshold: 0.10  
+  # ========== LOGGING & CHECKPOINTING ==========
   
-  normalize: true
-  n_envs: 8
+  verbose: 1
   
-  video_n_episodes: 2
-  video_max_steps: 500
+  log_dir: data/logs
+  use_tensorboard: true
+  
+  # Evaluation
+  n_eval_episodes: 5
+  eval_freq: 100_000  # Every 100k steps
+  
+  # Checkpointing
+  save_freq: 250_000  # Every 250k steps
+  checkpoint_dir: data/checkpoints
+  checkpoint_prefix: standing
+  
+  # Model saving
+  best_model_path: models/best_standing_model
+  final_model_path: models/final_standing_model
+  vecnormalize_path: models/vecnorm.pkl
+  
+  # Success thresholds
+  target_reward_threshold: 5000
+  
+  # Early stopping
+  early_stop:
+    patience: 5  # Number of consecutive successes needed
+  
+  # ========== ADVANCED OPTIONS ==========
+  
+  # Random height initialization for recovery training
+  random_height_init: true  
+  random_height_prob: 0.3  # 30% of episodes start at random height
+  random_height_range: [-0.3, 0.1]  # Mostly downward perturbations
+  
+  # This forces the agent to experience and recover from low heights
+  # even when curriculum is at high stages
+  
+  # WandB logging 
+  use_wandb: false
+  wandb_project: humanoid_standing
+  wandb_log_freq: 10000
+  video_freq: 500000  # Record video every 500k steps
   episode_print_freq: 1000
-  
-  final_model_path: "models/final_standing_model"
-  vecnormalize_path: "models/vecnorm.pkl"
-  checkpoint_dir: "data/checkpoints"
-  checkpoint_prefix: "checkpoint"
-  best_model_path: "models/best_standing_model"
 
-  max_episode_steps: 5000
-
-  curriculum_start_stage: 0
-  curriculum_max_stage: 4 
-  curriculum_advance_after: 20 
-  curriculum_success_rate: 0.60  
-  
-  
-  action_smoothing: true
-  action_smoothing_tau: 0.2
-  obs_include_com: true
-  obs_feature_norm: true
-  obs_history: 4
-  
-  domain_rand: false
-  rand_mass_range: [0.95, 1.05]
-  rand_friction_range: [0.95, 1.05]
-
-evaluation:
-  render_eval: false
-  record_video: true
-  video_dir: "data/videos"
-  video_length: 1000
-
-simulation:
-  max_steps: 5000
-  reset_on_done: true
-  save_frames: true
-
-early_stop:
-  target_length: 2000
-  patience: 10  

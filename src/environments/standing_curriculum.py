@@ -1,6 +1,6 @@
 """
-
 standing_curriculum.py
+
 """
 
 from __future__ import annotations
@@ -13,55 +13,71 @@ from .standing_env import StandingEnv
 
 class StandingCurriculumEnv(StandingEnv):
     """
-    Stages (finer progression):
-    0: 1.00m target - Basic balance at low height
-    1: 1.15m target - Early height increase
-    2: 1.25m target - Mid-range balance challenge
-    3: 1.35m target - High balance precision required
-    4: 1.40m target - FINAL TARGET, maximum difficulty
+    Curriculum Stages:
+    0: 0.80m target - RECOVERY TRAINING
+    1: 1.00m target - Basic balance at low height
+    2: 1.15m target - Early height increase
+    3: 1.25m target - Mid-range balance challenge
+    4: 1.35m target - High balance precision required
+    5: 1.40m target - FINAL TARGET, maximum difficulty
+
     """
 
     def __init__(self, render_mode: Optional[str] = None, config: Optional[Dict[str, Any]] = None):
         cfg = (config or {}).copy()
         self.stage = int(cfg.get('curriculum_start_stage', 0))
-        self.max_stage = int(cfg.get('curriculum_max_stage', 4))
+        self.max_stage = int(cfg.get('curriculum_max_stage', 5))  # Now 6 stages (0-5)
         self.advance_after = int(cfg.get('curriculum_advance_after', 20))  
         self.success_buffer = []
         self.stage_success_threshold = float(cfg.get('curriculum_success_rate', 0.60))  
 
-
-        self.height_targets = [1.00, 1.15, 1.25, 1.35, 1.40]
+        self.height_targets = [0.80, 1.00, 1.15, 1.25, 1.35, 1.40]
         
-        self.height_tolerances = [0.20, 0.15, 0.12, 0.10, 0.08]  
+        # Adjusted tolerances for 6 stages
+        self.height_tolerances = [0.25, 0.20, 0.15, 0.12, 0.10, 0.08]  
         
-        self.min_episode_lengths = [100, 200, 400, 800, 1200] 
+        # Adjusted minimum episode lengths
+        self.min_episode_lengths = [80, 100, 200, 400, 800, 1200] 
         
         self._apply_stage_settings(cfg, self.stage)
         super().__init__(render_mode=render_mode, config=cfg)
         
         self.base_target_height = self.height_targets[self.stage]
-        print(f"  curriculum initialized at stage {self.stage}")
+        print(f"  FIXED curriculum initialized at stage {self.stage}")
         print(f"  Target: {self.base_target_height:.2f}m ± {self.height_tolerances[self.stage]:.2f}m")
         print(f"  Min episode length: {self.min_episode_lengths[self.stage]} steps")
+        print(f"  Recovery stage (0.80m) included: Stage 0")
 
     def _apply_stage_settings(self, cfg: Dict[str, Any], stage: int) -> None:
         """Configure curriculum stage with progressive difficulty."""
-        if stage <= 1:
+        if stage == 0:
+            # Stage 0 (0.80m): Recovery training, very forgiving
+            cfg['domain_rand'] = False
+            cfg['max_episode_steps'] = 1500
+            cfg['random_height_init'] = True  # Extra random init for recovery practice
+            cfg['random_height_prob'] = 0.5  # 50% random starts at recovery stage
+        elif stage <= 2:
             # Early stages: no randomization, shorter episodes
             cfg['domain_rand'] = False
             cfg['max_episode_steps'] = 2000
-        elif stage <= 3:
+            cfg['random_height_init'] = True
+            cfg['random_height_prob'] = 0.3
+        elif stage <= 4:
             # Mid stages: light randomization
             cfg['domain_rand'] = True
             cfg['rand_mass_range'] = [0.98, 1.02]
             cfg['rand_friction_range'] = [0.98, 1.02]
             cfg['max_episode_steps'] = 3000
+            cfg['random_height_init'] = True
+            cfg['random_height_prob'] = 0.2
         else:
             # Final stage: full difficulty + longer episodes
             cfg['domain_rand'] = True
             cfg['rand_mass_range'] = [0.95, 1.05]
             cfg['rand_friction_range'] = [0.95, 1.05]
             cfg['max_episode_steps'] = 5000
+            cfg['random_height_init'] = True
+            cfg['random_height_prob'] = 0.1  # Still some random init for robustness
 
     def reset(self, seed: Optional[int] = None):
         # Update target height for current stage
@@ -81,11 +97,11 @@ class StandingCurriculumEnv(StandingEnv):
             height_error = abs(height - current_target)
             
             # SUCCESS CRITERIA (all must be met):
-            # 1. Height within tight tolerance
+            # 1. Height within tolerance
             height_ok = height_error < current_tolerance
-            # 2. Episode lasted long enough (not just luck)
+            # 2. Episode lasted long enough
             long_enough = self.current_step >= min_length
-            # 3. Not terminated due to falling (truncated = timeout is OK)
+            # 3. Not terminated due to falling
             not_fallen = not terminated
             
             success = bool(height_ok and long_enough and not_fallen)
@@ -111,6 +127,8 @@ class StandingCurriculumEnv(StandingEnv):
                     self.rand_mass_range = cfg.get('rand_mass_range', self.rand_mass_range)
                     self.rand_friction_range = cfg.get('rand_friction_range', self.rand_friction_range)
                     self.max_episode_steps = cfg.get('max_episode_steps', self.max_episode_steps)
+                    self.random_height_init = cfg.get('random_height_init', self.random_height_init)
+                    self.random_height_prob = cfg.get('random_height_prob', self.random_height_prob)
                     self.cfg = cfg
                     
                     # Reset success buffer for new stage
@@ -121,6 +139,7 @@ class StandingCurriculumEnv(StandingEnv):
                     print(f"  New target: {self.base_target_height:.2f}m ± {self.height_tolerances[self.stage]:.2f}m")
                     print(f"  Min episode length: {self.min_episode_lengths[self.stage]} steps")
                     print(f"  Domain randomization: {self.domain_rand}")
+                    print(f"  Random height init: {self.random_height_init} (prob={self.random_height_prob})")
                     print(f"{'='*60}\n")
                     
                     info['curriculum_stage_advanced'] = self.stage
@@ -141,3 +160,4 @@ class StandingCurriculumEnv(StandingEnv):
 
 def make_standing_curriculum_env(render_mode: Optional[str] = None, config: Optional[Dict[str, Any]] = None):
     return StandingCurriculumEnv(render_mode=render_mode, config=config)
+
