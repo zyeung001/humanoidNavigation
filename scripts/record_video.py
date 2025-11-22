@@ -131,8 +131,8 @@ def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnor
                 'action_smoothing': yaml_config.get('action_smoothing', True),
                 'action_smoothing_tau': yaml_config.get('action_smoothing_tau', 0.5),
                 # Curriculum settings (will stay at final stage for inference)
-                'curriculum_start_stage': 3,   # Start at final stage
-                'curriculum_max_stage': 3,     # Stay at final stage
+                'curriculum_start_stage': 4,   # Start at FINAL stage (1.40m)
+                'curriculum_max_stage': 4,     # Stay at final stage
             }
             print(f"  Using config from YAML:")
             print(f"    obs_history: {training_config['obs_history']}")
@@ -145,8 +145,8 @@ def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnor
                 'obs_feature_norm': True,
                 'action_smoothing': True,
                 'action_smoothing_tau': 0.5,  # Updated default
-                'curriculum_start_stage': 3,
-                'curriculum_max_stage': 3,
+                'curriculum_start_stage': 4,  # Final stage (1.40m)
+                'curriculum_max_stage': 4,
             }
             print("  Using fallback config (YAML not found)")
         
