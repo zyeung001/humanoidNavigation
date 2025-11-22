@@ -6,6 +6,7 @@ from pathlib import Path
 import cv2
 import gymnasium as gym
 import numpy as np
+import yaml
 
 # Ensure project root is on sys.path (so `src.*` imports work like in training)
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -19,7 +20,7 @@ if SRC_DIR not in sys.path:
 
 from src.utils.visualization import setup_display, test_environment  # noqa: E402
 
-# Optional: import SB3 algorithms we support
+# import SB3 algorithms we support
 try:
     from stable_baselines3 import PPO, A2C, SAC, TD3, DDPG
     from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
@@ -48,6 +49,61 @@ except Exception:
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+
+class InferenceActionWarmup(gym.Wrapper):
+    """
+    Warm up action smoothing history during inference.
+    
+    CRITICAL FIX: Action smoothing creates temporal dependencies.
+    During taining, prev_action has realistic values, but at reset it's zeros.
+    This wrapper builds realistic action history before evaluation starts.
+    """
+    def __init__(self, env, warmup_steps=10, warmup_noise=0.01):
+        super().__init__(env)
+        self.warmup_steps = warmup_steps
+        self.warmup_noise = warmup_noise
+        print(f" InferenceActionWarmup enabled: {warmup_steps} warmup steps")
+    
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        
+        # Warmup phase: take small random actions to build action history
+        for i in range(self.warmup_steps):
+            # Gradually increase noise (start from nearly zero)
+            scale = (i + 1) / self.warmup_steps * self.warmup_noise
+            action = self.env.action_space.sample() * scale
+            obs, _, terminated, truncated, _ = self.env.step(action)
+            
+            # If warmup causes termination (shouldn't happen), restart
+            if terminated or truncated:
+                obs, info = self.env.reset(**kwargs)
+        
+        return obs, info
+
+
+def load_training_config(config_path=None):
+    """Load configuration from training_config.yaml"""
+    if config_path is None:
+        config_path = os.path.join(PROJECT_ROOT, 'config', 'training_config.yaml')
+    
+    if not os.path.exists(config_path):
+        print(f"WARNING: Config file not found at {config_path}")
+        print("Using default hardcoded values")
+        return None
+    
+    try:
+        with open(config_path, 'r') as f:
+            full_config = yaml.safe_load(f)
+        
+        # Extract standing config
+        standing_config = full_config.get('standing', {})
+        print(f" Loaded training config from {config_path}")
+        return standing_config
+    except Exception as e:
+        print(f"ERROR loading config: {e}")
+        return None
+
+
 def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnorm_path=None):
     """Create environment - handles both standard and custom setups"""
     env = None
@@ -62,23 +118,46 @@ def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnor
             return env, False
         
         print(f"Creating custom {task_type} environment...")
-        # Create the base custom environment
-        # CRITICAL: Must match training configuration EXACTLY
-        # Training used CURRICULUM environment with these settings
-        training_config = {
-            'obs_history': 4,              # History stacking (matches training)
-            'obs_include_com': True,        # COM features (matches training)
-            'obs_feature_norm': True,       # Feature normalization (matches training)
-            'action_smoothing': True,       # Action smoothing (matches training)
-            'action_smoothing_tau': 0.2,   # Smoothing parameter (matches training)
-            # Curriculum settings (will stay at final stage for inference)
-            'curriculum_start_stage': 3,   # Start at final stage
-            'curriculum_max_stage': 3,     # Stay at final stage
-        }
-        # Use curriculum environment to match training exactly
+        
+        # Load training configuration from YAML (matches training exactly!)
+        yaml_config = load_training_config()
+        
+        if yaml_config:
+            # Use config from YAML file
+            training_config = {
+                'obs_history': yaml_config.get('obs_history', 4),
+                'obs_include_com': yaml_config.get('obs_include_com', True),
+                'obs_feature_norm': yaml_config.get('obs_feature_norm', True),
+                'action_smoothing': yaml_config.get('action_smoothing', True),
+                'action_smoothing_tau': yaml_config.get('action_smoothing_tau', 0.5),
+                # Curriculum settings (will stay at final stage for inference)
+                'curriculum_start_stage': 3,   # Start at final stage
+                'curriculum_max_stage': 3,     # Stay at final stage
+            }
+            print(f"  Using config from YAML:")
+            print(f"    obs_history: {training_config['obs_history']}")
+            print(f"    action_smoothing_tau: {training_config['action_smoothing_tau']}")
+        else:
+            # Fallback to hardcoded values if YAML not found
+            training_config = {
+                'obs_history': 4,
+                'obs_include_com': True,
+                'obs_feature_norm': True,
+                'action_smoothing': True,
+                'action_smoothing_tau': 0.5,  # Updated default
+                'curriculum_start_stage': 3,
+                'curriculum_max_stage': 3,
+            }
+            print("  Using fallback config (YAML not found)")
+        
+        # Create base environment
         base_env = make_standing_curriculum_env(render_mode=render_mode, config=training_config)
         
-        # CRITICAL FIX: Reset the environment BEFORE wrapping in VecEnv
+        # Wrap with InferenceActionWarmup
+        # This builds realistic action history before evaluation starts
+        base_env = InferenceActionWarmup(base_env, warmup_steps=10)
+        
+        # Reset the environment BEFORE wrapping in VecEnv
         # This allows the observation space to freeze to the correct dimension (1484)
         # Otherwise VecEnv allocates buffer for the initial size (1424)
         print("Pre-warming environment to freeze observation dimension...")
