@@ -128,7 +128,15 @@ def test_height_generalization(model, config, heights=[0.6, 0.8, 1.0, 1.2, 1.35,
         
         for step in range(500):
             action, _ = model.predict(obs, deterministic=True)
-            obs, reward, terminated, truncated, info = env.step(action)
+            
+            # Handle both old gym API (4 returns) and new gymnasium API (5 returns)
+            step_result = env.step(action)
+            if len(step_result) == 4:
+                obs, reward, done, info = step_result
+                terminated = done
+                truncated = False
+            else:
+                obs, reward, terminated, truncated, info = step_result
             
             steps_survived += 1
             total_reward += reward
@@ -179,12 +187,23 @@ def run_episode(model, env, max_steps=500, verbose=False):
     
     for step in range(max_steps):
         action, _ = model.predict(obs, deterministic=True)
-        obs, reward, terminated, truncated, info = env.step(action)
+        
+        # Handle both old gym API (4 returns) and new gymnasium API (5 returns)
+        step_result = env.step(action)
+        
+        if len(step_result) == 4:
+            # Old gym API: (obs, reward, done, info)
+            obs, reward, done, info = step_result
+            terminated = done
+            truncated = False
+        else:
+            # New gymnasium API: (obs, reward, terminated, truncated, info)
+            obs, reward, terminated, truncated, info = step_result
         
         # Extract info (handle vectorized env)
         if hasattr(terminated, '__len__'):
             terminated = terminated[0]
-            truncated = truncated[0]
+            truncated = truncated[0] if hasattr(truncated, '__len__') else False
             reward = reward[0]
             info = info[0] if len(info) > 0 else {}
         
