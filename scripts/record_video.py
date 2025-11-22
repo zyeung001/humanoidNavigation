@@ -150,8 +150,9 @@ def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnor
             }
             print("  Using fallback config (YAML not found)")
         
-        # Create base environment
-        base_env = make_standing_curriculum_env(render_mode=render_mode, config=training_config)
+        # Create base environment (use simple env, not curriculum, for inference)
+        # Curriculum is only needed during training, not for recording/testing
+        base_env = make_standing_env(render_mode=render_mode, config=training_config)
         
         # Wrap with InferenceActionWarmup
         # This builds realistic action history before evaluation starts
