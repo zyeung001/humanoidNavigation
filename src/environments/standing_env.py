@@ -257,11 +257,21 @@ class StandingEnv(gym.Wrapper):
         speed = np.linalg.norm(linear_vel[:2])  # XY velocity only
         velocity_penalty = -1.0 * np.clip(speed - 0.5, 0.0, 2.0)  
         
-        # ========== SPARSE BONUS ==========
+        # ========== DURATION BONUS (for indefinite standing) ==========
+        # Reward agent for maintaining good standing over long periods
         sustained_bonus = 0.0
         if self.current_step > 0 and self.current_step % 100 == 0:
             if height_error < 0.08 and upright_error < 0.08 and height >= 1.32:
+                # Base bonus for 100 steps of good standing
                 sustained_bonus = 100.0
+                
+                # ADDITIONAL: Progressive bonus for longer durations
+                if self.current_step >= 500:
+                    sustained_bonus += 50.0  # Extra reward past 500 steps
+                if self.current_step >= 1000:
+                    sustained_bonus += 50.0  # Extra reward past 1000 steps
+                if self.current_step >= 2000:
+                    sustained_bonus += 100.0  # Big reward for ultra-long standing
         
         # ========== : CONSTANT TERMINATION PENALTY ==========
         # No longer scales with time - removes learned helplessness

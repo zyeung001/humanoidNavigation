@@ -8,7 +8,7 @@ standing:
   device: cuda  # 'cuda' or 'cpu'
   
   # Episode settings
-  max_episode_steps: 5000
+  max_episode_steps: 10000  # Increased for indefinite standing training
   
   # ========== OBSERVATION PROCESSING ==========
   # Enhanced observations for better state estimation
@@ -52,7 +52,7 @@ standing:
   # ========== PPO HYPERPARAMETERS ==========
   
   # Training schedule
-  total_timesteps: 5_000_000
+  total_timesteps: 10_000_000  # Increased for indefinite standing capability
   learning_rate: 0.0003
   final_learning_rate: 0.00005  # Linear decay
   
