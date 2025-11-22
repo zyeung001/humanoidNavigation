@@ -266,7 +266,7 @@ def main():
     
     # Paths (adjust as needed)
     model_path = "models/best_standing_model"  # Without .zip
-    vecnorm_path = "vecnorm.pkl"
+    vecnorm_path = "models/vecnorm.pkl"
     
     # Check if files exist
     if not os.path.exists(f"{model_path}.zip"):
