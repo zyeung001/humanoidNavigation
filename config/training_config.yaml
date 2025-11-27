@@ -182,7 +182,14 @@ walking:
   
   # ========== CURRICULUM LEARNING ==========
   curriculum_start_stage: 0
-  curriculum_max_stage: 6  # 7 stages (0-6)
+  curriculum_max_stage: 2  # Stop at stage 2 = 1.0 m/s (normal walking)
+  # Stage 0: 0.0 m/s (standing)
+  # Stage 1: 0.5 m/s (slow walk)
+  # Stage 2: 1.0 m/s (normal walk) ← STOP HERE
+  # Stage 3: 1.5 m/s (fast walk)
+  # Stage 4: 2.0 m/s (light jog)
+  # Stage 5: 2.5 m/s (jog)
+  # Stage 6: 3.0 m/s (run)
   curriculum_advance_after: 20  # Episodes before considering advancement
   curriculum_success_rate: 0.70  # Success rate needed to advance (stricter than standing)
   
