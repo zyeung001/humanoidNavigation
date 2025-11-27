@@ -36,17 +36,21 @@ class WalkingCurriculumEnv(WalkingEnv):
         self.velocity_error_buffer = []
         self.stage_success_threshold = float(cfg.get('curriculum_success_rate', 0.70))
 
-        # Speed stages (m/s)
-        self.speed_stages = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+        # Speed stages (m/s) - IMPORTANT: Stage 0 now includes walking practice
+        # Stage 0: Mix of standing (50%) and slow walking (50% at 0-0.5 m/s)
+        self.speed_stages = [0.5, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]  # Stage 0 now has 0.5 m/s max
+        
+        # Probability of standing command per stage (rest is walking)
+        self.standing_probability = [0.4, 0.2, 0.1, 0.05, 0.0, 0.0, 0.0]
         
         # Velocity error tolerances (m/s) - gets harder as speed increases
-        self.velocity_tolerances = [0.15, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+        self.velocity_tolerances = [0.35, 0.35, 0.4, 0.5, 0.6, 0.7, 0.8]  # Relaxed for stage 0-1
         
-        # Minimum episode lengths
-        self.min_episode_lengths = [1200, 1200, 1200, 1000, 1000, 1000, 1000]
+        # Minimum episode lengths - reduced for early stages to get more learning signal
+        self.min_episode_lengths = [800, 1000, 1200, 1000, 1000, 1000, 1000]
         
         # Height tolerances (slightly relaxed for faster movement)
-        self.height_tolerances = [0.08, 0.10, 0.12, 0.12, 0.15, 0.15, 0.15]
+        self.height_tolerances = [0.12, 0.12, 0.12, 0.12, 0.15, 0.15, 0.15]  # Relaxed for stage 0
         
         self._apply_stage_settings(cfg, self.stage)
         super().__init__(render_mode=render_mode, config=cfg)
@@ -56,6 +60,7 @@ class WalkingCurriculumEnv(WalkingEnv):
         
         print(f"  Walking curriculum initialized at stage {self.stage}")
         print(f"  Max speed: {self.max_commanded_speed:.2f} m/s")
+        print(f"  Standing probability: {self.standing_probability[self.stage]:.0%}")
         print(f"  Velocity tolerance: ±{self.velocity_tolerances[self.stage]:.2f} m/s")
         print(f"  Min episode length: {self.min_episode_lengths[self.stage]} steps")
 
@@ -65,42 +70,58 @@ class WalkingCurriculumEnv(WalkingEnv):
         cfg['max_commanded_speed'] = self.speed_stages[min(stage, len(self.speed_stages) - 1)]
         
         if stage == 0:
-            # Stage 0 (standing): Very stable, no walking
+            # Stage 0: Mixed standing (40%) and slow walking (60% at 0-0.5 m/s)
+            cfg['domain_rand'] = False
+            cfg['max_episode_steps'] = 1500  # Shorter episodes for faster iteration
+            cfg['random_height_init'] = True
+            cfg['random_height_prob'] = 0.2  # Reduced - focus on walking first
+            cfg['velocity_weight'] = 15.0  # Strong penalty for velocity error
+        elif stage <= 2:
+            # Early walking stages: focus on achieving commanded velocity
             cfg['domain_rand'] = False
             cfg['max_episode_steps'] = 2000
             cfg['random_height_init'] = True
-            cfg['random_height_prob'] = 0.3
-            cfg['velocity_weight'] = 5.0
-        elif stage <= 2:
-            # Early walking stages: light randomization
-            cfg['domain_rand'] = False
-            cfg['max_episode_steps'] = 2500
-            cfg['random_height_init'] = True
-            cfg['random_height_prob'] = 0.2
-            cfg['velocity_weight'] = 5.0
+            cfg['random_height_prob'] = 0.15
+            cfg['velocity_weight'] = 15.0  # Strong signal to encourage walking
         elif stage <= 4:
             # Mid walking stages: moderate randomization
             cfg['domain_rand'] = True
             cfg['rand_mass_range'] = [0.98, 1.02]
             cfg['rand_friction_range'] = [0.98, 1.02]
-            cfg['max_episode_steps'] = 3000
+            cfg['max_episode_steps'] = 2500
             cfg['random_height_init'] = True
-            cfg['random_height_prob'] = 0.15
-            cfg['velocity_weight'] = 4.0  # Slightly lower weight as speed increases
+            cfg['random_height_prob'] = 0.1
+            cfg['velocity_weight'] = 12.0  # Still strong
         else:
             # Final stages: full difficulty
             cfg['domain_rand'] = True
             cfg['rand_mass_range'] = [0.95, 1.05]
             cfg['rand_friction_range'] = [0.95, 1.05]
-            cfg['max_episode_steps'] = 4000
+            cfg['max_episode_steps'] = 3000
             cfg['random_height_init'] = True
             cfg['random_height_prob'] = 0.1
-            cfg['velocity_weight'] = 3.0  # Lower weight for faster running
+            cfg['velocity_weight'] = 10.0  # Slightly reduced for stability
 
     def reset(self, seed: Optional[int] = None):
         # Update max speed for current stage
-        self.max_commanded_speed = self.speed_stages[min(self.stage, len(self.speed_stages) - 1)]
-        return super().reset(seed=seed)
+        current_stage = min(self.stage, len(self.speed_stages) - 1)
+        self.max_commanded_speed = self.speed_stages[current_stage]
+        
+        # Mix standing and walking commands based on curriculum stage
+        standing_prob = self.standing_probability[current_stage]
+        if np.random.random() < standing_prob:
+            # Force standing command for this episode
+            self.fixed_command = (0.0, 0.0)
+        else:
+            # Allow walking command (sampled in parent reset)
+            self.fixed_command = None
+        
+        obs, info = super().reset(seed=seed)
+        
+        # Clear fixed_command after reset so next episode can choose fresh
+        self.fixed_command = None
+        
+        return obs, info
 
     def step(self, action):
         obs, reward, terminated, truncated, info = super().step(action)
@@ -173,6 +194,7 @@ class WalkingCurriculumEnv(WalkingEnv):
                     print(f"\n{'='*60}")
                     print(f" CURRICULUM ADVANCED: Stage {old_stage} → {self.stage}")
                     print(f"  New max speed: {self.max_commanded_speed:.2f} m/s")
+                    print(f"  Standing probability: {self.standing_probability[self.stage]:.0%}")
                     print(f"  Velocity tolerance: ±{self.velocity_tolerances[self.stage]:.2f} m/s")
                     print(f"  Min episode length: {self.min_episode_lengths[self.stage]} steps")
                     print(f"  Domain randomization: {self.domain_rand}")
@@ -196,11 +218,13 @@ class WalkingCurriculumEnv(WalkingEnv):
     
     def get_curriculum_info(self):
         """Get current curriculum state for logging."""
+        current_stage = min(self.stage, len(self.speed_stages) - 1)
         return {
             'stage': self.stage,
             'max_speed': self.max_commanded_speed,
-            'velocity_tolerance': self.velocity_tolerances[min(self.stage, len(self.velocity_tolerances) - 1)],
-            'min_episode_length': self.min_episode_lengths[min(self.stage, len(self.min_episode_lengths) - 1)],
+            'standing_probability': self.standing_probability[current_stage],
+            'velocity_tolerance': self.velocity_tolerances[current_stage],
+            'min_episode_length': self.min_episode_lengths[current_stage],
             'success_rate': np.mean(self.success_buffer) if self.success_buffer else 0.0,
             'avg_velocity_error': np.mean(self.velocity_error_buffer) if self.velocity_error_buffer else 0.0,
         }

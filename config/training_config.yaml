@@ -174,7 +174,13 @@ walking:
   
   # ========== WALKING-SPECIFIC ==========
   
-  velocity_weight: 5.0  # Velocity tracking reward weight
+  velocity_weight: 15.0  # Velocity tracking reward weight (increased for stronger signal)
+  # NOTE: This is the penalty coefficient. The positive rewards are now much stronger:
+  # - velocity_match_reward: up to 20 points
+  # - precision_bonus: up to 8 points  
+  # - direction_reward: up to 15 points
+  # - speed_match_bonus: up to 10 points
+  # Total positive velocity reward: up to ~50 points (competing with standing rewards)
   max_commanded_speed: 0.0  # Curriculum controls this
   
   # Speed curriculum stages (m/s)
@@ -185,7 +191,7 @@ walking:
   curriculum_max_stage: 2  # Stop at stage 2 = 1.0 m/s (normal walking)
   # Stage 0: 0.0 m/s (standing)
   # Stage 1: 0.5 m/s (slow walk)
-  # Stage 2: 1.0 m/s (normal walk) ← STOP HERE
+  # Stage 2: 1.0 m/s (normal walk)
   # Stage 3: 1.5 m/s (fast walk)
   # Stage 4: 2.0 m/s (light jog)
   # Stage 5: 2.5 m/s (jog)
