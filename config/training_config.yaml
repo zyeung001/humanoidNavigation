@@ -139,3 +139,153 @@ standing:
   video_freq: 500000  # Record video every 500k steps
   episode_print_freq: 1000
 
+
+# ============================================================================
+# WALKING CONFIGURATION
+# ============================================================================
+
+walking:
+  # ========== ENVIRONMENT CONFIGURATION ==========
+  
+  # Basic settings
+  seed: 42
+  n_envs: 8  # Parallel environments
+  device: cuda  # 'cuda' or 'cpu'
+  
+  # Episode settings
+  max_episode_steps: 5000
+  
+  # ========== OBSERVATION PROCESSING ==========
+  # Walking uses same obs processing as standing + velocity commands
+  
+  obs_history: 4  # Stack 4 frames for temporal information
+  obs_include_com: true  # Include center-of-mass features (+6 dims)
+  obs_feature_norm: true  # Normalize features with tanh
+  # Note: Walking adds +2 dims for commanded velocity
+  # Total: (365 + 6 + 2) * 4 = 1492 dims
+  
+  # ========== ACTION PREPROCESSING ==========
+  
+  action_smoothing: true
+  action_smoothing_tau: 0.2  # CRITICAL: Same as standing training
+  
+  action_symmetry: false
+  pd_assist: false
+  
+  # ========== WALKING-SPECIFIC ==========
+  
+  velocity_weight: 5.0  # Velocity tracking reward weight
+  max_commanded_speed: 0.0  # Curriculum controls this
+  
+  # Speed curriculum stages (m/s)
+  curriculum_max_speed_stages: [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+  
+  # ========== CURRICULUM LEARNING ==========
+  curriculum_start_stage: 0
+  curriculum_max_stage: 6  # 7 stages (0-6)
+  curriculum_advance_after: 20  # Episodes before considering advancement
+  curriculum_success_rate: 0.70  # Success rate needed to advance (stricter than standing)
+  
+  # ========== DOMAIN RANDOMIZATION ==========
+  
+  domain_rand: false  # Start without, enable in later stages
+  rand_mass_range: [0.95, 1.05]  
+  rand_friction_range: [0.95, 1.05]  
+  
+  # ========== REWARD FUNCTION ==========
+  target_height: 1.40
+  height_error_threshold: 0.15  # Slightly relaxed for walking
+  height_stability_threshold: 0.20
+  
+  reward_caps:
+    max_height_maintenance_penalty: 15.0  
+    recovery_bonus_scale: 50.0  
+    termination_penalty_constant: 50.0  
+  
+  # ========== PPO HYPERPARAMETERS ==========
+  
+  # Training schedule - same as standing
+  total_timesteps: 15_000_000  # More timesteps for walking
+  learning_rate: 0.0003
+  final_learning_rate: 0.00005  # Linear decay
+  
+  # PPO algorithm parameters
+  n_steps: 2048  # Steps per environment per update
+  batch_size: 256  # Minibatch size
+  n_epochs: 10  # Gradient steps per update
+  
+  gamma: 0.995  # Discount factor
+  gae_lambda: 0.95  # GAE parameter
+  
+  # Policy optimization
+  clip_range: 0.2
+  final_clip_range: 0.1  # Linear decay
+  
+  # Entropy regularization
+  ent_coef: 0.02  # Initial exploration
+  final_ent_coef: 0.005  # Final exploitation
+  
+  # Value function
+  vf_coef: 0.5
+  
+  # Gradient clipping
+  max_grad_norm: 0.5
+  
+  # ========== VECNORMALIZE CONFIGURATION ==========
+  
+  normalize: true
+  vecnormalize_clip_obs: 50.0 
+  vecnormalize_clip_reward: 50.0  
+  
+  # ========== NETWORK ARCHITECTURE ==========
+  # Same architecture as standing - [512, 512, 256] is plenty
+  
+  policy_kwargs:
+    net_arch:
+      - pi: [512, 512, 256]  # Policy network
+        vf: [512, 512, 256]  # Value network
+    activation_fn: SiLU  # Smooth activation
+    ortho_init: true  # Orthogonal initialization
+  
+  # ========== LOGGING & CHECKPOINTING ==========
+  
+  verbose: 1
+  
+  log_dir: data/logs/walking
+  use_tensorboard: true
+  
+  # Evaluation
+  n_eval_episodes: 5
+  eval_freq: 100_000  # Every 100k steps
+  
+  # Checkpointing
+  save_freq: 250_000  # Every 250k steps
+  checkpoint_dir: data/checkpoints/walking
+  checkpoint_prefix: walking
+  
+  # Model saving
+  best_model_path: models/best_walking_model
+  final_model_path: models/final_walking_model
+  vecnormalize_path: models/vecnorm_walking.pkl
+  
+  # Success thresholds
+  target_reward_threshold: 3000
+  velocity_error_threshold: 0.4  # m/s - max acceptable velocity tracking error
+  
+  # Early stopping
+  early_stop:
+    patience: 5  # Number of consecutive successes needed
+  
+  # ========== ADVANCED OPTIONS ==========
+  
+  # Random height initialization
+  random_height_init: true  
+  random_height_prob: 0.2  # Less frequent for walking
+  random_height_range: [-0.2, 0.1]  # Smaller perturbations
+  
+  # WandB logging 
+  use_wandb: false
+  wandb_project: humanoid_walking
+  wandb_log_freq: 10000
+  video_freq: 500000  # Record video every 500k steps
+  episode_print_freq: 1000

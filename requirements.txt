@@ -1,5 +1,7 @@
 gymnasium[mujoco]
+stable-baselines3>=2.0.0
+torch>=2.0.0
 opencv-python
-numpy
-matplotlib
-pyyaml
+numpy>=1.21.0
+matplotlib>=3.5.0
+pyyaml>=6.0
