@@ -49,8 +49,9 @@ class WalkingCurriculumEnv(WalkingEnv):
         # Minimum episode lengths - reduced for early stages to get more learning signal
         self.min_episode_lengths = [800, 1000, 1200, 1000, 1000, 1000, 1000]
         
-        # Height tolerances (slightly relaxed for faster movement)
-        self.height_tolerances = [0.12, 0.12, 0.12, 0.12, 0.15, 0.15, 0.15]  # Relaxed for stage 0
+        # Height tolerances (relaxed for walking - natural walking height is lower than standing)
+        # Standing: 1.4m, Walking typically: 1.2-1.3m → need ±0.25m tolerance
+        self.height_tolerances = [0.25, 0.25, 0.25, 0.20, 0.20, 0.18, 0.18]
         
         self._apply_stage_settings(cfg, self.stage)
         super().__init__(render_mode=render_mode, config=cfg)
