@@ -91,13 +91,6 @@ python scripts/test/test_walking.py \
     --episodes 5 --steps 2000
 ```
 
-## Documentation
-
-- **[Complete Summary](docs/SUMMARY.md)** - Overview of entire project
-- **[Walking Implementation Guide](docs/WALKING_IMPLEMENTATION.md)** - Comprehensive guide to the walking controller
-- **[Project Organization](docs/PROJECT_ORGANIZATION.md)** - Code structure and organization guide
-- **[Original Task Specification](docs/prompt.md)** - Detailed requirements and specifications
-
 ## Key Capabilities
 
 ### Standing Controller
