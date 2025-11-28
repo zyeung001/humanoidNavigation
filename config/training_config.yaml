@@ -174,13 +174,13 @@ walking:
   
   # ========== WALKING-SPECIFIC ==========
   
-  velocity_weight: 15.0  # Velocity tracking reward weight (increased for stronger signal)
-  # NOTE: This is the penalty coefficient. The positive rewards are now much stronger:
-  # - velocity_match_reward: up to 20 points
-  # - precision_bonus: up to 8 points  
-  # - direction_reward: up to 15 points
-  # - speed_match_bonus: up to 10 points
-  # Total positive velocity reward: up to ~50 points (competing with standing rewards)
+  velocity_weight: 5.0  # Velocity tracking penalty weight (moderate for stability)
+  # Velocity reward components (stabilized):
+  # - velocity_match_reward: up to 8 points
+  # - precision_bonus: up to 4 points  
+  # - direction_reward: up to 6 points
+  # - speed_match_bonus: up to 4 points
+  # Total positive velocity reward: up to ~22 points
   max_commanded_speed: 0.0  # Curriculum controls this
   
   # Speed curriculum stages (m/s)
@@ -217,10 +217,10 @@ walking:
   
   # ========== PPO HYPERPARAMETERS ==========
   
-  # Training schedule - same as standing
-  total_timesteps: 15_000_000  # More timesteps for walking
-  learning_rate: 0.0003
-  final_learning_rate: 0.00005  # Linear decay
+  # Training schedule - more conservative for stability
+  total_timesteps: 10_000_000  # Reduced - should converge faster with stable rewards
+  learning_rate: 0.0001  # Lower LR for stability (was 0.0003)
+  final_learning_rate: 0.00003  # Linear decay
   
   # PPO algorithm parameters
   n_steps: 2048  # Steps per environment per update

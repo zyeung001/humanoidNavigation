@@ -43,11 +43,11 @@ class WalkingCurriculumEnv(WalkingEnv):
         # Probability of standing command per stage (rest is walking)
         self.standing_probability = [0.4, 0.2, 0.1, 0.05, 0.0, 0.0, 0.0]
         
-        # Velocity error tolerances (m/s) - gets harder as speed increases
-        self.velocity_tolerances = [0.35, 0.35, 0.4, 0.5, 0.6, 0.7, 0.8]  # Relaxed for stage 0-1
+        # Velocity error tolerances (m/s) - relaxed for early stages
+        self.velocity_tolerances = [0.45, 0.45, 0.5, 0.55, 0.6, 0.7, 0.8]  # More lenient
         
-        # Minimum episode lengths - reduced for early stages to get more learning signal
-        self.min_episode_lengths = [800, 1000, 1200, 1000, 1000, 1000, 1000]
+        # Minimum episode lengths - relaxed for early stages
+        self.min_episode_lengths = [500, 600, 800, 800, 1000, 1000, 1000]
         
         # Height tolerances (relaxed for walking - natural walking height is lower than standing)
         # Standing: 1.4m, Walking typically: 1.2-1.3m → need ±0.25m tolerance
@@ -75,15 +75,15 @@ class WalkingCurriculumEnv(WalkingEnv):
             cfg['domain_rand'] = False
             cfg['max_episode_steps'] = 1500  # Shorter episodes for faster iteration
             cfg['random_height_init'] = True
-            cfg['random_height_prob'] = 0.2  # Reduced - focus on walking first
-            cfg['velocity_weight'] = 15.0  # Strong penalty for velocity error
+            cfg['random_height_prob'] = 0.15  # Reduced - focus on walking first
+            cfg['velocity_weight'] = 5.0  # Moderate penalty for velocity error
         elif stage <= 2:
             # Early walking stages: focus on achieving commanded velocity
             cfg['domain_rand'] = False
             cfg['max_episode_steps'] = 2000
             cfg['random_height_init'] = True
-            cfg['random_height_prob'] = 0.15
-            cfg['velocity_weight'] = 15.0  # Strong signal to encourage walking
+            cfg['random_height_prob'] = 0.1
+            cfg['velocity_weight'] = 5.0  # Same moderate weight
         elif stage <= 4:
             # Mid walking stages: moderate randomization
             cfg['domain_rand'] = True
@@ -92,7 +92,7 @@ class WalkingCurriculumEnv(WalkingEnv):
             cfg['max_episode_steps'] = 2500
             cfg['random_height_init'] = True
             cfg['random_height_prob'] = 0.1
-            cfg['velocity_weight'] = 12.0  # Still strong
+            cfg['velocity_weight'] = 4.0  # Slightly reduced
         else:
             # Final stages: full difficulty
             cfg['domain_rand'] = True
@@ -101,7 +101,7 @@ class WalkingCurriculumEnv(WalkingEnv):
             cfg['max_episode_steps'] = 3000
             cfg['random_height_init'] = True
             cfg['random_height_prob'] = 0.1
-            cfg['velocity_weight'] = 10.0  # Slightly reduced for stability
+            cfg['velocity_weight'] = 3.0  # Lower for stability at high speeds
 
     def reset(self, seed: Optional[int] = None):
         # Update max speed for current stage
