@@ -41,13 +41,17 @@ class WalkingCurriculumEnv(WalkingEnv):
         self.speed_stages = [0.5, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]  # Stage 0 now has 0.5 m/s max
         
         # Probability of standing command per stage (rest is walking)
-        self.standing_probability = [0.4, 0.2, 0.1, 0.05, 0.0, 0.0, 0.0]
+        # FIXED: Reduced standing probability to force walking practice from the start
+        # Old: [0.4, 0.2, 0.1, 0.05, 0.0, 0.0, 0.0] - too much standing, hindered forward momentum
+        self.standing_probability = [0.1, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0]
         
         # Velocity error tolerances (m/s) - relaxed for early stages
         self.velocity_tolerances = [0.45, 0.45, 0.5, 0.55, 0.6, 0.7, 0.8]  # More lenient
         
         # Minimum episode lengths - relaxed for early stages
-        self.min_episode_lengths = [500, 600, 800, 800, 1000, 1000, 1000]
+        # FIXED: Lowered early stage requirements to allow curriculum advancement
+        # Old: [500, 600, 800, ...] - too high, curriculum never advanced
+        self.min_episode_lengths = [300, 400, 600, 800, 1000, 1000, 1000]
         
         # Height tolerances (relaxed for walking - natural walking height is lower than standing)
         # Standing: 1.4m, Walking typically: 1.2-1.3m → need ±0.25m tolerance

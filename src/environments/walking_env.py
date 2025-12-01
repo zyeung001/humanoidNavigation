@@ -252,8 +252,12 @@ class WalkingEnv(gym.Wrapper):
         velocity_tracking_reward = 0.0
         
         # 1. POSITIVE REWARD for achieving commanded velocity (up to 8 points)
-        # Exponential reward peaks when vel_error is 0
-        velocity_match_reward = 8.0 * np.exp(-4.0 * vel_error**2)
+        # FIXED: Wider bandwidth with linear component for gradient at high errors
+        # Old: 8.0 * np.exp(-4.0 * vel_error**2) - too narrow, gradient vanishes at error > 0.5
+        velocity_match_reward = (
+            6.0 * np.exp(-2.0 * vel_error**2) +  # Softer exponential (wider bandwidth)
+            2.0 * np.exp(-0.5 * vel_error)       # Linear-ish tail for high errors
+        )
         velocity_tracking_reward += velocity_match_reward
         
         # 2. BONUS for very low velocity error (< 0.15 m/s gets extra 4 points)
@@ -284,6 +288,12 @@ class WalkingEnv(gym.Wrapper):
             if actual_speed < 0.05:
                 standing_when_walking_penalty = -5.0
                 velocity_tracking_reward += standing_when_walking_penalty
+            
+            # FIXED: Add movement shaping reward - reward ANY forward progress
+            # This provides gradient even when tracking is poor
+            forward_progress = max(0.0, projected_speed)
+            movement_shaping = 3.0 * np.tanh(forward_progress * 2.0)  # Saturates at 3 pts
+            velocity_tracking_reward += movement_shaping
         
         # Scale factor (kept at 1.0 for stability)
         walking_scale = 1.0

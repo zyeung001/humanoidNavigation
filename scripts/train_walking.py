@@ -29,7 +29,6 @@ from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNorm
 from stable_baselines3.common.callbacks import CallbackList, BaseCallback
 
 from src.environments.walking_curriculum import make_walking_curriculum_env
-from src.agents.diagnostics import DiagnosticsCallback
 
 
 def load_yaml(path: str):
