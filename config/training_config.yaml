@@ -174,7 +174,7 @@ walking:
   
   # ========== WALKING-SPECIFIC ==========
   
-  velocity_weight: 8.0  # FIXED: Increased from 5.0 to prioritize velocity tracking over standing
+  velocity_weight: 5.0  # Keep moderate - higher values destabilize the agent
   # Velocity reward components (stabilized):
   # - velocity_match_reward: up to 8 points
   # - precision_bonus: up to 4 points  
