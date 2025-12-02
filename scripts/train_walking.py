@@ -27,6 +27,7 @@ import torch
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 from stable_baselines3.common.callbacks import CallbackList, BaseCallback
+from stable_baselines3.common.monitor import Monitor
 
 from src.environments.walking_curriculum import make_walking_curriculum_env
 
@@ -58,6 +59,9 @@ def make_env_fns(n_envs: int, seed: int, cfg: dict):
         def _init():
             os.environ.setdefault("MUJOCO_GL", "egl")
             env = make_walking_curriculum_env(render_mode=None, config=cfg)
+            # CRITICAL: Wrap with Monitor to track episode statistics
+            # This populates info['episode'] with 'l' (length) and 'r' (reward)
+            env = Monitor(env)
             if hasattr(env, 'reset'):
                 env.reset(seed=seed + rank)
             try:
