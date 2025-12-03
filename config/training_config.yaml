@@ -167,43 +167,54 @@ walking:
   # ========== ACTION PREPROCESSING ==========
   
   action_smoothing: true
-  action_smoothing_tau: 0.2  # CRITICAL: Same as standing training
+  action_smoothing_tau: 0.25  # Slightly higher for stability during recovery
   
   action_symmetry: false
   pd_assist: false
   
   # ========== WALKING-SPECIFIC ==========
   
-  velocity_weight: 5.0  # Keep moderate - higher values destabilize the agent
+  velocity_weight: 4.0  # Slightly reduced for stability during recovery
   # Velocity reward components (stabilized):
   # - velocity_match_reward: up to 8 points
   # - precision_bonus: up to 4 points  
   # - direction_reward: up to 6 points
   # - speed_match_bonus: up to 4 points
-  # Total positive velocity reward: up to ~22 points
-  max_commanded_speed: 0.0  # Curriculum controls this
+  # - movement_shaping: up to 3 points
+  # Total positive velocity reward: up to ~25 points
+  max_commanded_speed: 0.3  # Starting speed (curriculum controls this)
   
-  # Speed curriculum stages (m/s)
-  curriculum_max_speed_stages: [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+  # Speed curriculum stages (m/s) - progressive from very slow to running
+  curriculum_max_speed_stages: [0.3, 0.6, 1.0, 1.5, 2.0, 2.5, 3.0]
   
-  # ========== CURRICULUM LEARNING ==========
+  # ========== CURRICULUM LEARNING (RELAXED) ==========
   curriculum_start_stage: 0
-  curriculum_max_stage: 2  # Stop at stage 2 = 1.0 m/s (normal walking)
-  # Stage 0: 0.0 m/s (standing)
-  # Stage 1: 0.5 m/s (slow walk)
+  curriculum_max_stage: 4  # Target stage 4 = 2.0 m/s (light jog)
+  # Stage 0: 0.3 m/s (very slow walk) - easiest
+  # Stage 1: 0.6 m/s (slow walk)
   # Stage 2: 1.0 m/s (normal walk)
   # Stage 3: 1.5 m/s (fast walk)
   # Stage 4: 2.0 m/s (light jog)
   # Stage 5: 2.5 m/s (jog)
   # Stage 6: 3.0 m/s (run)
-  curriculum_advance_after: 20  # Episodes before considering advancement
-  curriculum_success_rate: 0.70  # Success rate needed to advance (stricter than standing)
+  curriculum_advance_after: 15  # Faster iteration
+  curriculum_success_rate: 0.50  # RELAXED: 50% success rate to advance
+  
+  # Direction diversity - train with different velocity directions
+  direction_diversity: true
+  
+  # ========== ROBUSTNESS TRAINING ==========
+  # Push perturbations for recovery training
+  push_enabled: true
+  push_interval: 250  # Apply push every N steps
+  push_magnitude_range: [30.0, 100.0]  # Force in Newtons (start gentle)
+  push_duration: 4  # Steps to apply push
   
   # ========== DOMAIN RANDOMIZATION ==========
   
-  domain_rand: false  # Start without, enable in later stages
-  rand_mass_range: [0.95, 1.05]  
-  rand_friction_range: [0.95, 1.05]  
+  domain_rand: false  # Start without, curriculum enables in later stages
+  rand_mass_range: [0.97, 1.03]  # Gentler initially
+  rand_friction_range: [0.97, 1.03]  
   
   # ========== REWARD FUNCTION ==========
   target_height: 1.40
@@ -291,10 +302,14 @@ walking:
   
   # ========== ADVANCED OPTIONS ==========
   
-  # Random height initialization
+  # Random height initialization for recovery training
   random_height_init: true  
-  random_height_prob: 0.2  # Less frequent for walking
-  random_height_range: [-0.2, 0.1]  # Smaller perturbations
+  random_height_prob: 0.25  # 25% of episodes start with perturbation
+  random_height_range: [-0.25, 0.1]  # Mostly downward perturbations to train recovery
+  
+  # Velocity perturbations at reset
+  random_velocity_init: true
+  random_velocity_range: [-0.3, 0.3]  # m/s - starting velocity perturbation
   
   # WandB logging 
   use_wandb: false

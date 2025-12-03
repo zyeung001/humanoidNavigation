@@ -31,31 +31,40 @@ class WalkingCurriculumEnv(WalkingEnv):
         cfg = (config or {}).copy()
         self.stage = int(cfg.get('curriculum_start_stage', 0))
         self.max_stage = int(cfg.get('curriculum_max_stage', 6))
-        self.advance_after = int(cfg.get('curriculum_advance_after', 20))
+        self.advance_after = int(cfg.get('curriculum_advance_after', 15))  # Reduced for faster iteration
         self.success_buffer = []
         self.velocity_error_buffer = []
-        self.stage_success_threshold = float(cfg.get('curriculum_success_rate', 0.70))
+        self.episode_length_buffer = []  # Track episode lengths for advancement
+        self.stage_success_threshold = float(cfg.get('curriculum_success_rate', 0.50))  # RELAXED: 50% instead of 70%
 
-        # Speed stages (m/s) - IMPORTANT: Stage 0 now includes walking practice
-        # Stage 0: Mix of standing (50%) and slow walking (50% at 0-0.5 m/s)
-        self.speed_stages = [0.5, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]  # Stage 0 now has 0.5 m/s max
+        # Speed stages (m/s) - Progressive difficulty
+        # Stage 0: 0.3 m/s - Very slow walk (easier to learn)
+        # Stage 1: 0.6 m/s - Slow walk  
+        # Stage 2: 1.0 m/s - Normal walk
+        # Stage 3: 1.5 m/s - Fast walk
+        # Stage 4: 2.0 m/s - Light jog
+        # Stage 5: 2.5 m/s - Jog
+        # Stage 6: 3.0 m/s - Fast jog / run
+        self.speed_stages = [0.3, 0.6, 1.0, 1.5, 2.0, 2.5, 3.0]
         
         # Probability of standing command per stage (rest is walking)
-        # FIXED: Reduced standing probability to force walking practice from the start
-        # Old: [0.4, 0.2, 0.1, 0.05, 0.0, 0.0, 0.0] - too much standing, hindered forward momentum
-        self.standing_probability = [0.1, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0]
+        # FIXED: Very low standing probability - we want to learn walking!
+        self.standing_probability = [0.05, 0.02, 0.0, 0.0, 0.0, 0.0, 0.0]
         
-        # Velocity error tolerances (m/s) - relaxed for early stages
-        self.velocity_tolerances = [0.45, 0.45, 0.5, 0.55, 0.6, 0.7, 0.8]  # More lenient
+        # Velocity error tolerances (m/s) - RELAXED significantly for early stages
+        # The model needs time to learn, so be lenient at first
+        self.velocity_tolerances = [0.6, 0.55, 0.5, 0.45, 0.4, 0.4, 0.4]
         
-        # Minimum episode lengths - relaxed for early stages
-        # FIXED: Lowered early stage requirements to allow curriculum advancement
-        # Old: [500, 600, 800, ...] - too high, curriculum never advanced
-        self.min_episode_lengths = [300, 400, 600, 800, 1000, 1000, 1000]
+        # Minimum episode lengths - MUCH MORE RELAXED for curriculum progression
+        # Start very easy and increase gradually
+        self.min_episode_lengths = [100, 150, 200, 300, 400, 500, 600]
         
-        # Height tolerances (relaxed for walking - natural walking height is lower than standing)
-        # Standing: 1.4m, Walking typically: 1.2-1.3m → need ±0.25m tolerance
-        self.height_tolerances = [0.25, 0.25, 0.25, 0.20, 0.20, 0.18, 0.18]
+        # Height tolerances (walking naturally has lower COM)
+        # Standing: 1.4m, Walking: 1.1-1.3m typical
+        self.height_tolerances = [0.35, 0.35, 0.30, 0.28, 0.25, 0.22, 0.20]
+        
+        # Direction diversity - train in all directions from the start
+        self.direction_diversity = cfg.get('direction_diversity', True)
         
         self._apply_stage_settings(cfg, self.stage)
         super().__init__(render_mode=render_mode, config=cfg)
@@ -117,6 +126,32 @@ class WalkingCurriculumEnv(WalkingEnv):
         if np.random.random() < standing_prob:
             # Force standing command for this episode
             self.fixed_command = (0.0, 0.0)
+        elif self.direction_diversity:
+            # Sample diverse velocity commands including:
+            # - Forward (most common for learning)
+            # - Diagonal (45°, 135°, etc.)
+            # - Lateral (90°, 270°)
+            # - Backward (rare, harder)
+            direction_type = np.random.choice(['forward', 'diagonal', 'lateral', 'backward', 'random'],
+                                             p=[0.5, 0.25, 0.15, 0.02, 0.08])
+            
+            speed = np.random.uniform(0.1, self.max_commanded_speed)
+            
+            if direction_type == 'forward':
+                angle = np.random.uniform(-np.pi/6, np.pi/6)  # ±30° from forward
+            elif direction_type == 'diagonal':
+                base_angles = [np.pi/4, 3*np.pi/4, -np.pi/4, -3*np.pi/4]
+                angle = np.random.choice(base_angles) + np.random.uniform(-np.pi/8, np.pi/8)
+            elif direction_type == 'lateral':
+                angle = np.random.choice([np.pi/2, -np.pi/2]) + np.random.uniform(-np.pi/8, np.pi/8)
+            elif direction_type == 'backward':
+                angle = np.pi + np.random.uniform(-np.pi/6, np.pi/6)
+            else:  # random
+                angle = np.random.uniform(-np.pi, np.pi)
+            
+            vx = speed * np.cos(angle)
+            vy = speed * np.sin(angle)
+            self.fixed_command = (vx, vy)
         else:
             # Allow walking command (sampled in parent reset)
             self.fixed_command = None
@@ -142,22 +177,35 @@ class WalkingCurriculumEnv(WalkingEnv):
             min_length = self.min_episode_lengths[current_stage]
             height_tol = self.height_tolerances[current_stage]
             
-            # Get average velocity error over episode
-            avg_vel_error = np.mean(self.reward_history.get('velocity_tracking', [0.0])) if self.reward_history.get('velocity_tracking') else 0.0
-            # Convert from reward to error (reward = -error^2 * weight)
-            # Approximate: just use final velocity error
+            # Track episode length for progress
+            self.episode_length_buffer.append(self.current_step)
+            if len(self.episode_length_buffer) > self.advance_after * 2:
+                self.episode_length_buffer = self.episode_length_buffer[-self.advance_after:]
             
-            # SUCCESS CRITERIA (all must be met):
-            # 1. Velocity error within tolerance
-            vel_ok = velocity_error < current_vel_tol
-            # 2. Height maintained (within tolerance of target)
-            height_ok = abs(height - self.base_target_height) < height_tol
+            # RELAXED SUCCESS CRITERIA - focus on survival and basic tracking
+            # Only need to meet 2 out of 3 criteria for "soft success"
+            criteria_met = 0
+            
+            # 1. Velocity error within tolerance (or close)
+            vel_ok = velocity_error < current_vel_tol * 1.2  # 20% buffer
+            if vel_ok:
+                criteria_met += 1
+            
+            # 2. Height maintained (allow more variation during walking)
+            height_ok = height > 1.0 and height < 1.6  # Wide range for walking
+            if height_ok:
+                criteria_met += 1
+            
             # 3. Episode lasted long enough
             long_enough = self.current_step >= min_length
-            # 4. Not terminated due to falling
+            if long_enough:
+                criteria_met += 1
+            
+            # 4. Not terminated due to falling (bonus criteria)
             not_fallen = not terminated
             
-            success = bool(vel_ok and height_ok and long_enough and not_fallen)
+            # SUCCESS: Either didn't fall + 2 criteria, or all 3 criteria
+            success = bool((not_fallen and criteria_met >= 2) or criteria_met == 3)
 
             self.success_buffer.append(1 if success else 0)
             self.velocity_error_buffer.append(velocity_error)
@@ -166,13 +214,21 @@ class WalkingCurriculumEnv(WalkingEnv):
                 self.success_buffer = self.success_buffer[-self.advance_after:]
                 self.velocity_error_buffer = self.velocity_error_buffer[-self.advance_after:]
 
-            # ADVANCE: Check both success rate and average velocity error
+            # ADVANCE: Check success rate OR improvement in episode length
             avg_recent_vel_error = np.mean(self.velocity_error_buffer) if self.velocity_error_buffer else float('inf')
+            avg_ep_length = np.mean(self.episode_length_buffer[-self.advance_after:]) if self.episode_length_buffer else 0
             success_rate = np.mean(self.success_buffer) if self.success_buffer else 0.0
             
+            # Advancement conditions (more lenient):
+            # 1. Standard: success rate >= threshold AND velocity error < tolerance
+            # 2. Alternative: avg episode length > 2x min AND not falling frequently
+            standard_advance = (success_rate >= self.stage_success_threshold and 
+                               avg_recent_vel_error < current_vel_tol * 1.3)
+            length_based_advance = (avg_ep_length > min_length * 2.0 and 
+                                   success_rate >= 0.3)  # 30% is enough if episodes are long
+            
             if (len(self.success_buffer) == self.advance_after and 
-                success_rate >= self.stage_success_threshold and
-                avg_recent_vel_error < current_vel_tol):
+                (standard_advance or length_based_advance)):
                 
                 if self.stage < self.max_stage:
                     old_stage = self.stage

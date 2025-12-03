@@ -52,6 +52,14 @@ class WalkingEnv(gym.Wrapper):
         self.random_height_prob = self.cfg.get('random_height_prob', 0.3)
         self.random_height_range = self.cfg.get('random_height_range', [-0.3, 0.1])
         
+        # Push perturbations for robustness training
+        self.push_enabled = self.cfg.get('push_enabled', True)
+        self.push_interval = self.cfg.get('push_interval', 200)  # Apply push every N steps
+        self.push_magnitude_range = self.cfg.get('push_magnitude_range', [50.0, 150.0])  # Force magnitude (N)
+        self.push_duration = self.cfg.get('push_duration', 5)  # Steps to apply push
+        self.push_countdown = 0  # Counter for push duration
+        self.current_push_force = np.zeros(3)  # Current push force being applied
+        
         # Reward caps from config
         reward_caps = self.cfg.get('reward_caps', {})
         self.max_height_maintenance_penalty = reward_caps.get('max_height_maintenance_penalty', 15.0)
@@ -143,6 +151,14 @@ class WalkingEnv(gym.Wrapper):
         self.prev_action[:] = 0.0
         self.obs_history = []  # Clear history
         
+        # Clear push perturbation state
+        self.push_countdown = 0
+        self.current_push_force = np.zeros(3)
+        try:
+            self.env.unwrapped.data.xfrc_applied[:] = 0.0
+        except Exception:
+            pass
+        
         # Clear reward history
         for key in self.reward_history:
             self.reward_history[key] = []
@@ -206,6 +222,9 @@ class WalkingEnv(gym.Wrapper):
     def step(self, action):
         # Action preprocessing
         proc_action = self._process_action(np.asarray(action, dtype=np.float32))
+        
+        # Apply push perturbation for robustness training
+        self._apply_push_perturbation()
 
         observation, base_reward, terminated, truncated, info = self.env.step(proc_action)
         self.current_step += 1
@@ -549,6 +568,48 @@ class WalkingEnv(gym.Wrapper):
             'velocity_error': vel_error,
             'actual_speed': np.sqrt(linear_vel[0]**2 + linear_vel[1]**2),
         }
+    
+    def _apply_push_perturbation(self):
+        """Apply periodic push perturbations to train robustness and recovery."""
+        if not self.push_enabled:
+            return
+        
+        # Check if we're currently applying a push
+        if self.push_countdown > 0:
+            # Continue applying current push force
+            try:
+                # Apply external force to torso (body index 1 typically)
+                self.env.unwrapped.data.xfrc_applied[1, :3] = self.current_push_force
+            except Exception:
+                pass
+            self.push_countdown -= 1
+            
+            # Clear force when push ends
+            if self.push_countdown == 0:
+                try:
+                    self.env.unwrapped.data.xfrc_applied[1, :3] = np.zeros(3)
+                except Exception:
+                    pass
+            return
+        
+        # Check if it's time for a new push
+        if self.current_step > 0 and self.current_step % self.push_interval == 0:
+            # Random push direction (horizontal only for stability)
+            push_angle = np.random.uniform(0, 2 * np.pi)
+            push_mag = np.random.uniform(self.push_magnitude_range[0], self.push_magnitude_range[1])
+            
+            # Create horizontal push force
+            self.current_push_force = np.array([
+                push_mag * np.cos(push_angle),
+                push_mag * np.sin(push_angle),
+                0.0  # No vertical component
+            ])
+            
+            self.push_countdown = self.push_duration
+            
+            # Debug logging (every 1000 steps)
+            if self.current_step % 1000 == 0:
+                print(f"  Push applied: magnitude={push_mag:.1f}N, angle={np.degrees(push_angle):.0f}°")
     
     def set_max_speed(self, max_speed: float):
         """Set maximum commanded speed (for curriculum)."""
