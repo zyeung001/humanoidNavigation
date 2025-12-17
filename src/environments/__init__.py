@@ -4,6 +4,7 @@ from .standing_env import StandingEnv, make_standing_env
 from .standing_curriculum import StandingCurriculumEnv, make_standing_curriculum_env
 from .walking_env import WalkingEnv, make_walking_env
 from .walking_curriculum import WalkingCurriculumEnv, make_walking_curriculum_env
+from .humanoid_velocity_env import HumanoidVelocityEnv, make_humanoid_velocity_env
 
 __all__ = [
     'StandingEnv',
@@ -14,5 +15,7 @@ __all__ = [
     'make_walking_env',
     'WalkingCurriculumEnv',
     'make_walking_curriculum_env',
+    'HumanoidVelocityEnv',
+    'make_humanoid_velocity_env',
 ]
 

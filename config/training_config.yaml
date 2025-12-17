@@ -149,7 +149,7 @@ walking:
   
   # Basic settings
   seed: 42
-  n_envs: 8  # Parallel environments
+  n_envs: 32  # Parallel environments (increased from 8 for faster training)
   device: cuda  # 'cuda' or 'cpu'
   
   # Episode settings
@@ -189,7 +189,7 @@ walking:
   
   # ========== CURRICULUM LEARNING (RELAXED) ==========
   curriculum_start_stage: 0
-  curriculum_max_stage: 4  # Target stage 4 = 2.0 m/s (light jog)
+  curriculum_max_stage: 6  # Target stage
   # Stage 0: 0.3 m/s (very slow walk) - easiest
   # Stage 1: 0.6 m/s (slow walk)
   # Stage 2: 1.0 m/s (normal walk)
@@ -235,7 +235,7 @@ walking:
   
   # PPO algorithm parameters
   n_steps: 2048  # Steps per environment per update
-  batch_size: 256  # Minibatch size
+  batch_size: 512  # Minibatch size (increased for 32 envs)
   n_epochs: 10  # Gradient steps per update
   
   gamma: 0.995  # Discount factor
@@ -312,8 +312,25 @@ walking:
   random_velocity_range: [-0.3, 0.3]  # m/s - starting velocity perturbation
   
   # WandB logging 
-  use_wandb: false
+  use_wandb: true  # Enable by default for better tracking
   wandb_project: humanoid_walking
-  wandb_log_freq: 10000
+  wandb_log_freq: 5000  # More frequent logging
   video_freq: 500000  # Record video every 500k steps
   episode_print_freq: 1000
+  
+  # ========== REWARD FUNCTION COMPONENTS ==========
+  # Velocity tracking (Gaussian kernel)
+  reward_tracking_weight: 10.0
+  reward_tracking_bandwidth: 4.0  # exp(-4.0 * error²)
+  
+  # Direction bonus
+  reward_direction_weight: 5.0
+  
+  # Stability rewards
+  reward_height_weight: 5.0
+  reward_upright_weight: 3.0
+  reward_alive_weight: 1.0
+  
+  # Penalties
+  reward_action_penalty: 0.005   # Effort penalty
+  reward_jerk_penalty: 0.01      # Action smoothness penalty
