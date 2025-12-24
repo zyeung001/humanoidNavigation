@@ -149,7 +149,7 @@ walking:
   
   # Basic settings
   seed: 42
-  n_envs: 32  # Parallel environments (increased from 8 for faster training)
+  n_envs: 8  
   device: cuda  # 'cuda' or 'cpu'
   
   # Episode settings

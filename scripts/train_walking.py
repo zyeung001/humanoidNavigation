@@ -65,28 +65,45 @@ def clip_schedule(initial: float, final: float, total_steps: int):
     return schedule
 
 
-def make_env_fns(n_envs: int, seed: int, cfg: dict):
-    """Create vectorized environments."""
+def make_env_fns(n_envs: int, seed: int, cfg: dict, use_subproc: bool = True):
+    """
+    Create vectorized environments.
+    
+    Args:
+        n_envs: Number of parallel environments
+        seed: Random seed
+        cfg: Environment config
+        use_subproc: If True, use SubprocVecEnv for parallelization (recommended)
+                    If False, use DummyVecEnv (for debugging)
+    """
     def make(rank: int):
         def _init():
             os.environ.setdefault("MUJOCO_GL", "egl")
-            env = make_walking_curriculum_env(render_mode=None, config=cfg)
-            # CRITICAL: Wrap with Monitor to track episode statistics
-            # This populates info['episode'] with 'l' (length) and 'r' (reward)
-            env = Monitor(env)
-            if hasattr(env, 'reset'):
-                env.reset(seed=seed + rank)
             try:
-                env.action_space.seed(seed + rank)
-                env.observation_space.seed(seed + rank)
-            except Exception:
-                pass
-            return env
+                env = make_walking_curriculum_env(render_mode=None, config=cfg)
+                # Wrap with Monitor to track episode statistics
+                env = Monitor(env)
+                if hasattr(env, 'reset'):
+                    env.reset(seed=seed + rank)
+                try:
+                    env.action_space.seed(seed + rank)
+                    env.observation_space.seed(seed + rank)
+                except Exception:
+                    pass
+                return env
+            except Exception as e:
+                print(f"ERROR creating env {rank}: {e}")
+                import traceback
+                traceback.print_exc()
+                raise
         return _init
 
-    if n_envs > 1:
-        return SubprocVecEnv([make(i) for i in range(n_envs)])
-    return DummyVecEnv([make(0)])
+    if n_envs > 1 and use_subproc:
+        print(f"Creating {n_envs} parallel environments with SubprocVecEnv...")
+        return SubprocVecEnv([make(i) for i in range(n_envs)], start_method='forkserver')
+    else:
+        print(f"Creating {n_envs} environments with DummyVecEnv (sequential)...")
+        return DummyVecEnv([make(i) for i in range(n_envs)])
 
 
 class EntropyScheduleCallback(BaseCallback):
@@ -235,6 +252,10 @@ def main():
                         help='Reset VecNormalize statistics (fresh start)')
     parser.add_argument('--from-standing', action='store_true',
                         help='Initialize from standing model (handles obs dimension mismatch)')
+    parser.add_argument('--debug', action='store_true',
+                        help='Use DummyVecEnv for easier debugging (no multiprocessing)')
+    parser.add_argument('--n-envs', type=int, default=None,
+                        help='Number of parallel environments (default: from config, use 4-8 for Colab)')
     args = parser.parse_args()
 
     # Load config
@@ -242,9 +263,17 @@ def main():
     walking = cfg.get('walking', {}).copy()
 
     # Overrides / defaults
-    n_envs = int(walking.get('n_envs', 8))
+    n_envs = args.n_envs if args.n_envs is not None else int(walking.get('n_envs', 8))
     seed = int(walking.get('seed', 42))
     total_timesteps = int(walking.get('total_timesteps', 15_000_000)) if args.timesteps is None else args.timesteps
+    
+    print(f"\n{'='*60}")
+    print(f"WALKING TRAINING CONFIGURATION")
+    print(f"{'='*60}")
+    print(f"  Parallel environments: {n_envs}")
+    print(f"  Total timesteps: {total_timesteps:,}")
+    print(f"  Device: {walking.get('device', 'cuda')}")
+    print(f"{'='*60}\n")
 
     # Ensure walking-specific settings
     walking.setdefault('curriculum_start_stage', 0)
@@ -260,7 +289,8 @@ def main():
     walking.setdefault('max_commanded_speed', 0.0)  # Curriculum starts at 0
 
     # Create vectorized environment
-    vec = make_env_fns(n_envs, seed, walking)
+    use_subproc = not args.debug  # Use DummyVecEnv if --debug flag is set
+    vec = make_env_fns(n_envs, seed, walking, use_subproc=use_subproc)
 
     # VecNormalize paths
     vecnorm_path = walking.get('vecnormalize_path', 'models/vecnorm_walking.pkl')
@@ -471,5 +501,14 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\n⚠️  Training interrupted by user (Ctrl+C)")
+        print("   To resume, use: python scripts/train_walking.py --model models/walking/latest/model.zip")
+    except Exception as e:
+        print(f"\n\n❌ Training failed with error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
 
