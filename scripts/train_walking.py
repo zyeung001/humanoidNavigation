@@ -3,6 +3,11 @@
 Training script for humanoid walking controller.
 Command-conditioned on desired world velocity (vx, vy).
 Uses curriculum learning from standing (0 m/s) to fast walking (3 m/s).
+
+Integrates:
+- ModelManager for organized checkpoint storage
+- VelocityTrackingWandBCallback for comprehensive logging
+- RewardCalculator (via walking_env.py)
 """
 
 import os
@@ -30,6 +35,13 @@ from stable_baselines3.common.callbacks import CallbackList, BaseCallback
 from stable_baselines3.common.monitor import Monitor
 
 from src.environments.walking_curriculum import make_walking_curriculum_env
+from src.training.model_manager import ModelManager
+from src.training.callbacks import (
+    VelocityTrackingWandBCallback, 
+    CurriculumWandBCallback,
+    init_wandb_run,
+    finish_wandb_run
+)
 
 
 def load_yaml(path: str):
@@ -154,34 +166,58 @@ class WalkingMetricsCallback(BaseCallback):
         return True
 
 
-class SaveVecNormCallback(BaseCallback):
-    """Callback to periodically save VecNormalize stats and model checkpoints."""
-    def __init__(self, vecnorm_path: str, checkpoint_dir: str, freq: int = 100_000):
+class SaveWithModelManagerCallback(BaseCallback):
+    """Callback to save checkpoints using ModelManager."""
+    def __init__(self, model_manager: ModelManager, freq: int = 100_000):
         super().__init__(verbose=1)
-        self.vecnorm_path = vecnorm_path
-        self.checkpoint_dir = checkpoint_dir
+        self.model_manager = model_manager
         self.freq = int(freq)
-
-        from pathlib import Path
-        Path(self.vecnorm_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(self.checkpoint_dir).mkdir(parents=True, exist_ok=True)
-        print(f"✓ VecNormalize will save to: {self.vecnorm_path}")
-        print(f"✓ Checkpoints will save to: {self.checkpoint_dir}")
+        self.best_vel_error = float('inf')
+        self.recent_vel_errors = []
 
     def _on_step(self) -> bool:
+        # Track velocity errors for best model detection
+        for info in self.locals.get("infos", []):
+            if 'velocity_error' in info:
+                self.recent_vel_errors.append(info['velocity_error'])
+                if len(self.recent_vel_errors) > 1000:
+                    self.recent_vel_errors = self.recent_vel_errors[-500:]
+        
         if self.freq > 0 and (self.num_timesteps % self.freq == 0):
             try:
-                # Save VecNormalize
-                self.model.get_env().save(self.vecnorm_path)
-                print(f"✓ VecNormalize saved: {self.vecnorm_path}")
+                env = self.model.get_env()
                 
-                # Save checkpoint
-                checkpoint_path = os.path.join(
-                    self.checkpoint_dir, 
-                    f"walking_{self.num_timesteps}.zip"
+                # Get current curriculum stage from env
+                stage = 0
+                try:
+                    stage = env.envs[0].stage if hasattr(env.envs[0], 'stage') else 0
+                except Exception:
+                    pass
+                
+                # Calculate average velocity error
+                avg_vel_error = np.mean(self.recent_vel_errors) if self.recent_vel_errors else float('inf')
+                
+                # Save checkpoint with stage info
+                self.model_manager.save_checkpoint(
+                    self.model, env, 
+                    timesteps=self.num_timesteps,
+                    stage=stage,
+                    velocity_error=avg_vel_error
                 )
-                self.model.save(checkpoint_path)
-                print(f"✓ Checkpoint saved: {checkpoint_path}")
+                
+                # Save latest
+                self.model_manager.save_latest(self.model, env, timesteps=self.num_timesteps)
+                
+                # Check if this is the best model
+                if avg_vel_error < self.best_vel_error:
+                    self.model_manager.save_best(
+                        self.model, env,
+                        metric=avg_vel_error,
+                        timesteps=self.num_timesteps,
+                        metric_name="velocity_error"
+                    )
+                    self.best_vel_error = avg_vel_error
+                    
             except Exception as e:
                 print(f"✗ Save failed: {e}")
         return True
@@ -212,7 +248,7 @@ def main():
 
     # Ensure walking-specific settings
     walking.setdefault('curriculum_start_stage', 0)
-    walking.setdefault('curriculum_max_stage', 6)
+    walking.setdefault('curriculum_max_stage', 6)   
     walking.setdefault('curriculum_advance_after', 20)
     walking.setdefault('curriculum_success_rate', 0.70)
     walking.setdefault('action_smoothing', True)
@@ -294,6 +330,20 @@ def main():
 
     device = walking.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
     resume = args.model is not None
+    
+    # ========== INITIALIZE MODEL MANAGER ==========
+    model_manager = ModelManager(task="walking", base_dir="models")
+    model_manager.archive_config(walking, run_name=f"walking_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+    
+    # ========== INITIALIZE WANDB (if enabled) ==========
+    use_wandb = walking.get('use_wandb', False)
+    if use_wandb:
+        init_wandb_run(
+            project=walking.get('wandb_project', 'humanoid_walking'),
+            name=f"walking_{datetime.now().strftime('%m%d_%H%M')}",
+            config=walking,
+            tags=['walking', 'curriculum']
+        )
 
     if resume and not args.from_standing:
         # Resume from walking model
@@ -347,16 +397,27 @@ def main():
         reset_num_timesteps = True
 
     # Create callbacks
-    checkpoint_dir = walking.get('checkpoint_dir', 'data/checkpoints/walking')
-    callbacks = CallbackList([
+    callback_list = [
         EntropyScheduleCallback(initial_ent, final_ent, learn_timesteps, verbose=1),
         WalkingMetricsCallback(log_freq=int(walking.get('wandb_log_freq', 10000)), verbose=1),
-        SaveVecNormCallback(
-            vecnorm_path, 
-            checkpoint_dir,
+        SaveWithModelManagerCallback(
+            model_manager=model_manager,
             freq=int(walking.get('save_freq', 250_000))
         )
-    ])
+    ]
+    
+    # Add WandB callbacks if enabled
+    if use_wandb:
+        callback_list.extend([
+            VelocityTrackingWandBCallback(
+                log_freq=int(walking.get('wandb_log_freq', 5000)),
+                project_name=walking.get('wandb_project', 'humanoid_walking'),
+                config=walking
+            ),
+            CurriculumWandBCallback(log_freq=5000)
+        ])
+    
+    callbacks = CallbackList(callback_list)
 
     # Train
     print(f"\n{'='*60}")
@@ -379,23 +440,34 @@ def main():
         reset_num_timesteps=reset_num_timesteps
     )
 
-    # Save final model + vecnorm
+    # Save final model using ModelManager
+    model_manager.save_final(model, env)
+    model_manager.save_latest(model, env, timesteps=model.num_timesteps)
+    
+    # Also save to legacy paths for backwards compatibility
     os.makedirs('models', exist_ok=True)
     final_path = walking.get('final_model_path', 'models/final_walking_model')
     model.save(final_path)
-    print(f"✓ Final model saved: {final_path}.zip")
-    
     try:
         env.save(vecnorm_path)
-        print(f"✓ VecNormalize saved: {vecnorm_path}")
-    except Exception as e:
-        print(f"✗ VecNormalize save failed: {e}")
-
+    except Exception:
+        pass
+    
+    # Finish WandB run
+    if use_wandb:
+        finish_wandb_run()
+    
+    # Print summary
+    best_info = model_manager.get_best_info()
     print(f"\n{'='*60}")
     print("WALKING TRAINING COMPLETE!")
     print(f"{'='*60}")
+    print(f"\nModel locations:")
+    print(f"  Final:  {model_manager.final_dir / 'model.zip'}")
+    print(f"  Best:   {model_manager.best_dir / 'model.zip'} (vel_error: {best_info['metric']:.4f})")
+    print(f"  Latest: {model_manager.latest_dir / 'model.zip'}")
     print(f"\nTo record demo videos, run:")
-    print(f"  python scripts/record_video.py --task walking --model {final_path}.zip --vecnorm {vecnorm_path} --vx_target 1.0 --vy_target 0.0")
+    print(f"  python scripts/evaluate.py --task walking --model {model_manager.best_dir / 'model.zip'} --record --vx 1.0 --vy 0.0")
 
 
 if __name__ == "__main__":

@@ -22,23 +22,6 @@ class ModelManager:
     """
     Manages model checkpoints and weights storage.
     
-    Directory Structure:
-        models/
-        ├── {task}/
-        │   ├── latest/
-        │   │   ├── model.zip
-        │   │   └── vecnorm.pkl
-        │   ├── best/
-        │   │   ├── model.zip
-        │   │   └── vecnorm.pkl
-        │   ├── checkpoints/
-        │   │   └── stage_{n}/
-        │   │       └── model_{timesteps}.zip
-        │   └── final/
-        │       └── model.zip
-        └── configs/
-            └── run_{timestamp}.yaml
-    
     Example:
         manager = ModelManager("walking")
         manager.save_checkpoint(model, env, timesteps=1000000, stage=2)

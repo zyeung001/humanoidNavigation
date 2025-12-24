@@ -18,27 +18,16 @@ Quick imports:
 
 __version__ = "0.2.0"
 
-# Re-export common items for convenience
-from .environments import (
-    WalkingEnv,
-    WalkingCurriculumEnv,
-    StandingEnv,
-    StandingCurriculumEnv,
-    make_walking_env,
-    make_walking_curriculum_env,
-    make_standing_env,
-    make_standing_curriculum_env,
-)
+# Lazy imports to avoid circular dependency issues
+# Users should import directly from submodules:
+#   from src.environments import make_walking_env
+#   from src.core import RewardCalculator
 
 __all__ = [
-    # Environments
-    'WalkingEnv',
-    'WalkingCurriculumEnv', 
-    'StandingEnv',
-    'StandingCurriculumEnv',
-    'make_walking_env',
-    'make_walking_curriculum_env',
-    'make_standing_env',
-    'make_standing_curriculum_env',
+    'environments',
+    'core',
+    'training',
+    'visualization',
+    'agents',
 ]
 
