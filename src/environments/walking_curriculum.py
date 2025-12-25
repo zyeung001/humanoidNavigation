@@ -219,13 +219,13 @@ class WalkingCurriculumEnv(WalkingEnv):
             avg_ep_length = np.mean(self.episode_length_buffer[-self.advance_after:]) if self.episode_length_buffer else 0
             success_rate = np.mean(self.success_buffer) if self.success_buffer else 0.0
             
-            # Advancement conditions (more lenient):
+            # Advancement conditions:
             # 1. Standard: success rate >= threshold AND velocity error < tolerance
             # 2. Alternative: avg episode length > 2x min AND not falling frequently
             standard_advance = (success_rate >= self.stage_success_threshold and 
                                avg_recent_vel_error < current_vel_tol * 1.3)
             length_based_advance = (avg_ep_length > min_length * 2.0 and 
-                                   success_rate >= 0.3)  # 30% is enough if episodes are long
+                                   success_rate >= 0.3)  # 30% 
             
             if (len(self.success_buffer) == self.advance_after and 
                 (standard_advance or length_based_advance)):

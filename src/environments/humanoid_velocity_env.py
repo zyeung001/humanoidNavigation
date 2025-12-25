@@ -12,11 +12,8 @@ import numpy as np
 from typing import Dict, Any, Tuple, Optional
 from gymnasium.spaces import Box
 
-# Import the velocity command generator
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'utils'))
-from velocity_command_generator import VelocityCommandGenerator
+# Import the velocity command generator from core
+from src.core.command_generator import VelocityCommandGenerator
 
 
 class HumanoidVelocityEnv(gym.Wrapper):
