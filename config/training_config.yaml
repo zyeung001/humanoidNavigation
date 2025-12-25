@@ -149,7 +149,7 @@ walking:
   
   # Basic settings
   seed: 42
-  n_envs: 12 
+  n_envs: 8  
   device: cuda  # 'cuda' or 'cpu'
   
   # Episode settings
