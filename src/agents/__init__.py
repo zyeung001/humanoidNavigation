@@ -1,4 +1,12 @@
 # src/agents/__init__.py
-"""Agent modules (currently empty - walking uses PPO from stable_baselines3)."""
 
-__all__ = []
+from .standing_agent import StandingAgent, create_standing_agent
+from .diagnostics import DiagnosticsCallback, WalkingDiagnosticsCallback
+
+__all__ = [
+    'StandingAgent',
+    'create_standing_agent',
+    'DiagnosticsCallback',
+    'WalkingDiagnosticsCallback',
+]
+

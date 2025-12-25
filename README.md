@@ -1,53 +1,38 @@
-# Humanoid Walking
+# Humanoid Navigation
 
-Reinforcement learning for humanoid velocity tracking using MuJoCo physics simulation.
+Humanoid Navigation - A reinforcement learning project for training humanoid robots to walk, stand, and navigate using MuJoCo physics simulation.
 
 ## Overview
 
-This project trains a humanoid robot to follow velocity commands `[vx, vy, yaw_rate]` using the **3-Prompt Design**:
+This project focuses on developing AI agents that can control humanoid robots to perform various locomotion tasks:
 
-1. **VelocityCommandGenerator** (Prompt 1): Generates target commands with uniform sampling at 2-5 second intervals, 15% stop probability
-2. **Plotting Script** (Prompt 2): Visualizes generated commands over 60 seconds
-3. **Reward Function** (Prompt 3): `R_total = R_tracking + R_upright + R_effort`
-   - `R_tracking = exp(-β * ||v_target - v_agent||²)` (Gaussian kernel, β=5.0)
-   - `R_upright = +10.0` if upright, else 0 (binary survival)
-   - `R_effort = -0.01 * ||action||²` (action penalty)
+- **Standing**: Maintaining perfect balance and upright posture (1.29m ±0.04m, 90%+ success)
+- **Walking**: Command-conditioned locomotion at any desired world-frame velocity (0-3 m/s)
+- **Navigation**: Moving towards goals while avoiding obstacles (future work)
+
+## Features
+
+- Physics-based simulation using MuJoCo
+- Reinforcement learning training pipeline (PPO)
+- Multiple locomotion behaviors (walking, standing)
+- Configurable training environments with curriculum learning
+- Real-time visualization and monitoring
+- Performance metrics and evaluation tools
+- Command-conditioned velocity control for walking
 
 ## Project Structure
 
 ```
 humanoidNavigation/
-├── config/
-│   └── training_config.yaml    # Walking training configuration
-├── data/
-│   ├── checkpoints/            # Training checkpoints
-│   └── videos/                 # Recorded videos
-├── docs/
-│   └── VELOCITY_TRACKING_DESIGN.md
-├── scripts/
-│   ├── train_walking.py        # Main training script
-│   ├── evaluate.py             # Evaluation script
-│   ├── record_video.py         # Video recording
-│   └── debug/
-│       ├── test_walking.py     # Walking tests
-│       └── walking_plot.py     # Walking visualization
-├── src/
-│   ├── core/
-│   │   ├── command_generator.py   # VelocityCommandGenerator (Prompt 1)
-│   │   └── rewards.py             # RewardCalculator
-│   ├── environments/
-│   │   ├── walking_env.py         # Walking environment (Prompt 3)
-│   │   └── walking_curriculum.py  # Curriculum wrapper
-│   ├── training/
-│   │   ├── callbacks.py           # WandB callbacks
-│   │   └── model_manager.py       # Checkpoint management
-│   ├── utils/
-│   │   └── plot_velocity_commands.py  # Plotting (Prompt 2)
-│   └── visualization/
-│       ├── plotting.py
-│       └── rendering.py
-├── requirements.txt
-└── README.md
+├── config/              # Training configurations
+├── data/                # Checkpoints, logs, videos
+├── docs/                # Documentation
+├── models/              # Saved models and VecNormalize stats
+├── scripts/             # Training, testing, and recording scripts
+└── src/                 # Source code
+    ├── agents/          # Training agents and diagnostics
+    ├── environments/    # Environment wrappers
+    └── utils/           # Utility functions
 ```
 
 ## Quick Start
@@ -60,88 +45,86 @@ pip install -r requirements.txt
 
 ### Training
 
+**Standing Task:**
 ```bash
-# Basic training
-python scripts/train_walking.py
+python scripts/train_standing.py --timesteps 10000000
+```
 
-# With custom parameters
-python scripts/train_walking.py --timesteps 5000000 --n-envs 8
-
-# Debug mode (single process, no multiprocessing)
-python scripts/train_walking.py --debug
-
-# Resume from checkpoint
-python scripts/train_walking.py --model models/walking/latest/model.zip
+**Walking Task:**
+```bash
+python scripts/train_walking.py --timesteps 15000000
 ```
 
 ### Recording Videos
 
+**Standing:**
 ```bash
-# Record with velocity command
 python scripts/record_video.py \
-    --model models/walking/final/model.zip \
-    --vx 1.0 --vy 0.5 \
-    --output walking_demo.mp4
-
-# Different speeds
-python scripts/record_video.py --model path/to/model.zip --vx 0.0   # Stand still
-python scripts/record_video.py --model path/to/model.zip --vx 2.0   # Fast walk
+    --task standing \
+    --model models/final_standing_model.zip \
+    --vecnorm models/vecnorm.pkl \
+    --episodes 1 --steps 2000
 ```
 
-### Evaluation
+**Walking (with velocity command):**
+```bash
+python scripts/record_video.py \
+    --task walking \
+    --model models/final_walking_model.zip \
+    --vecnorm models/vecnorm_walking.pkl \
+    --vx_target 1.0 --vy_target 0.0 \
+    --episodes 1 --steps 2000
+```
+
+### Testing
 
 ```bash
-python scripts/evaluate.py \
-    --model models/walking/final/model.zip \
-    --episodes 10 \
-    --vx 1.0 --vy 0.0
+# Test standing
+python scripts/test/test_standing.py \
+    --model models/final_standing_model.zip \
+    --vecnorm models/vecnorm.pkl
+
+# Test walking
+python scripts/test/test_walking.py \
+    --model models/final_walking_model.zip \
+    --vecnorm models/vecnorm_walking.pkl \
+    --episodes 5 --steps 2000
 ```
 
-### Plot Command Generator (Prompt 2)
+## Key Capabilities
 
-```bash
-cd src/utils
-python plot_velocity_commands.py
-```
+### Standing Controller
+- Maintains height at 1.29m ±0.04m
+- 90%+ success rate
+- 1000-1500+ step episodes
+- Perfect upright orientation (w > 0.98)
+- Minimal XY drift
 
-## Configuration
-
-All parameters in `config/training_config.yaml`:
-
-```yaml
-walking:
-  # Command generator ranges (Prompt 1)
-  cmd_vx_min: -0.5
-  cmd_vx_max: 1.5
-  cmd_vy_min: -0.5
-  cmd_vy_max: 0.5
-  cmd_yaw_min: -1.0
-  cmd_yaw_max: 1.0
-  stop_probability: 0.15  # 15% stop command
-  
-  # Reward function (Prompt 3)
-  tracking_beta: 5.0  # exp(-β * error²)
-  
-  # Training
-  n_envs: 12  # 4-8 for Colab, 12-32 for local
-  total_timesteps: 10_000_000
-```
-
-## Key Features
-
-- **Velocity Tracking**: Follow any velocity command `[vx, vy, yaw_rate]`
-- **Command Switching**: Random command changes every 2-5 seconds
-- **Braking Practice**: 15% probability of stop command
-- **Curriculum Learning**: Progressive speed increases
-- **Robust Training**: Push perturbations, domain randomization
-- **WandB Logging**: Track velocity error, curriculum stage
+### Walking Controller
+- Command-conditioned on desired velocity (vx, vy)
+- Supports speeds from 0.0 to 3.0 m/s
+- Any direction (forward, backward, sideways, diagonal)
+- Stable height (1.20-1.35m during locomotion)
+- Velocity tracking error < 0.4 m/s at max speed
+- Can stand perfectly when command = (0,0)
 
 ## Requirements
 
-- Python 3.8+
-- `gymnasium[mujoco]` - MuJoCo simulation
-- `stable-baselines3` - PPO algorithm
-- `torch` - Neural networks
+See `requirements.txt` for full list. Key dependencies:
+- `gymnasium[mujoco]` - MuJoCo physics simulation
+- `stable-baselines3` - PPO implementation
+- `torch` - Neural network backend
 - `opencv-python` - Video recording
 - `matplotlib` - Visualization
-- `wandb` (optional) - Logging
+- `pyyaml` - Configuration files
+
+## Configuration
+
+All training parameters are configured in `config/training_config.yaml`:
+- Network architecture
+- Learning rate schedules
+- Reward function weights
+- Curriculum learning stages
+- Domain randomization settings
+
+

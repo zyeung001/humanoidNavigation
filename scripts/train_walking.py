@@ -1,12 +1,8 @@
 # train_walking.py
 """
 Training script for humanoid walking controller.
-Command-conditioned on desired world velocity [vx, vy, yaw_rate].
-Uses curriculum learning from slow (0.3 m/s) to fast walking (3 m/s).
-
-Following the 3-Prompt Design:
-    Prompt 1: VelocityCommandGenerator - generates [vx, vy, yaw_rate]
-    Prompt 3: R_total = R_tracking + R_upright + R_effort
+Command-conditioned on desired world velocity (vx, vy).
+Uses curriculum learning from standing (0 m/s) to fast walking (3 m/s).
 
 Integrates:
 - ModelManager for organized checkpoint storage
@@ -247,15 +243,15 @@ class SaveWithModelManagerCallback(BaseCallback):
 def main():
     parser = argparse.ArgumentParser(description="Train humanoid walking controller")
     parser.add_argument('--model', type=str, default=None, 
-                        help='Path to load model from (for resuming training)')
+                        help='Path to load model from (for resuming or transfer from standing)')
     parser.add_argument('--vecnorm', type=str, default=None, 
                         help='Path to load VecNormalize from')
     parser.add_argument('--timesteps', type=int, default=None, 
                         help='Total timesteps for training')
     parser.add_argument('--reset-vecnorm', action='store_true', 
                         help='Reset VecNormalize statistics (fresh start)')
-    parser.add_argument('--fresh', action='store_true',
-                        help='Start fresh training (ignore --model observation space)')
+    parser.add_argument('--from-standing', action='store_true',
+                        help='Initialize from standing model (handles obs dimension mismatch)')
     parser.add_argument('--debug', action='store_true',
                         help='Use DummyVecEnv for easier debugging (no multiprocessing)')
     parser.add_argument('--n-envs', type=int, default=None,
@@ -285,7 +281,7 @@ def main():
     walking.setdefault('curriculum_advance_after', 20)
     walking.setdefault('curriculum_success_rate', 0.70)
     walking.setdefault('action_smoothing', True)
-    walking.setdefault('action_smoothing_tau', 0.25)
+    walking.setdefault('action_smoothing_tau', 0.2)  # CRITICAL: Match standing
     walking.setdefault('obs_include_com', True)
     walking.setdefault('obs_feature_norm', True)
     walking.setdefault('obs_history', 4)
@@ -379,7 +375,7 @@ def main():
             tags=['walking', 'curriculum']
         )
 
-    if resume and not args.fresh:
+    if resume and not args.from_standing:
         # Resume from walking model
         try:
             print(f"Loading walking model from: {args.model}")

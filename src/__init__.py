@@ -1,30 +1,33 @@
 # src/__init__.py
 """
-Humanoid Walking - RL Training for Humanoid Velocity Tracking
-
-Following the 3-Prompt Design:
-    Prompt 1: VelocityCommandGenerator - generates [vx, vy, yaw_rate] commands
-    Prompt 2: Plotting script - visualizes commands over 60 seconds
-    Prompt 3: Reward function - R_total = R_tracking + R_upright + R_effort
+Humanoid Navigation - RL Training for Humanoid Locomotion
 
 Package Structure:
     src/
-    ├── core/           - VelocityCommandGenerator, RewardCalculator
-    ├── environments/   - WalkingEnv with command tracking
-    ├── training/       - ModelManager, WandB callbacks
-    └── visualization/  - Plotting utilities
+    ├── core/           - Fundamental components (rewards, command generator)
+    ├── environments/   - Gym environments (standing, walking)
+    ├── training/       - Training utilities (callbacks, model manager)
+    ├── visualization/  - Plotting and rendering
+    └── agents/         - High-level agent classes
 
 Quick imports:
-    from src.environments import make_walking_env
-    from src.core import VelocityCommandGenerator
-    from src.training import ModelManager
+    from src.environments import make_walking_env, make_standing_env
+    from src.core import VelocityCommandGenerator, RewardCalculator
+    from src.training import ModelManager, VelocityTrackingWandBCallback
 """
 
-__version__ = "1.0.0"
+__version__ = "0.2.0"
+
+# Lazy imports to avoid circular dependency issues
+# Users should import directly from submodules:
+#   from src.environments import make_walking_env
+#   from src.core import RewardCalculator
 
 __all__ = [
-    'core',
     'environments',
+    'core',
     'training',
     'visualization',
+    'agents',
 ]
+
