@@ -9,7 +9,16 @@ characteristic of Uniform Command Sampling.
 
 import numpy as np
 import matplotlib.pyplot as plt
-from velocity_command_generator import VelocityCommandGenerator
+
+# Import from core module (Prompt 1 implementation)
+try:
+    from src.core.command_generator import VelocityCommandGenerator
+except ImportError:
+    # Fallback for running from src/utils directory
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    from src.core.command_generator import VelocityCommandGenerator
 
 
 def simulate_and_plot(

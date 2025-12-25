@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # evaluate.py
 """
-Unified evaluation and video recording script.
-
-Supports both standing and walking tasks.
+Evaluation and video recording script for walking task.
 
 Usage:
-    python scripts/evaluate.py --task walking --model models/walking/final/model.zip
-    python scripts/evaluate.py --task walking --model models/walking/final/model.zip --record
-    python scripts/evaluate.py --task walking --vx 1.0 --vy 0.0 --record
+    python scripts/evaluate.py --model models/walking/final/model.zip
+    python scripts/evaluate.py --model models/walking/final/model.zip --record
+    python scripts/evaluate.py --vx 1.0 --vy 0.0 --record
 """
 
 import os
@@ -26,16 +24,10 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 
-def make_eval_env(task: str, config: dict, render_mode: str = "rgb_array"):
+def make_eval_env(config: dict, render_mode: str = "rgb_array"):
     """Create evaluation environment."""
-    if task == "walking":
-        from src.environments import make_walking_env
-        return make_walking_env(render_mode=render_mode, config=config)
-    elif task == "standing":
-        from src.environments import make_standing_env
-        return make_standing_env(render_mode=render_mode, config=config)
-    else:
-        raise ValueError(f"Unknown task: {task}")
+    from src.environments import make_walking_env
+    return make_walking_env(render_mode=render_mode, config=config)
 
 
 def run_evaluation(
@@ -149,16 +141,16 @@ def record_video(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate humanoid model")
-    parser.add_argument('--task', type=str, required=True, choices=['walking', 'standing'])
+    parser = argparse.ArgumentParser(description="Evaluate walking model")
     parser.add_argument('--model', type=str, required=True, help='Path to model')
     parser.add_argument('--vecnorm', type=str, default=None, help='Path to VecNormalize')
     parser.add_argument('--episodes', type=int, default=10, help='Number of episodes')
     parser.add_argument('--max-steps', type=int, default=1000, help='Max steps per episode')
     parser.add_argument('--record', action='store_true', help='Record video')
     parser.add_argument('--output', type=str, default=None, help='Video output path')
-    parser.add_argument('--vx', type=float, default=None, help='Walking: commanded vx')
-    parser.add_argument('--vy', type=float, default=None, help='Walking: commanded vy')
+    parser.add_argument('--vx', type=float, default=None, help='Commanded vx')
+    parser.add_argument('--vy', type=float, default=None, help='Commanded vy')
+    parser.add_argument('--yaw', type=float, default=None, help='Commanded yaw rate')
     args = parser.parse_args()
 
     # Build config
@@ -167,18 +159,17 @@ def main():
         'obs_include_com': True,
         'obs_feature_norm': True,
         'action_smoothing': True,
-        'action_smoothing_tau': 0.2,
+        'action_smoothing_tau': 0.25,
         'max_episode_steps': args.max_steps,
     }
     
-    # Walking-specific
-    if args.task == 'walking':
-        if args.vx is not None or args.vy is not None:
-            config['fixed_command'] = (args.vx or 0.0, args.vy or 0.0)
-            print(f"Using fixed command: vx={config['fixed_command'][0]}, vy={config['fixed_command'][1]}")
+    # Set fixed command if specified
+    if args.vx is not None or args.vy is not None:
+        config['fixed_command'] = (args.vx or 0.0, args.vy or 0.0)
+        print(f"Using fixed command: vx={config['fixed_command'][0]}, vy={config['fixed_command'][1]}")
 
     print(f"\n{'='*60}")
-    print(f"HUMANOID {args.task.upper()} EVALUATION")
+    print(f"WALKING EVALUATION")
     print(f"{'='*60}")
     print(f"  Model: {args.model}")
     print(f"  Episodes: {args.episodes}")
@@ -187,7 +178,7 @@ def main():
 
     # Create environment
     render_mode = "rgb_array" if args.record else None
-    env = make_eval_env(args.task, config, render_mode=render_mode)
+    env = make_eval_env(config, render_mode=render_mode)
     vec_env = DummyVecEnv([lambda: env])
     
     # Load VecNormalize if provided
@@ -220,13 +211,13 @@ def main():
 
     # Record video if requested
     if args.record:
-        output_path = args.output or f"data/videos/{args.task}_eval.mp4"
+        output_path = args.output or "data/videos/walking_eval.mp4"
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         
         print(f"\nRecording video...")
         
         # Recreate env with rendering
-        env = make_eval_env(args.task, config, render_mode="rgb_array")
+        env = make_eval_env(config, render_mode="rgb_array")
         record_video(model, env, output_path, n_episodes=1, max_steps=args.max_steps)
         env.close()
 
@@ -236,4 +227,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

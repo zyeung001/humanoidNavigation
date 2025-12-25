@@ -1,58 +1,16 @@
 # src/utils/__init__.py
 """
-Utility modules (backwards compatibility layer).
+Utility modules for walking training.
 
-NOTE: This module provides backwards compatibility. 
-New code should import from the reorganized locations:
-
-    # New way (preferred)
-    from src.core import VelocityCommandGenerator, RewardCalculator
-    from src.training import ModelManager, VelocityTrackingWandBCallback
-    from src.visualization import setup_display, simulate_and_plot_commands
-
-    # Old way (still works)
-    from src.utils import VelocityCommandGenerator, RewardCalculator
+Main modules are in:
+- src.core: VelocityCommandGenerator, RewardCalculator
+- src.training: ModelManager, callbacks
+- src.visualization: plotting utilities
 """
 
-# Re-export from new locations for backwards compatibility
-from .velocity_command_generator import (
-    VelocityCommandGenerator,
-    VelocityCommandGeneratorWithSmoothing
-)
-from .reward_calculator import (
-    RewardCalculator,
-    AdaptiveRewardCalculator,
-    RewardWeights,
-    RewardMetrics
-)
-from .model_manager import ModelManager
-from .wandb_callbacks import (
-    VelocityTrackingWandBCallback,
-    CurriculumWandBCallback,
-    VideoRecordingCallback,
-    init_wandb_run,
-    finish_wandb_run
-)
-from .visualization import setup_display, test_environment
+# Keep plot_velocity_commands for Prompt 2
+from .plot_velocity_commands import simulate_and_plot
 
 __all__ = [
-    # Command generation
-    'VelocityCommandGenerator',
-    'VelocityCommandGeneratorWithSmoothing',
-    # Reward calculation
-    'RewardCalculator',
-    'AdaptiveRewardCalculator',
-    'RewardWeights',
-    'RewardMetrics',
-    # Model management
-    'ModelManager',
-    # WandB logging
-    'VelocityTrackingWandBCallback',
-    'CurriculumWandBCallback',
-    'VideoRecordingCallback',
-    'init_wandb_run',
-    'finish_wandb_run',
-    # Visualization
-    'setup_display',
-    'test_environment',
+    'simulate_and_plot',
 ]
