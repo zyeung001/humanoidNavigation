@@ -1,9 +1,9 @@
 # velocity_command_generator.py
 """
-Velocity Command Generator for Humanoid RL Training.
+Velocity Command Generator for Humanoid RL Training
 
 Implements Uniform Command Sampling at randomized intervals with
-configurable curriculum ranges and stop command probability.
+configurable curriculum ranges and stop command probability
 """
 
 import numpy as np

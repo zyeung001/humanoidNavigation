@@ -7,9 +7,17 @@ demonstrating the step-like changes and zero-velocity braking periods
 characteristic of Uniform Command Sampling.
 """
 
+import os
+import sys
+
+# Add project root to path for imports
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 import numpy as np
 import matplotlib.pyplot as plt
-from velocity_command_generator import VelocityCommandGenerator
+from src.core.command_generator import VelocityCommandGenerator
 
 
 def simulate_and_plot(

@@ -29,7 +29,7 @@ class HumanoidVelocityEnv(gym.Wrapper):
     Reward Function:
         R_total = R_tracking + R_upright + R_effort
         
-        R_tracking = exp(-β * ||v_target - v_agent||²)  [Gaussian kernel]
+        R_tracking = exp(-B * ||v_target - v_agent||^2)  [Gaussian kernel]
         R_upright = +10.0 if upright else 0.0           [Survival reward]
         R_effort = -0.01 * ||action||²                   [Effort penalty]
     """
@@ -246,7 +246,6 @@ class HumanoidVelocityEnv(gym.Wrapper):
             terminated: Updated termination flag
         """
         # ========== R_TRACKING: GAUSSIAN KERNEL VELOCITY TRACKING ==========
-        # R_tracking = exp(-β * ||v_target - v_agent||²)
         v_target = self._target_command
         v_agent = self.agent_velocity
         
@@ -347,7 +346,7 @@ def make_humanoid_velocity_env(
 
 
 # ============================================================================
-# EXAMPLE: Step Function Implementation (as requested in Prompt 3)
+# EXAMPLE: Step Function Implementation
 # ============================================================================
 
 def example_step_function():

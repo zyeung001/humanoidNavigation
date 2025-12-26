@@ -1,8 +1,8 @@
 # train_walking.py
 """
-Training script for humanoid walking controller.
-Command-conditioned on desired world velocity (vx, vy).
-Uses curriculum learning from standing (0 m/s) to fast walking (3 m/s).
+Training script for humanoid walking controller
+Command-conditioned on desired world velocity (vx, vy)
+Uses curriculum learning from standing (0 m/s) to fast walking (3 m/s)
 
 Integrates:
 - ModelManager for organized checkpoint storage

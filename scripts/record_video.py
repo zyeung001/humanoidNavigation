@@ -60,9 +60,9 @@ class InferenceActionWarmup(gym.Wrapper):
     """
     Warm up action smoothing history during inference.
     
-    CRITICAL FIX: Action smoothing creates temporal dependencies.
-    During training, prev_action has realistic values, but at reset it's zeros.
-    This wrapper builds realistic action history before evaluation starts.
+    Action smoothing creates temporal dependencies
+    During training, prev_action has realistic values, but at reset it's zeros
+    This wrapper builds realistic action history before evaluation starts
     """
     def __init__(self, env, warmup_steps=10, warmup_noise=0.01):
         super().__init__(env)

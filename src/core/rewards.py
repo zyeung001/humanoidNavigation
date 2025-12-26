@@ -32,6 +32,7 @@ class RewardMetrics:
     """Container for individual reward components (for logging)."""
     tracking: float = 0.0
     direction_bonus: float = 0.0
+    yaw_tracking: float = 0.0 
     height: float = 0.0
     upright: float = 0.0
     alive: float = 0.0
@@ -43,6 +44,7 @@ class RewardMetrics:
     velocity_error: float = 0.0
     velocity_error_x: float = 0.0
     velocity_error_y: float = 0.0
+    yaw_rate_error: float = 0.0  
     direction_error: float = 0.0
     jerk_magnitude: float = 0.0
     action_magnitude: float = 0.0
@@ -52,6 +54,7 @@ class RewardMetrics:
         return {
             'reward/tracking': self.tracking,
             'reward/direction_bonus': self.direction_bonus,
+            'reward/yaw_tracking': self.yaw_tracking,
             'reward/height': self.height,
             'reward/upright': self.upright,
             'reward/alive': self.alive,
@@ -61,6 +64,7 @@ class RewardMetrics:
             'metrics/velocity_error': self.velocity_error,
             'metrics/velocity_error_x': self.velocity_error_x,
             'metrics/velocity_error_y': self.velocity_error_y,
+            'metrics/yaw_rate_error': self.yaw_rate_error,
             'metrics/direction_error': self.direction_error,
             'metrics/jerk_magnitude': self.jerk_magnitude,
             'metrics/action_magnitude': self.action_magnitude,

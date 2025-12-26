@@ -83,6 +83,9 @@ class VelocityTrackingWandBCallback(BaseCallback):
         self.episode_lengths = deque(maxlen=100)
         self.curriculum_stages = deque(maxlen=100)
         
+        # Episode-end velocity errors (not step-wise)
+        self.episode_end_velocity_errors = deque(maxlen=100)
+        
         # Curriculum tracking
         self.current_stage = 0
         self.stage_history = []
@@ -113,31 +116,17 @@ class VelocityTrackingWandBCallback(BaseCallback):
     
     def _on_step(self) -> bool:
         """
-        Called after each environment step.
+        Called after each environment step
         
-        Collects metrics from infos and logs aggregated statistics.
+        Only collect velocity error at episode end, not every step
         """
         # Collect metrics from step infos
         infos = self.locals.get("infos", [])
         
         for info in infos:
-            # Velocity tracking metrics
-            if 'velocity_error' in info:
-                self.velocity_errors.append(info['velocity_error'])
-            
-            if 'velocity_error_x' in info:
-                self.velocity_errors_x.append(info['velocity_error_x'])
-            elif 'commanded_vx' in info and 'x_velocity' in info:
-                self.velocity_errors_x.append(
-                    abs(info['commanded_vx'] - info['x_velocity'])
-                )
-            
-            if 'velocity_error_y' in info:
-                self.velocity_errors_y.append(info['velocity_error_y'])
-            elif 'commanded_vy' in info and 'y_velocity' in info:
-                self.velocity_errors_y.append(
-                    abs(info['commanded_vy'] - info['y_velocity'])
-                )
+            # Height tracking (every step is fine)
+            if 'height' in info:
+                self.heights.append(info['height'])
             
             # Action smoothness
             if 'jerk_penalty' in info:
@@ -146,14 +135,29 @@ class VelocityTrackingWandBCallback(BaseCallback):
             if 'action_magnitude' in info:
                 self.action_magnitudes.append(info['action_magnitude'])
             
-            # Height tracking
-            if 'height' in info:
-                self.heights.append(info['height'])
-            
-            # Episode completion
+            # Only record velocity error at episode END
             if 'episode' in info:
                 self.episode_rewards.append(info['episode']['r'])
                 self.episode_lengths.append(info['episode']['l'])
+                
+                # Velocity error at episode end (using episode-average from curriculum)
+                if 'velocity_error' in info:
+                    self.episode_end_velocity_errors.append(info['velocity_error'])
+                    self.velocity_errors.append(info['velocity_error'])
+                
+                if 'velocity_error_x' in info:
+                    self.velocity_errors_x.append(info['velocity_error_x'])
+                elif 'commanded_vx' in info and 'x_velocity' in info:
+                    self.velocity_errors_x.append(
+                        abs(info['commanded_vx'] - info['x_velocity'])
+                    )
+                
+                if 'velocity_error_y' in info:
+                    self.velocity_errors_y.append(info['velocity_error_y'])
+                elif 'commanded_vy' in info and 'y_velocity' in info:
+                    self.velocity_errors_y.append(
+                        abs(info['commanded_vy'] - info['y_velocity'])
+                    )
                 
                 # Curriculum info
                 if 'curriculum_stage' in info:
@@ -182,10 +186,10 @@ class VelocityTrackingWandBCallback(BaseCallback):
             "timesteps": self.num_timesteps,
         }
         
-        # Velocity errors
-        if self.velocity_errors:
-            log_dict["train/velocity_error"] = np.mean(self.velocity_errors)
-            log_dict["train/velocity_error_std"] = np.std(self.velocity_errors)
+        # Velocity errors from episode-end only
+        if self.episode_end_velocity_errors:
+            log_dict["train/velocity_error"] = np.mean(self.episode_end_velocity_errors)
+            log_dict["train/velocity_error_std"] = np.std(self.episode_end_velocity_errors)
         
         if self.velocity_errors_x:
             log_dict["train/velocity_error_x"] = np.mean(self.velocity_errors_x)
@@ -227,7 +231,7 @@ class VelocityTrackingWandBCallback(BaseCallback):
         if WANDB_AVAILABLE and wandb.run is not None:
             # Log final summary
             summary = {
-                "final/velocity_error": np.mean(self.velocity_errors) if self.velocity_errors else 0,
+                "final/velocity_error": np.mean(self.episode_end_velocity_errors) if self.episode_end_velocity_errors else 0,
                 "final/episode_reward": np.mean(self.episode_rewards) if self.episode_rewards else 0,
                 "final/curriculum_stage": self.current_stage,
                 "final/total_timesteps": self.num_timesteps,
@@ -244,9 +248,13 @@ class VelocityTrackingWandBCallback(BaseCallback):
 
 class CurriculumWandBCallback(BaseCallback):
     """
-    Focused callback for curriculum progression logging.
+    Focused callback for curriculum progression logging
     
-    Tracks stage advancement and metrics per stage.
+    Only tracks episode-end velocity errors, not step-wise
+    This prevents inflated metrics from transient spikes during
+    - Falls
+    - Push recovery periods
+    - Episode start stabilization
     """
     
     def __init__(
@@ -260,6 +268,9 @@ class CurriculumWandBCallback(BaseCallback):
         self.current_stage = 0
         self.stage_starts = {0: 0}
         self.stage_metrics = {}
+        
+        # Track episode-end errors only
+        self.episode_end_errors = {}
     
     def _on_step(self) -> bool:
         infos = self.locals.get("infos", [])
@@ -281,22 +292,34 @@ class CurriculumWandBCallback(BaseCallback):
                         
                         print(f"📈 WandB: Logged curriculum advancement to stage {stage}")
                 
-                # Track per-stage metrics
+                # Initialize stage metrics if needed
                 if stage not in self.stage_metrics:
                     self.stage_metrics[stage] = {
                         'velocity_errors': [],
                         'episode_lengths': []
                     }
+                if stage not in self.episode_end_errors:
+                    self.episode_end_errors[stage] = []
                 
-                if 'velocity_error' in info:
-                    self.stage_metrics[stage]['velocity_errors'].append(
-                        info['velocity_error']
-                    )
-                
+                #Only log velocity error at episode END
                 if 'episode' in info:
-                    self.stage_metrics[stage]['episode_lengths'].append(
-                        info['episode']['l']
-                    )
+                    if 'velocity_error' in info:
+                        # This is now episode-average error from curriculum
+                        self.episode_end_errors[stage].append(info['velocity_error'])
+                    
+                    if 'episode' in info:
+                        self.stage_metrics[stage]['episode_lengths'].append(
+                            info['episode']['l']
+                        )
+                    
+                    # Also log curriculum-specific metrics
+                    if 'curriculum_success_rate' in info:
+                        if WANDB_AVAILABLE and wandb.run is not None:
+                            wandb.log({
+                                f"stage_{stage}/success_rate": info['curriculum_success_rate'],
+                                f"stage_{stage}/fall_rate": info.get('curriculum_fall_rate', 0.0),
+                                f"stage_{stage}/avg_ep_length": info.get('curriculum_avg_ep_length', 0.0),
+                            })
         
         # Log stage metrics periodically
         if self.num_timesteps % self.log_freq == 0:
@@ -305,20 +328,30 @@ class CurriculumWandBCallback(BaseCallback):
         return True
     
     def _log_stage_metrics(self):
+        """Log episode-end errors, not step-wise averages."""
         if not WANDB_AVAILABLE or wandb.run is None:
             return
         
-        if self.current_stage in self.stage_metrics:
-            metrics = self.stage_metrics[self.current_stage]
+        if self.current_stage in self.episode_end_errors:
+            errors = self.episode_end_errors[self.current_stage]
             
             log_dict = {}
-            if metrics['velocity_errors']:
-                recent = metrics['velocity_errors'][-100:]
+            if errors:
+                # Use last 20 episodes for stable estimate
+                recent = errors[-20:]
                 log_dict[f"stage_{self.current_stage}/velocity_error"] = np.mean(recent)
+                log_dict[f"stage_{self.current_stage}/velocity_error_std"] = np.std(recent)
+                
+                # Success rate at current tolerance
+                # Use 0.6 m/s as base tolerance for Stage 0
+                tolerance = 0.7 - 0.05 * self.current_stage  # Decreases with stage
+                log_dict[f"stage_{self.current_stage}/success_rate_computed"] = np.mean([e < tolerance for e in recent])
             
-            if metrics['episode_lengths']:
-                recent = metrics['episode_lengths'][-20:]
-                log_dict[f"stage_{self.current_stage}/episode_length"] = np.mean(recent)
+            if self.current_stage in self.stage_metrics:
+                lengths = self.stage_metrics[self.current_stage]['episode_lengths']
+                if lengths:
+                    recent = lengths[-20:]
+                    log_dict[f"stage_{self.current_stage}/episode_length"] = np.mean(recent)
             
             if log_dict:
                 wandb.log(log_dict)
@@ -424,4 +457,3 @@ def finish_wandb_run():
     if WANDB_AVAILABLE and wandb.run is not None:
         wandb.finish()
         print("✓ WandB run finished")
-

@@ -1,8 +1,8 @@
 """
-Diagnostics callback and helpers for humanoid standing/walking training.
-Logs detailed metrics and produces periodic debug artifacts.
+Diagnostics callback and helpers for humanoid standing/walking training
+Logs detailed metrics and produces periodic debug artifacts
 
-ENHANCED: Now tracks height distribution bins, action magnitudes, and velocity tracking for walking.
+tracks height distribution bins, action magnitudes, and velocity tracking for walking
 """
 
 from __future__ import annotations

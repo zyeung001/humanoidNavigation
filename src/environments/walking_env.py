@@ -1,10 +1,11 @@
 # walking_env.py
 """
-Walking environment for humanoid locomotion.
-Command-conditioned on desired world velocity (vx_world, vy_world).
-Extends standing environment with velocity tracking rewards.
+Walking environment for humanoid locomotion
+Command-conditioned on desired world velocity (vx_world, vy_world, yaw_rate)
+Extends standing environment with velocity tracking rewards
 
-Uses modular RewardCalculator for clean reward computation.
+Uses modular RewardCalculator for clean reward computation
+Integrates VelocityCommandGenerator for proper command sampling
 """
 
 import gymnasium as gym
@@ -14,6 +15,8 @@ from gymnasium.spaces import Box
 
 # Import modular reward calculator
 from src.core.rewards import RewardCalculator, RewardWeights, RewardMetrics
+# Import velocity command generator 
+from src.core.command_generator import VelocityCommandGenerator
 
 
 class WalkingEnv(gym.Wrapper):
@@ -65,6 +68,11 @@ class WalkingEnv(gym.Wrapper):
         self.push_countdown = 0  # Counter for push duration
         self.current_push_force = np.zeros(3)  # Current push force being applied
         
+        # FIX 5: Consistency reward for reducing velocity error variance
+        self.recent_vel_errors = []
+        self.consistency_window = int(self.cfg.get('reward_consistency_window', 100))
+        self.consistency_weight = float(self.cfg.get('reward_consistency_weight', 5.0))
+        
         # Reward caps from config
         reward_caps = self.cfg.get('reward_caps', {})
         self.max_height_maintenance_penalty = reward_caps.get('max_height_maintenance_penalty', 15.0)
@@ -74,13 +82,36 @@ class WalkingEnv(gym.Wrapper):
         # ========== WALKING-SPECIFIC CONFIG ==========
         self.velocity_weight = float(self.cfg.get('velocity_weight', 5.0))
         self.max_commanded_speed = float(self.cfg.get('max_commanded_speed', 0.0))  # Curriculum controls this
-        self.fixed_command = self.cfg.get('fixed_command', None)  # (vx, vy) tuple for inference
+        self.fixed_command = self.cfg.get('fixed_command', None)  # (vx, vy, yaw_rate) tuple for inference
+        
+        # Yaw rate tracking 
+        self.include_yaw_rate = bool(self.cfg.get('include_yaw_rate', True))
+        self.max_yaw_rate = float(self.cfg.get('max_yaw_rate', 1.0))  # rad/s
+        self.yaw_rate_weight = float(self.cfg.get('yaw_rate_weight', 3.0))
         
         # Current commanded velocity (set in reset)
         self.commanded_vx_world = 0.0
         self.commanded_vy_world = 0.0
+        self.commanded_yaw_rate = 0.0  # Added yaw_rate
         self.commanded_speed = 0.0
         self.commanded_angle = 0.0
+        
+        # ========== VELOCITY COMMAND GENERATOR ==========
+        # Use the VelocityCommandGenerator for proper command sampling
+        self.use_command_generator = bool(self.cfg.get('use_command_generator', True))
+        if self.use_command_generator:
+            self.command_generator = VelocityCommandGenerator(
+                vx_range=(0.0, self.max_commanded_speed),  # Curriculum controls upper bound
+                vy_range=(-self.max_commanded_speed * 0.5, self.max_commanded_speed * 0.5),
+                yaw_rate_range=(-self.max_yaw_rate, self.max_yaw_rate),
+                switch_interval_range=tuple(self.cfg.get('command_switch_interval', [2.0, 5.0])),
+                stop_probability=float(self.cfg.get('stop_probability', 0.15)),
+            )
+        else:
+            self.command_generator = None
+        
+        # Simulation dt (from Mujoco)
+        self.dt = self.env.unwrapped.model.opt.timestep * self.env.unwrapped.frame_skip
         
         self.reward_history = {
             'height': [], 'upright': [], 'velocity': [], 
@@ -131,7 +162,7 @@ class WalkingEnv(gym.Wrapper):
         
         # Calculate dimension after all processing steps
         extra_dim = 6 if self.include_com else 0  # COM pos (3) + COM vel (3)
-        command_dim = 2  # commanded_vx_world, commanded_vy_world
+        command_dim = 3 if self.include_yaw_rate else 2  # vx, vy, [yaw_rate]
         feature_dim = base_obs_dim + extra_dim + command_dim
         
         if self.enable_history:
@@ -182,6 +213,9 @@ class WalkingEnv(gym.Wrapper):
         except Exception:
             pass
         
+        # FIX 5: Clear consistency tracking
+        self.recent_vel_errors = []
+        
         # Clear reward history
         for key in self.reward_history:
             self.reward_history[key] = []
@@ -194,17 +228,37 @@ class WalkingEnv(gym.Wrapper):
             # Fixed command for inference/testing
             self.commanded_vx_world = float(self.fixed_command[0])
             self.commanded_vy_world = float(self.fixed_command[1])
+            self.commanded_yaw_rate = float(self.fixed_command[2]) if len(self.fixed_command) > 2 else 0.0
+            self.commanded_speed = np.sqrt(self.commanded_vx_world**2 + self.commanded_vy_world**2)
+            if self.commanded_speed > 0:
+                self.commanded_angle = np.arctan2(self.commanded_vy_world, self.commanded_vx_world)
+            else:
+                self.commanded_angle = 0.0
+        elif self.use_command_generator and self.command_generator is not None:
+            # Use VelocityCommandGenerator 
+            # Update curriculum ranges based on current max speed
+            self.command_generator.update_curriculum_ranges([
+                (0.0, self.max_commanded_speed),
+                (-self.max_commanded_speed * 0.5, self.max_commanded_speed * 0.5),
+                (-self.max_yaw_rate, self.max_yaw_rate)
+            ])
+            # Force new command at episode start
+            command = self.command_generator.force_new_command()
+            self.commanded_vx_world = float(command[0])
+            self.commanded_vy_world = float(command[1])
+            self.commanded_yaw_rate = float(command[2]) if self.include_yaw_rate else 0.0
             self.commanded_speed = np.sqrt(self.commanded_vx_world**2 + self.commanded_vy_world**2)
             if self.commanded_speed > 0:
                 self.commanded_angle = np.arctan2(self.commanded_vy_world, self.commanded_vx_world)
             else:
                 self.commanded_angle = 0.0
         else:
-            # Sample random velocity command for training
+            # Fallback: Sample random velocity command for training
             self.commanded_speed = np.random.uniform(0.0, self.max_commanded_speed)
             self.commanded_angle = np.random.uniform(0.0, 2 * np.pi)
             self.commanded_vx_world = self.commanded_speed * np.cos(self.commanded_angle)
             self.commanded_vy_world = self.commanded_speed * np.sin(self.commanded_angle)
+            self.commanded_yaw_rate = np.random.uniform(-self.max_yaw_rate, self.max_yaw_rate) if self.include_yaw_rate else 0.0
         
         if self.domain_rand:
             # Randomize body masses
@@ -241,6 +295,7 @@ class WalkingEnv(gym.Wrapper):
         # Add walking info
         info['commanded_vx'] = self.commanded_vx_world
         info['commanded_vy'] = self.commanded_vy_world
+        info['commanded_yaw_rate'] = self.commanded_yaw_rate
         info['commanded_speed'] = self.commanded_speed
 
         return observation, info
@@ -248,6 +303,16 @@ class WalkingEnv(gym.Wrapper):
     def step(self, action):
         # Action preprocessing
         proc_action = self._process_action(np.asarray(action, dtype=np.float32))
+        
+        # ========== UPDATE COMMAND  ==========
+        if self.use_command_generator and self.command_generator is not None and self.fixed_command is None:
+            command = self.command_generator.get_command(self.dt)
+            self.commanded_vx_world = float(command[0])
+            self.commanded_vy_world = float(command[1])
+            self.commanded_yaw_rate = float(command[2]) if self.include_yaw_rate else 0.0
+            self.commanded_speed = np.sqrt(self.commanded_vx_world**2 + self.commanded_vy_world**2)
+            if self.commanded_speed > 0:
+                self.commanded_angle = np.arctan2(self.commanded_vy_world, self.commanded_vx_world)
         
         # Apply push perturbation for robustness training
         self._apply_push_perturbation()
@@ -311,6 +376,14 @@ class WalkingEnv(gym.Wrapper):
         velocity_tracking_reward = reward_metrics.tracking + reward_metrics.direction_bonus
         jerk_penalty = reward_metrics.jerk_penalty
         vel_error = reward_metrics.velocity_error
+        
+        # ========== YAW RATE TRACKING REWARD  ==========
+        # Gaussian kernel for yaw rate matching: R_yaw = w * exp(-β * |yaw_error|²)
+        actual_yaw_rate = angular_vel[2]  # Z-axis angular velocity
+        yaw_error = abs(actual_yaw_rate - self.commanded_yaw_rate)
+        yaw_tracking_reward = 0.0
+        if self.include_yaw_rate:
+            yaw_tracking_reward = self.yaw_rate_weight * np.exp(-5.0 * yaw_error**2)
         
         # ========== WALKING-SPECIFIC HEIGHT REWARD (ASYMMETRIC) ==========
         # Tuned for walking (allow 1.20-1.35m during locomotion)
@@ -398,6 +471,22 @@ class WalkingEnv(gym.Wrapper):
         else:
             velocity_penalty = 0.0
         
+        # ========== FIX 5: CONSISTENCY BONUS ==========
+        # Reward for sustained low velocity error variance
+        consistency_bonus = 0.0
+        self.recent_vel_errors.append(vel_error)
+        if len(self.recent_vel_errors) > self.consistency_window:
+            self.recent_vel_errors = self.recent_vel_errors[-self.consistency_window:]
+        
+        if len(self.recent_vel_errors) >= 50:
+            recent_std = np.std(self.recent_vel_errors[-50:])
+            recent_mean = np.mean(self.recent_vel_errors[-50:])
+            
+            # Bonus for low variance AND low mean error
+            if recent_mean < 0.5 and recent_std < 0.25:
+                # Scale bonus based on how much better than threshold
+                consistency_bonus = self.consistency_weight * (1.0 - recent_std / 0.25) * (1.0 - recent_mean / 0.5)
+        
         # ========== DURATION BONUS ==========
         sustained_bonus = 0.0
         if self.current_step > 0 and self.current_step % 100 == 0:
@@ -421,20 +510,23 @@ class WalkingEnv(gym.Wrapper):
             else:
                 termination_penalty = -self.termination_penalty_constant * 0.5
         
-        # ========== TOTAL REWARD ==========
+        # ========== TOTAL REWARD  ==========
+        # R_total = R_tracking + R_yaw + R_upright + R_effort + walking bonuses
         total_reward = (
-            velocity_tracking_reward +  # From RewardCalculator (Gaussian kernel)
-            jerk_penalty +              # From RewardCalculator (action smoothness)
-            height_reward +
-            upright_reward +
+            velocity_tracking_reward +  # From RewardCalculator (Gaussian kernel) - R_tracking
+            yaw_tracking_reward +       # Yaw rate tracking 
+            jerk_penalty +              # From RewardCalculator (action smoothness) - part of R_effort
+            height_reward +             # Part of R_upright/survival
+            upright_reward +            # R_upright
             stability_reward +
             smoothness_reward +
-            control_cost +
+            control_cost +              # R_effort (action penalty)
             height_maintenance +
             recovery_bonus +
             walking_bonus +
             velocity_penalty +
             sustained_bonus +
+            consistency_bonus +         # Consistency reward
             termination_penalty
         )
         
@@ -451,11 +543,11 @@ class WalkingEnv(gym.Wrapper):
         
         # ========== DEBUG LOGGING ==========
         if self.current_step % 500 == 0:
+            yaw_info = f", yaw_err={yaw_error:.3f}" if self.include_yaw_rate else ""
             print(f"Step {self.current_step:4d}: "
                 f"h={height:.3f}, cmd=({self.commanded_vx_world:.2f},{self.commanded_vy_world:.2f}), "
-                f"actual=({com_vel_x:.2f},{com_vel_y:.2f}), "
-                f"vel_err={vel_error:.3f}, jerk={reward_metrics.jerk_magnitude:.3f}, "
-                f"r={total_reward:6.1f} [track={velocity_tracking_reward:.2f}]")
+                f"actual=({com_vel_x:.2f},{com_vel_y:.2f}){yaw_info}, "
+                f"vel_err={vel_error:.3f}, r={total_reward:6.1f} [track={velocity_tracking_reward:.2f}]")
         
         return total_reward, terminate
 
@@ -504,8 +596,12 @@ class WalkingEnv(gym.Wrapper):
             except Exception as e:
                 print(f"Warning: Failed to add COM features: {e}")
 
-        # Add commanded velocity (ALWAYS, this is the key for walking)
-        features.append(np.array([self.commanded_vx_world, self.commanded_vy_world], dtype=np.float32))
+        # Add commanded velocity
+        # Include yaw_rate if enabled 
+        if self.include_yaw_rate:
+            features.append(np.array([self.commanded_vx_world, self.commanded_vy_world, self.commanded_yaw_rate], dtype=np.float32))
+        else:
+            features.append(np.array([self.commanded_vx_world, self.commanded_vy_world], dtype=np.float32))
 
         # Concatenate base + COM features + command
         feat_vec = np.concatenate([np.atleast_1d(f).ravel() for f in features]).astype(np.float32)
@@ -546,10 +642,17 @@ class WalkingEnv(gym.Wrapper):
         dist = np.sqrt(root_x**2 + root_y**2)
         
         linear_vel = self.env.unwrapped.data.qvel[0:3]
+        angular_vel = self.env.unwrapped.data.qvel[3:6]
+        
+        # Velocity error (vx, vy)
         vel_error = np.sqrt(
             (linear_vel[0] - self.commanded_vx_world)**2 +
             (linear_vel[1] - self.commanded_vy_world)**2
         )
+        
+        # Yaw rate error (angular velocity around Z axis)
+        actual_yaw_rate = angular_vel[2]  # Rotation around z-axis
+        yaw_rate_error = abs(actual_yaw_rate - self.commanded_yaw_rate)
         
         return {
             'height': self.env.unwrapped.data.qpos[2],
@@ -563,8 +666,13 @@ class WalkingEnv(gym.Wrapper):
             # Walking-specific
             'commanded_vx': self.commanded_vx_world,
             'commanded_vy': self.commanded_vy_world,
+            'commanded_yaw_rate': self.commanded_yaw_rate,
             'commanded_speed': self.commanded_speed,
             'velocity_error': vel_error,
+            'velocity_error_x': abs(linear_vel[0] - self.commanded_vx_world),
+            'velocity_error_y': abs(linear_vel[1] - self.commanded_vy_world),
+            'yaw_rate_error': yaw_rate_error,
+            'actual_yaw_rate': actual_yaw_rate,
             'actual_speed': np.sqrt(linear_vel[0]**2 + linear_vel[1]**2),
         }
     

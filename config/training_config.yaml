@@ -8,7 +8,7 @@ standing:
   device: cuda  # 'cuda' or 'cpu'
   
   # Episode settings
-  max_episode_steps: 10000  # Increased for indefinite standing training
+  max_episode_steps: 10000 
   
   # ========== OBSERVATION PROCESSING ==========
   # Enhanced observations for better state estimation
@@ -52,7 +52,7 @@ standing:
   # ========== PPO HYPERPARAMETERS ==========
   
   # Training schedule
-  total_timesteps: 10_000_000  # Increased for indefinite standing capability
+  total_timesteps: 10_000_000 
   learning_rate: 0.0003
   final_learning_rate: 0.00005  # Linear decay
   
@@ -167,48 +167,45 @@ walking:
   # ========== ACTION PREPROCESSING ==========
   
   action_smoothing: true
-  action_smoothing_tau: 0.25  # Slightly higher for stability during recovery
+  action_smoothing_tau: 0.20  # REDUCED: Smoother actions for stability
   
   action_symmetry: false
   pd_assist: false
   
   # ========== WALKING-SPECIFIC ==========
   
-  velocity_weight: 4.0  # Slightly reduced for stability during recovery
-  # Velocity reward components (stabilized):
-  # - velocity_match_reward: up to 8 points
-  # - precision_bonus: up to 4 points  
-  # - direction_reward: up to 6 points
-  # - speed_match_bonus: up to 4 points
-  # - movement_shaping: up to 3 points
-  # Total positive velocity reward: up to ~25 points
+  velocity_weight: 5.0  # Moderate weight for stability
   max_commanded_speed: 0.3  # Starting speed (curriculum controls this)
   
   # Speed curriculum stages (m/s) - progressive from very slow to running
   curriculum_max_speed_stages: [0.3, 0.6, 1.0, 1.5, 2.0, 2.5, 3.0]
   
-  # ========== CURRICULUM LEARNING (RELAXED) ==========
+  # ========== VELOCITY COMMAND GENERATOR  ==========
+  use_command_generator: true        # Use VelocityCommandGenerator
+  command_switch_interval: [2.0, 5.0]  # Random interval between command switches
+  stop_probability: 0.15             # 15% probability of stop command for braking practice
+  
+  # ========== YAW RATE TRACKING  ==========
+  include_yaw_rate: true             # Enable yaw rate tracking in observation/reward
+  max_yaw_rate: 1.0                  # rad/s maximum commanded yaw rate
+  yaw_rate_weight: 3.0               # Reward weight for yaw tracking
+  
+  # ========== CURRICULUM LEARNING  ==========
   curriculum_start_stage: 0
-  curriculum_max_stage: 6  # Target stage
-  # Stage 0: 0.3 m/s (very slow walk) - easiest
-  # Stage 1: 0.6 m/s (slow walk)
-  # Stage 2: 1.0 m/s (normal walk)
-  # Stage 3: 1.5 m/s (fast walk)
-  # Stage 4: 2.0 m/s (light jog)
-  # Stage 5: 2.5 m/s (jog)
-  # Stage 6: 3.0 m/s (run)
-  curriculum_advance_after: 15  # Faster iteration
-  curriculum_success_rate: 0.50  # RELAXED: 50% success rate to advance
+  curriculum_max_stage: 6
+  curriculum_advance_after: 20 
+  warmup_episodes: 50            
   
   # Direction diversity - train with different velocity directions
   direction_diversity: true
   
-  # ========== ROBUSTNESS TRAINING ==========
-  # Push perturbations for recovery training
-  push_enabled: true
-  push_interval: 250  # Apply push every N steps
-  push_magnitude_range: [30.0, 100.0]  # Force in Newtons (start gentle)
-  push_duration: 4  # Steps to apply push
+  # ========== ROBUSTNESS TRAINING (STAGE-CONTROLLED) ==========
+  # Push perturbations DISABLED for Stage 0
+  # Curriculum now controls these settings per-stage
+  push_enabled: false            # Start disabled, curriculum enables
+  push_interval: 250
+  push_magnitude_range: [30.0, 100.0]
+  push_duration: 4
   
   # ========== DOMAIN RANDOMIZATION ==========
   
@@ -216,9 +213,18 @@ walking:
   rand_mass_range: [0.97, 1.03]  # Gentler initially
   rand_friction_range: [0.97, 1.03]  
   
+  # Random height initialization - DISABLED for Stage 0
+  random_height_init: false      # Start disabled
+  random_height_prob: 0.0        # No perturbations initially
+  random_height_range: [-0.25, 0.1]
+  
+  # Velocity perturbations at reset
+  random_velocity_init: false    # Disabled for Stage 0
+  random_velocity_range: [-0.3, 0.3]
+  
   # ========== REWARD FUNCTION ==========
   target_height: 1.40
-  height_error_threshold: 0.15  # Slightly relaxed for walking
+  height_error_threshold: 0.15
   height_stability_threshold: 0.20
   
   reward_caps:
@@ -228,26 +234,26 @@ walking:
   
   # ========== PPO HYPERPARAMETERS ==========
   
-  # Training schedule - more conservative for stability
-  total_timesteps: 10_000_000  # Reduced - should converge faster with stable rewards
-  learning_rate: 0.0001  # Lower LR for stability (was 0.0003)
-  final_learning_rate: 0.00003  # Linear decay
+  # Training schedule 
+  total_timesteps: 10_000_000
+  learning_rate: 0.0002          
+  final_learning_rate: 0.00005   
   
   # PPO algorithm parameters
-  n_steps: 2048  # Steps per environment per update
-  batch_size: 512  # Minibatch size (increased for 32 envs)
-  n_epochs: 10  # Gradient steps per update
+  n_steps: 2048
+  batch_size: 512
+  n_epochs: 10
   
-  gamma: 0.995  # Discount factor
-  gae_lambda: 0.95  # GAE parameter
+  gamma: 0.995
+  gae_lambda: 0.95
   
   # Policy optimization
   clip_range: 0.2
-  final_clip_range: 0.1  # Linear decay
+  final_clip_range: 0.1
   
-  # Entropy regularization
-  ent_coef: 0.02  # Initial exploration
-  final_ent_coef: 0.005  # Final exploitation
+  # Entropy regularization 
+  ent_coef: 0.03                
+  final_ent_coef: 0.01         
   
   # Value function
   vf_coef: 0.5
@@ -262,14 +268,13 @@ walking:
   vecnormalize_clip_reward: 50.0  
   
   # ========== NETWORK ARCHITECTURE ==========
-  # Same architecture as standing - [512, 512, 256] is plenty
   
   policy_kwargs:
     net_arch:
-      - pi: [512, 512, 256]  # Policy network
-        vf: [512, 512, 256]  # Value network
-    activation_fn: SiLU  # Smooth activation
-    ortho_init: true  # Orthogonal initialization
+      - pi: [512, 512, 256]
+        vf: [512, 512, 256]
+    activation_fn: SiLU
+    ortho_init: true
   
   # ========== LOGGING & CHECKPOINTING ==========
   
@@ -280,10 +285,10 @@ walking:
   
   # Evaluation
   n_eval_episodes: 5
-  eval_freq: 100_000  # Every 100k steps
+  eval_freq: 100_000
   
   # Checkpointing
-  save_freq: 250_000  # Every 250k steps
+  save_freq: 250_000
   checkpoint_dir: data/checkpoints/walking
   checkpoint_prefix: walking
   
@@ -294,34 +299,17 @@ walking:
   
   # Success thresholds
   target_reward_threshold: 3000
-  velocity_error_threshold: 0.4  # m/s - max acceptable velocity tracking error
+  velocity_error_threshold: 0.5  
   
   # Early stopping
   early_stop:
-    patience: 5  # Number of consecutive successes needed
-  
-  # ========== ADVANCED OPTIONS ==========
-  
-  # Random height initialization for recovery training
-  random_height_init: true  
-  random_height_prob: 0.25  # 25% of episodes start with perturbation
-  random_height_range: [-0.25, 0.1]  # Mostly downward perturbations to train recovery
-  
-  # Velocity perturbations at reset
-  random_velocity_init: true
-  random_velocity_range: [-0.3, 0.3]  # m/s - starting velocity perturbation
-  
-  # WandB logging 
-  use_wandb: true  # Enable by default for better tracking
-  wandb_project: humanoid_walking
-  wandb_log_freq: 5000  # More frequent logging
-  video_freq: 500000  # Record video every 500k steps
-  episode_print_freq: 1000
+    patience: 5
   
   # ========== REWARD FUNCTION COMPONENTS ==========
+  
   # Velocity tracking (Gaussian kernel)
-  reward_tracking_weight: 10.0
-  reward_tracking_bandwidth: 4.0  # exp(-4.0 * error²)
+  reward_tracking_weight: 12.0   
+  reward_tracking_bandwidth: 3.0 
   
   # Direction bonus
   reward_direction_weight: 5.0
@@ -332,5 +320,15 @@ walking:
   reward_alive_weight: 1.0
   
   # Penalties
-  reward_action_penalty: 0.005   # Effort penalty
-  reward_jerk_penalty: 0.01      # Action smoothness penalty
+  reward_action_penalty: 0.005
+  reward_jerk_penalty: 0.01
+  
+  # Consistency reward 
+  reward_consistency_weight: 5.0  
+  reward_consistency_window: 100  
+  # WandB logging 
+  use_wandb: true
+  wandb_project: humanoid_walking
+  wandb_log_freq: 5000
+  video_freq: 500000
+  episode_print_freq: 1000

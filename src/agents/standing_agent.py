@@ -2,7 +2,6 @@
 Standing agent for humanoid using PPO
 Parallel VecEnvs + VecNormalize, Colab-friendly with WandB logging
 Optimized for stability and balance tasks
-FIXED: Gym API compatibility issues
 
 standing_agent.py
 """
@@ -341,7 +340,7 @@ class StandingCallback(BaseCallback):
             print(f"Recording video at step {self.num_timesteps:,}")
         
         try:
-            # FIXED: Create environment with proper render mode for headless
+
             render_env = make_standing_env(render_mode="rgb_array", config=self.config)
             
             frames = []
@@ -352,7 +351,6 @@ class StandingCallback(BaseCallback):
                 action, _ = self.model.predict(obs, deterministic=True)
                 obs, reward, terminated, truncated, info = render_env.step(action)
                 
-                # FIXED: Get frame with error handling
                 try:
                     frame = render_env.render()
                     if frame is not None and hasattr(frame, 'shape'):
@@ -370,7 +368,6 @@ class StandingCallback(BaseCallback):
             
             render_env.close()
             
-            # FIXED: Better video logging with validation
             if len(frames) > 10 and WANDB_AVAILABLE and wandb.run:  # Need at least 10 frames
                 try:
                     # ENHANCED: More informative video captions
@@ -391,7 +388,6 @@ class StandingCallback(BaseCallback):
                     # Convert frames to proper format
                     video_array = np.array(frames)
                     
-                    # FIXED: Ensure proper video format
                     if len(video_array.shape) == 4 and video_array.shape[-1] == 3:  # (frames, height, width, channels)
                         wandb.log({
                             "video/training_progress": wandb.Video(
@@ -483,7 +479,6 @@ class StandingCallback(BaseCallback):
         if mean_rew > self.best_mean_reward:
             self.best_mean_reward = mean_rew
             
-            # FIXED: Proper file saving
             from pathlib import Path
             
             # Get the path WITHOUT .zip
@@ -557,9 +552,9 @@ class StandingCallback(BaseCallback):
                 "eval/mean_height": mean_height,
                 "eval/height_stability": height_stability,
                 "eval/max_consecutive_in_range": float(max_consec),
-                "eval/xy_drift": xy_drift,  # FIXED: Now calculated
-                "eval/action_magnitude_mean": action_mag_mean,  # FIXED: Now calculated
-                "eval/action_magnitude_max": action_mag_max,  # FIXED: Now calculated
+                "eval/xy_drift": xy_drift,  
+                "eval/action_magnitude_mean": action_mag_mean,  
+                "eval/action_magnitude_max": action_mag_max, 
                 "eval/height_error": height_error,
                 "eval/mean_reward": float(mean_rew),
             }, step=self.num_timesteps)
@@ -626,7 +621,6 @@ class StandingAgent:
             vec = DummyVecEnv([self._make_single_env(seed, 0, render_mode=None)])
 
         if self.config.get("normalize", True):
-            # FIXED: Enable reward normalization for better value function learning
             # With the new reward scale (10-100/step), normalization helps stabilize training
             self.env = VecNormalize(
                 vec,
