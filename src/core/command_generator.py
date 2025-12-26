@@ -143,7 +143,6 @@ class VelocityCommandGenerator:
         self.vy_range = list(new_ranges[1])
         self.yaw_rate_range = list(new_ranges[2])
         
-        print(f"Curriculum updated - vx: {self.vx_range}, vy: {self.vy_range}, yaw: {self.yaw_rate_range}")
     
     def force_new_command(self) -> np.ndarray:
         """
