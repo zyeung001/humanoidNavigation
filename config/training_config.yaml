@@ -190,11 +190,12 @@ walking:
   max_yaw_rate: 1.0                  # rad/s maximum commanded yaw rate
   yaw_rate_weight: 3.0               # Reward weight for yaw tracking
   
-  # ========== CURRICULUM LEARNING  ==========
+  # ========== CURRICULUM LEARNING (RELAXED FOR STAGE 0) ==========
   curriculum_start_stage: 0
   curriculum_max_stage: 6
-  curriculum_advance_after: 20 
-  warmup_episodes: 50            
+  curriculum_advance_after: 15    # REDUCED from 20 (faster feedback)
+  warmup_episodes: 30             # REDUCED from 50 (get to advancement sooner)
+  curriculum_success_rate: 0.35   # RELAXED from 0.40 (easier advancement)            
   
   # Direction diversity - train with different velocity directions
   direction_diversity: true
@@ -305,26 +306,31 @@ walking:
   early_stop:
     patience: 5
   
-  # ========== REWARD FUNCTION COMPONENTS ==========
+  # ========== REWARD FUNCTION COMPONENTS (REBALANCED) ==========
+  # 
+  # KEY FIX: Velocity tracking is now the DOMINANT reward component
+  # Previous issue: Survival rewards (~40-50/step) >> tracking rewards (~5-10/step)
+  # New balance: Tracking (~25-40/step) >> Survival (~15-20/step)
+  #
   
-  # Velocity tracking (Gaussian kernel)
-  reward_tracking_weight: 12.0   
-  reward_tracking_bandwidth: 3.0 
+  # Velocity tracking (Gaussian kernel) - NOW DOMINANT
+  reward_tracking_weight: 25.0    # INCREASED from 12.0 (2x)
+  reward_tracking_bandwidth: 2.0  # REDUCED from 3.0 (more lenient gradient)
   
-  # Direction bonus
-  reward_direction_weight: 5.0
+  # Direction/progress bonus
+  reward_direction_weight: 8.0    # INCREASED from 5.0
   
-  # Stability rewards
-  reward_height_weight: 5.0
-  reward_upright_weight: 3.0
-  reward_alive_weight: 1.0
+  # Stability rewards - REDUCED to prevent survival-only optimization
+  reward_height_weight: 3.0       # REDUCED from 5.0
+  reward_upright_weight: 2.0      # REDUCED from 3.0
+  reward_alive_weight: 0.5        # REDUCED from 1.0
   
   # Penalties
-  reward_action_penalty: 0.005
-  reward_jerk_penalty: 0.01
+  reward_action_penalty: 0.003    # REDUCED from 0.005 (allow more dynamic actions)
+  reward_jerk_penalty: 0.008      # REDUCED from 0.01
   
   # Consistency reward 
-  reward_consistency_weight: 5.0  
+  reward_consistency_weight: 8.0  # INCREASED from 5.0 (reward stable tracking)
   reward_consistency_window: 100  
   # WandB logging 
   use_wandb: true

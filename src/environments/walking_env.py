@@ -336,16 +336,17 @@ class WalkingEnv(gym.Wrapper):
         
     def _compute_task_reward(self, obs, base_reward, info, action):
         """
-        Compute walking reward using modular RewardCalculator + walking-specific bonuses.
+        Compute walking reward with VELOCITY TRACKING AS DOMINANT OBJECTIVE.
         
-        Components from RewardCalculator:
-        - R_tracking: Gaussian kernel velocity matching
-        - R_direction: Direction bonus when walking
-        - R_jerk: Action smoothness penalty
+        FIX: The agent was stuck at Stage 0 because survival rewards (~40-50/step) 
+        dominated velocity tracking rewards (~5-10/step). The agent found a local 
+        optimum: "stand still and survive = high reward".
         
-        Walking-specific additions:
-        - Asymmetric height reward (walking-tuned)
-        - Recovery bonus, duration bonus, termination penalty
+        Key changes:
+        1. Velocity tracking reward is now 3-4x larger (dominant component)
+        2. Explicit standing penalty when walking is commanded (-15/step)
+        3. Survival rewards are CONDITIONAL on velocity tracking performance
+        4. Progress bonus for ANY movement in right direction
         """
         # ========== STATE EXTRACTION ==========
         height = self.env.unwrapped.data.qpos[2]
@@ -359,7 +360,6 @@ class WalkingEnv(gym.Wrapper):
         height_error = abs(height - self.base_target_height)
         
         # ========== MODULAR REWARD CALCULATOR ==========
-        # Use RewardCalculator for core tracking + smoothness rewards
         v_target = np.array([self.commanded_vx_world, self.commanded_vy_world])
         v_actual = np.array([com_vel_x, com_vel_y])
         
@@ -372,107 +372,147 @@ class WalkingEnv(gym.Wrapper):
             prev_action=self.prev_action if hasattr(self, 'prev_action') else action,
         )
         
-        # Extract core rewards from calculator
-        velocity_tracking_reward = reward_metrics.tracking + reward_metrics.direction_bonus
-        jerk_penalty = reward_metrics.jerk_penalty
         vel_error = reward_metrics.velocity_error
         
-        # ========== YAW RATE TRACKING REWARD  ==========
-        # Gaussian kernel for yaw rate matching: R_yaw = w * exp(-β * |yaw_error|²)
-        actual_yaw_rate = angular_vel[2]  # Z-axis angular velocity
+        # ========== FIX 1: ENHANCED VELOCITY TRACKING (DOMINANT REWARD) ==========
+        # Use a WIDER Gaussian (bandwidth 2.0 instead of 4.0) for better gradient
+        # AND multiply by a much larger weight
+        tracking_bandwidth = float(self.cfg.get('reward_tracking_bandwidth', 2.0))
+        tracking_weight = float(self.cfg.get('reward_tracking_weight', 25.0))  # INCREASED
+        
+        # Core tracking reward with lenient Gaussian
+        velocity_tracking_reward = tracking_weight * np.exp(-tracking_bandwidth * vel_error**2)
+        
+        # ========== FIX 2: PROGRESS BONUS (reward ANY movement toward target) ==========
+        progress_bonus = 0.0
+        if self.commanded_speed > 0.05:
+            # Project actual velocity onto commanded direction
+            if self.commanded_speed > 0:
+                direction_cmd = np.array([self.commanded_vx_world, self.commanded_vy_world]) / self.commanded_speed
+            else:
+                direction_cmd = np.array([1.0, 0.0])
+            
+            projected_speed = np.dot(v_actual, direction_cmd)
+            
+            # Reward for moving in RIGHT direction (even if speed is wrong)
+            if projected_speed > 0:
+                # Proportional to how much of the target we achieved
+                speed_ratio = min(1.0, projected_speed / self.commanded_speed)
+                progress_bonus = 15.0 * speed_ratio  # Up to +15 for matching speed
+                
+                # Extra bonus for getting close to target speed
+                if abs(projected_speed - self.commanded_speed) < 0.1:
+                    progress_bonus += 5.0
+            else:
+                # Moving in WRONG direction - small penalty
+                progress_bonus = -3.0
+        
+        # ========== FIX 3: STANDING PENALTY (breaks "stand still" exploit) ==========
+        standing_penalty = 0.0
+        if self.commanded_speed > 0.1:
+            if actual_speed < 0.05:
+                # SIGNIFICANT per-step penalty for standing when walking commanded
+                standing_penalty = -15.0
+            elif actual_speed < 0.1:
+                standing_penalty = -8.0
+            elif actual_speed < self.commanded_speed * 0.3:
+                # Not trying hard enough
+                standing_penalty = -3.0
+        
+        # ========== YAW RATE TRACKING REWARD ==========
+        actual_yaw_rate = angular_vel[2]
         yaw_error = abs(actual_yaw_rate - self.commanded_yaw_rate)
         yaw_tracking_reward = 0.0
         if self.include_yaw_rate:
-            yaw_tracking_reward = self.yaw_rate_weight * np.exp(-5.0 * yaw_error**2)
+            yaw_tracking_reward = self.yaw_rate_weight * np.exp(-3.0 * yaw_error**2)
         
-        # ========== WALKING-SPECIFIC HEIGHT REWARD (ASYMMETRIC) ==========
-        # Tuned for walking (allow 1.20-1.35m during locomotion)
+        # ========== FIX 4: CONDITIONAL HEIGHT REWARD ==========
+        # Height reward is REDUCED when not tracking velocity properly
+        # This prevents exploiting survival rewards while ignoring velocity
+        base_height_reward = 0.0
         if height < 1.0:
-            height_reward = -50.0 + 40.0 * np.clip(height / 1.0, 0.0, 1.0)  
+            base_height_reward = -30.0 + 25.0 * np.clip(height / 1.0, 0.0, 1.0)
         elif height < 1.2:
-            height_reward = -10.0 + 15.0 * (height - 1.0) / 0.2  
+            base_height_reward = -5.0 + 10.0 * (height - 1.0) / 0.2
         elif height < 1.35:
-            height_reward = 5.0 + 15.0 * (height - 1.2) / 0.15
-        elif height < 1.45:
-            height_reward = 20.0 + 15.0 * (1.0 - abs(height - 1.40) / 0.05)  
-        elif height < 1.6:
-            height_reward = 30.0 - 10.0 * (height - 1.45) / 0.15  
+            base_height_reward = 5.0 + 5.0 * (height - 1.2) / 0.15
+        elif height < 1.5:
+            base_height_reward = 10.0
         else:
-            height_reward = 20.0 - 15.0 * np.clip((height - 1.6) / 0.2, 0.0, 1.0)
+            base_height_reward = 8.0 - 5.0 * np.clip((height - 1.5) / 0.2, 0.0, 1.0)
         
-        # Penalize if commanded to walk but standing still
-        if self.commanded_speed > 0.1 and actual_speed < 0.1:
-            height_reward *= 0.85
+        # CONDITION: Scale height reward by velocity tracking quality
+        if self.commanded_speed > 0.1:
+            # If velocity error is high, reduce height reward
+            tracking_quality = np.exp(-2.0 * vel_error**2)  # 0-1 scale
+            height_reward = base_height_reward * (0.3 + 0.7 * tracking_quality)
+        else:
+            height_reward = base_height_reward
         
-        # ========== UPRIGHT ORIENTATION REWARD ==========
+        # ========== CONDITIONAL UPRIGHT REWARD ==========
         upright_error = 1.0 - abs(quat[0])
-        if height >= 1.2:
-            upright_reward = 10.0 * np.exp(-8.0 * upright_error**2)  
+        if height >= 1.15:
+            base_upright = 5.0 * np.exp(-6.0 * upright_error**2)
         elif height >= 1.0:
-            upright_reward = 6.0 * np.exp(-8.0 * upright_error**2)  
+            base_upright = 3.0 * np.exp(-6.0 * upright_error**2)
         else:
-            upright_reward = 0.0
+            base_upright = 0.0
         
-        # ========== STABILITY REWARD (REDUCED FOR WALKING) ==========
+        # Condition on velocity tracking when walking is commanded
+        if self.commanded_speed > 0.1:
+            tracking_quality = np.exp(-2.0 * vel_error**2)
+            upright_reward = base_upright * (0.4 + 0.6 * tracking_quality)
+        else:
+            upright_reward = base_upright
+        
+        # ========== STABILITY REWARD (smaller, conditional) ==========
         angular_momentum = np.sum(np.square(angular_vel))
-        if height >= 1.3:
-            stability_reward = 4.0 * np.exp(-1.5 * angular_momentum)
-        elif height >= 1.2:
-            stability_reward = 3.0 * np.exp(-1.5 * angular_momentum) 
+        if height >= 1.2:
+            stability_reward = 2.0 * np.exp(-1.5 * angular_momentum)
         elif height >= 1.0:
-            stability_reward = 1.5 * np.exp(-1.5 * angular_momentum)
+            stability_reward = 1.0 * np.exp(-1.5 * angular_momentum)
         else:
             stability_reward = 0.0
         
-        # ========== SMOOTHNESS REWARD (joint velocity) ==========
+        # ========== SMOOTHNESS REWARD (reduced) ==========
         joint_velocity_magnitude = np.sum(np.square(joint_vel))
-        smoothness_reward = 2.0 * np.exp(-0.08 * joint_velocity_magnitude)
+        smoothness_reward = 1.0 * np.exp(-0.08 * joint_velocity_magnitude)
         
-        # ========== CONTROL COST ========== 
+        # ========== CONTROL COST ==========
+        jerk_penalty = reward_metrics.jerk_penalty
         control_cost = -0.003 * np.sum(np.square(action))
         
-        # ========== HEIGHT MAINTENANCE PENALTY ==========
+        # ========== HEIGHT MAINTENANCE (reduced) ==========
         height_velocity = height - self.prev_height if hasattr(self, 'prev_height') else 0.0
-        if height_velocity < -0.003:
-            capped_velocity = np.clip(abs(height_velocity), 0.0, 0.1)
-            height_maintenance = -100.0 * capped_velocity
-        elif abs(height_velocity) < 0.003:  
-            height_maintenance = 3.0  
-        else:
-            height_maintenance = 0.0
+        height_maintenance = 0.0
+        if height_velocity < -0.005:
+            height_maintenance = -50.0 * np.clip(abs(height_velocity), 0.0, 0.1)
+        elif abs(height_velocity) < 0.003:
+            height_maintenance = 1.0
         
-        # ========== RECOVERY BONUS ==========
+        # ========== RECOVERY BONUS (reduced) ==========
         recovery_bonus = 0.0
         if height < 1.0 and height_velocity > 0.01:
             recovery_scale = (1.0 - height) / 0.4
-            recovery_bonus = self.recovery_bonus_scale * height_velocity * recovery_scale
+            recovery_bonus = 25.0 * height_velocity * recovery_scale
         
-        # ========== WALKING-SPECIFIC BONUSES ==========
-        # Movement bonus when walking is commanded
+        # ========== WALKING BONUS (movement shaping) ==========
         walking_bonus = 0.0
         if self.commanded_speed > 0.1:
-            # Project actual velocity onto commanded direction
             projected_speed = (
                 com_vel_x * np.cos(self.commanded_angle) + 
                 com_vel_y * np.sin(self.commanded_angle)
             )
-            # Movement shaping - reward ANY forward progress
             forward_progress = max(0.0, projected_speed)
-            walking_bonus = 3.0 * np.tanh(forward_progress * 2.0)
-            
-            # Penalty for standing still when walking is commanded
-            if actual_speed < 0.05:
-                walking_bonus -= 5.0
+            walking_bonus = 5.0 * np.tanh(forward_progress * 3.0)
         
-        # Velocity penalty only when standing is commanded
+        # Velocity penalty when standing is commanded
+        velocity_penalty = 0.0
         if self.commanded_speed < 0.1:
             speed = np.linalg.norm(linear_vel[:2])
-            velocity_penalty = -1.0 * np.clip(speed - 0.3, 0.0, 2.0)
-        else:
-            velocity_penalty = 0.0
+            velocity_penalty = -2.0 * np.clip(speed - 0.2, 0.0, 2.0)
         
-        # ========== FIX 5: CONSISTENCY BONUS ==========
-        # Reward for sustained low velocity error variance
+        # ========== CONSISTENCY BONUS ==========
         consistency_bonus = 0.0
         self.recent_vel_errors.append(vel_error)
         if len(self.recent_vel_errors) > self.consistency_window:
@@ -482,24 +522,27 @@ class WalkingEnv(gym.Wrapper):
             recent_std = np.std(self.recent_vel_errors[-50:])
             recent_mean = np.mean(self.recent_vel_errors[-50:])
             
-            # Bonus for low variance AND low mean error
             if recent_mean < 0.5 and recent_std < 0.25:
-                # Scale bonus based on how much better than threshold
                 consistency_bonus = self.consistency_weight * (1.0 - recent_std / 0.25) * (1.0 - recent_mean / 0.5)
         
-        # ========== DURATION BONUS ==========
+        # ========== DURATION BONUS (conditional on tracking) ==========
         sustained_bonus = 0.0
         if self.current_step > 0 and self.current_step % 100 == 0:
-            if height_error < 0.20 and upright_error < 0.15 and height >= 1.15:
-                sustained_bonus = 10.0
-                if self.commanded_speed > 0.1 and vel_error < 0.3:
-                    sustained_bonus += 15.0
+            if height_error < 0.25 and upright_error < 0.2 and height >= 1.1:
+                # Base survival bonus
+                sustained_bonus = 5.0
+                # EXTRA bonus only if tracking velocity well
+                if self.commanded_speed > 0.1 and vel_error < 0.4:
+                    sustained_bonus += 20.0  # Significant bonus for tracking while surviving
+                elif self.commanded_speed > 0.1 and vel_error < 0.6:
+                    sustained_bonus += 10.0
                 elif self.commanded_speed < 0.1:
-                    sustained_bonus += 5.0
+                    sustained_bonus += 3.0  # Small bonus for standing still correctly
+                
                 if self.current_step >= 500:
-                    sustained_bonus += 5.0
+                    sustained_bonus += 3.0
                 if self.current_step >= 1000:
-                    sustained_bonus += 5.0
+                    sustained_bonus += 3.0
         
         # ========== TERMINATION ==========
         terminate = (height < 0.75 or height > 2.0 or abs(quat[0]) < 0.6)
@@ -510,23 +553,32 @@ class WalkingEnv(gym.Wrapper):
             else:
                 termination_penalty = -self.termination_penalty_constant * 0.5
         
-        # ========== TOTAL REWARD  ==========
-        # R_total = R_tracking + R_yaw + R_upright + R_effort + walking bonuses
+        # ========== TOTAL REWARD ==========
+        # NEW STRUCTURE: Velocity tracking is now ~60-70% of positive rewards
         total_reward = (
-            velocity_tracking_reward +  # From RewardCalculator (Gaussian kernel) - R_tracking
-            yaw_tracking_reward +       # Yaw rate tracking 
-            jerk_penalty +              # From RewardCalculator (action smoothness) - part of R_effort
-            height_reward +             # Part of R_upright/survival
-            upright_reward +            # R_upright
-            stability_reward +
-            smoothness_reward +
-            control_cost +              # R_effort (action penalty)
+            # PRIMARY: Velocity tracking (dominant)
+            velocity_tracking_reward +  # Up to +25 per step
+            progress_bonus +            # Up to +20 per step  
+            standing_penalty +          # -15 per step if standing when walking commanded
+            yaw_tracking_reward +       # Up to +3 per step
+            
+            # SECONDARY: Survival (conditional on tracking)
+            height_reward +             # Up to +10 (reduced from +30)
+            upright_reward +            # Up to +5 (reduced from +10)
+            stability_reward +          # Up to +2 (reduced from +4)
+            smoothness_reward +         # Up to +1 (reduced from +2)
+            
+            # PENALTIES
+            jerk_penalty +
+            control_cost +
             height_maintenance +
+            velocity_penalty +
+            
+            # BONUSES
             recovery_bonus +
             walking_bonus +
-            velocity_penalty +
             sustained_bonus +
-            consistency_bonus +         # Consistency reward
+            consistency_bonus +
             termination_penalty
         )
         
@@ -538,16 +590,17 @@ class WalkingEnv(gym.Wrapper):
         self.reward_history['upright'].append(upright_reward)
         self.reward_history['velocity'].append(stability_reward)
         self.reward_history['control'].append(control_cost)
-        self.reward_history['velocity_tracking'].append(velocity_tracking_reward)
+        self.reward_history['velocity_tracking'].append(velocity_tracking_reward + progress_bonus)
         self.reward_history['jerk'].append(jerk_penalty)
         
-        # ========== DEBUG LOGGING ==========
+        # ========== DETAILED DEBUG LOGGING ==========
         if self.current_step % 500 == 0:
             yaw_info = f", yaw_err={yaw_error:.3f}" if self.include_yaw_rate else ""
             print(f"Step {self.current_step:4d}: "
                 f"h={height:.3f}, cmd=({self.commanded_vx_world:.2f},{self.commanded_vy_world:.2f}), "
                 f"actual=({com_vel_x:.2f},{com_vel_y:.2f}){yaw_info}, "
-                f"vel_err={vel_error:.3f}, r={total_reward:6.1f} [track={velocity_tracking_reward:.2f}]")
+                f"vel_err={vel_error:.3f}, r={total_reward:6.1f} "
+                f"[track={velocity_tracking_reward:.1f}, prog={progress_bonus:.1f}, stand_pen={standing_penalty:.1f}]")
         
         return total_reward, terminate
 

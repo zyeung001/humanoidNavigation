@@ -38,23 +38,26 @@ class WalkingCurriculumEnv(WalkingEnv):
         self.success_buffer = []
         self.velocity_error_buffer = []
         self.episode_length_buffer = []
-        self.stage_success_threshold = float(cfg.get('curriculum_success_rate', 0.40))  # RELAXED: 40%
+        self.stage_success_threshold = float(cfg.get('curriculum_success_rate', 0.35))  # RELAXED: 35%
 
         # Speed stages (m/s) - Progressive difficulty
         self.speed_stages = [0.3, 0.6, 1.0, 1.5, 2.0, 2.5, 3.0]
         
         # Probability of standing command per stage
-        self.standing_probability = [0.05, 0.02, 0.0, 0.0, 0.0, 0.0, 0.0]
+        # Stage 0-1: More standing practice to build stability
+        self.standing_probability = [0.08, 0.05, 0.02, 0.0, 0.0, 0.0, 0.0]
         
-        # FIX 4: More lenient velocity error tolerances (especially Stage 0)
-        # Stage 0 needs to be very forgiving to enable advancement
-        self.velocity_tolerances = [0.7, 0.6, 0.55, 0.5, 0.45, 0.4, 0.4]
+        # RELAXED velocity error tolerances for curriculum advancement
+        # Stage 0 is VERY lenient - we just want the agent to START moving
+        # Key insight: 0.3 m/s commanded, 0.9 m/s tolerance = agent can be 3x off and still pass
+        self.velocity_tolerances = [0.9, 0.75, 0.6, 0.5, 0.45, 0.4, 0.35]
         
         # Minimum episode lengths - RELAXED for curriculum progression
-        self.min_episode_lengths = [80, 120, 180, 250, 350, 450, 550]
+        # Stage 0: Just survive 60 steps (low bar to start)
+        self.min_episode_lengths = [60, 100, 150, 200, 300, 400, 500]
         
         # Height tolerances (walking naturally has lower COM)
-        self.height_tolerances = [0.40, 0.35, 0.32, 0.28, 0.25, 0.22, 0.20]
+        self.height_tolerances = [0.45, 0.40, 0.35, 0.30, 0.27, 0.24, 0.20]
         
         # Direction diversity
         self.direction_diversity = cfg.get('direction_diversity', True)
@@ -250,7 +253,9 @@ class WalkingCurriculumEnv(WalkingEnv):
             else:
                 vel_tolerance_multiplier = 1.2  # Normal 20% buffer
             
-            # SUCCESS CRITERIA - focus on survival and basic tracking
+            # SUCCESS CRITERIA - RELAXED for Stage 0 to encourage movement
+            # Key insight: The agent needs to learn that MOVING is good
+            # We can refine accuracy in later stages
             criteria_met = 0
             
             # Velocity error within tolerance
@@ -258,8 +263,8 @@ class WalkingCurriculumEnv(WalkingEnv):
             if vel_ok:
                 criteria_met += 1
             
-            # Height maintained
-            height_ok = height > 1.0 and height < 1.6
+            # Height maintained (relaxed for walking)
+            height_ok = height > 0.95 and height < 1.65
             if height_ok:
                 criteria_met += 1
             
@@ -271,8 +276,22 @@ class WalkingCurriculumEnv(WalkingEnv):
             # Not terminated due to falling
             not_fallen = not terminated
             
-            # either didn't fall + 2 criteria, or all 3 criteria
-            success = bool((not_fallen and criteria_met >= 2) or criteria_met == 3)
+            # NEW: Did the agent actually MOVE? (anti-standing-still check)
+            # For Stage 0-1, reward any movement attempt
+            actual_speed_info = info.get('actual_speed', 0.0)
+            attempted_movement = actual_speed_info > 0.08 or self.commanded_speed < 0.1
+            
+            # Stage 0-1: Be very lenient to get the agent moving
+            if current_stage <= 1:
+                # Pass if: survived + attempted movement + (velocity OK OR height OK)
+                success = bool(
+                    not_fallen and 
+                    long_enough and
+                    (vel_ok or (height_ok and attempted_movement))
+                )
+            else:
+                # Later stages: Standard criteria
+                success = bool((not_fallen and criteria_met >= 2) or criteria_met == 3)
 
             self.success_buffer.append(1 if success else 0)
             self.velocity_error_buffer.append(velocity_error)
@@ -312,11 +331,29 @@ class WalkingCurriculumEnv(WalkingEnv):
                     improvement_advance = (
                         improvement > 0.08 and  # At least 0.08 m/s improvement
                         np.mean(recent_errors) < current_vel_tol * 1.5 and
-                        success_rate >= 0.30  # Lower bar if improving
+                        success_rate >= 0.25  # RELAXED from 0.30
                     )
                 
+                # Path 4 - MOVEMENT-BASED (Stage 0-1 only)
+                # Key insight: For Stage 0, just getting the agent to MOVE is a win
+                # We can refine accuracy in later stages
+                movement_advance = False
+                if current_stage <= 1:
+                    # Check if agent is actually moving (not just standing)
+                    if self.velocity_error_buffer:
+                        # If commanded 0.3 m/s and velocity error < 0.7, agent is moving somewhat
+                        avg_error = np.mean(self.velocity_error_buffer[-10:])
+                        is_moving = avg_error < current_speed + 0.2  # If error < cmd + 0.2, agent moved
+                        
+                        movement_advance = (
+                            is_moving and
+                            fall_rate < 0.25 and  # Can fall sometimes while learning
+                            avg_ep_length > min_length * 1.5 and  # Survives reasonably
+                            success_rate >= 0.20  # Very low bar for Stage 0
+                        )
+                
                 # advance if any success
-                should_advance = standard_advance or length_based_advance or improvement_advance
+                should_advance = standard_advance or length_based_advance or improvement_advance or movement_advance
                 
                 if should_advance and self.stage < self.max_stage:
                     old_stage = self.stage
@@ -352,6 +389,8 @@ class WalkingCurriculumEnv(WalkingEnv):
                         advancement_path.append("length-based")
                     if improvement_advance:
                         advancement_path.append("improvement")
+                    if movement_advance:
+                        advancement_path.append("movement-based")
                     
                     print(f"\n{'='*60}")
                     print(f" CURRICULUM ADVANCED: Stage {old_stage} → {self.stage}")

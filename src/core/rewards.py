@@ -17,14 +17,26 @@ from dataclasses import dataclass, field
 
 @dataclass
 class RewardWeights:
-    """Configurable weights for each reward component."""
-    tracking: float = 10.0          # Gaussian kernel for velocity matching
-    direction_bonus: float = 5.0    # Bonus for correct direction
-    height: float = 5.0             # Height maintenance
-    upright: float = 3.0            # Orientation reward
-    alive: float = 1.0              # Per-step survival bonus
-    action_penalty: float = 0.005   # Effort penalty coefficient
-    jerk_penalty: float = 0.01      # Action smoothness penalty
+    """
+    Configurable weights for each reward component.
+    
+    IMPORTANT: For velocity tracking to be the DOMINANT objective,
+    tracking weight should be 2-3x the sum of survival rewards.
+    
+    Recommended for walking:
+    - tracking: 25.0 (dominant)
+    - direction_bonus: 8.0
+    - height: 3.0 (reduced)
+    - upright: 2.0 (reduced)
+    - alive: 0.5 (reduced)
+    """
+    tracking: float = 25.0          # Gaussian kernel for velocity matching (DOMINANT)
+    direction_bonus: float = 8.0    # Bonus for correct direction
+    height: float = 3.0             # Height maintenance (reduced)
+    upright: float = 2.0            # Orientation reward (reduced)
+    alive: float = 0.5              # Per-step survival bonus (reduced)
+    action_penalty: float = 0.003   # Effort penalty coefficient
+    jerk_penalty: float = 0.008     # Action smoothness penalty
 
 
 @dataclass
@@ -97,7 +109,7 @@ class RewardCalculator:
         weights: Optional[RewardWeights] = None,
         target_height: float = 1.40,
         height_bandwidth: float = 10.0,
-        tracking_bandwidth: float = 4.0,
+        tracking_bandwidth: float = 2.0,  # REDUCED from 4.0 for more lenient gradient
     ):
         """
         Initialize reward calculator.
@@ -107,6 +119,11 @@ class RewardCalculator:
             target_height: Target standing/walking height in meters
             height_bandwidth: Gaussian bandwidth for height reward
             tracking_bandwidth: Gaussian bandwidth for velocity tracking
+                              Lower = more lenient (better gradient for learning)
+                              At bandwidth 2.0: 
+                                - 0.2 m/s error → 92% of max reward
+                                - 0.4 m/s error → 73% of max reward
+                                - 0.7 m/s error → 38% of max reward
         """
         self.weights = weights or RewardWeights()
         self.target_height = target_height
