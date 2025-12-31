@@ -375,7 +375,112 @@ def main():
             tags=['walking', 'curriculum']
         )
 
-    if resume and not args.from_standing:
+    if args.from_standing and args.model:
+        # ========== TRANSFER FROM STANDING MODEL ==========
+        # This is CRITICAL for walking - the agent must learn to stand first!
+        # Standing obs: ~1484 dims (365 + 6) * 4
+        # Walking obs:  ~1492 dims (365 + 6 + 2) * 4  (+2 for commanded velocity)
+        print(f"\n{'='*60}")
+        print("TRANSFER LEARNING: Standing → Walking")
+        print(f"{'='*60}")
+        print(f"Loading standing model from: {args.model}")
+        
+        try:
+            # Load standing model to extract policy weights
+            standing_model = PPO.load(args.model, device=device)
+            
+            print(f"✓ Standing model loaded successfully")
+            print(f"  Standing observation space: {standing_model.observation_space.shape}")
+            print(f"  Walking observation space: {env.observation_space.shape}")
+            
+            # Create new walking model with same architecture
+            print("\nCreating walking model with transferred weights...")
+            model = PPO(
+                policy='MlpPolicy',
+                env=env,
+                learning_rate=lr_fn,
+                n_steps=int(walking.get('n_steps', 2048)),
+                batch_size=int(walking.get('batch_size', 256)),
+                n_epochs=int(walking.get('n_epochs', 10)),
+                gamma=float(walking.get('gamma', 0.995)),
+                gae_lambda=float(walking.get('gae_lambda', 0.95)),
+                clip_range=clip_fn,
+                ent_coef=initial_ent,
+                vf_coef=float(walking.get('vf_coef', 0.5)),
+                max_grad_norm=float(walking.get('max_grad_norm', 0.5)),
+                policy_kwargs=policy_kwargs,
+                seed=seed,
+                verbose=int(walking.get('verbose', 1)),
+                device=device,
+            )
+            
+            # Transfer compatible weights from standing to walking
+            standing_state = standing_model.policy.state_dict()
+            walking_state = model.policy.state_dict()
+            
+            transferred = 0
+            skipped = 0
+            
+            for key in walking_state.keys():
+                if key in standing_state:
+                    standing_tensor = standing_state[key]
+                    walking_tensor = walking_state[key]
+                    
+                    if standing_tensor.shape == walking_tensor.shape:
+                        # Perfect match - direct transfer
+                        walking_state[key] = standing_tensor
+                        transferred += 1
+                    elif len(standing_tensor.shape) == 2 and len(walking_tensor.shape) == 2:
+                        # Weight matrix with different input size (first layer)
+                        # Transfer what we can, initialize rest with small random values
+                        min_in = min(standing_tensor.shape[1], walking_tensor.shape[1])
+                        min_out = min(standing_tensor.shape[0], walking_tensor.shape[0])
+                        
+                        # Copy overlapping weights
+                        walking_state[key][:min_out, :min_in] = standing_tensor[:min_out, :min_in]
+                        
+                        # Initialize new input dimensions (velocity command) with small values
+                        if walking_tensor.shape[1] > standing_tensor.shape[1]:
+                            new_dim = walking_tensor.shape[1] - standing_tensor.shape[1]
+                            walking_state[key][:, -new_dim:] = torch.randn(
+                                walking_tensor.shape[0], new_dim, device=device
+                            ) * 0.01
+                        
+                        transferred += 1
+                        print(f"  Partial transfer: {key} ({standing_tensor.shape} → {walking_tensor.shape})")
+                    elif len(standing_tensor.shape) == 1 and len(walking_tensor.shape) == 1:
+                        # Bias vector
+                        min_size = min(standing_tensor.shape[0], walking_tensor.shape[0])
+                        walking_state[key][:min_size] = standing_tensor[:min_size]
+                        transferred += 1
+                    else:
+                        skipped += 1
+                else:
+                    skipped += 1
+            
+            # Load transferred state
+            model.policy.load_state_dict(walking_state)
+            
+            print(f"\n✓ Weight transfer complete:")
+            print(f"  Transferred: {transferred} layers")
+            print(f"  Skipped/new: {skipped} layers")
+            print(f"\nThe walking model now has standing knowledge!")
+            print(f"It should be able to balance from the start.")
+            print(f"{'='*60}\n")
+            
+            learn_timesteps = total_timesteps
+            reset_num_timesteps = True
+            resume = True  # Mark as handled
+            
+        except Exception as e:
+            print(f"✗ Transfer from standing failed: {e}")
+            import traceback
+            traceback.print_exc()
+            print("\n  Falling back to fresh model (this will be SLOW)...")
+            print("  Consider training standing first: python scripts/train_standing.py")
+            resume = False
+    
+    elif resume:
         # Resume from walking model
         try:
             print(f"Loading walking model from: {args.model}")
@@ -403,7 +508,16 @@ def main():
             resume = False
     
     if not resume:
-        # Create fresh model
+        # Create fresh model - WARNING: This is very slow without standing pretrain!
+        print("\n" + "!"*60)
+        print("WARNING: Training walking from scratch WITHOUT standing pretrain!")
+        print("This will be VERY slow. The agent needs to learn balance first.")
+        print("")
+        print("RECOMMENDED: Train standing first, then transfer:")
+        print("  1. python scripts/train_standing.py --timesteps 5000000")
+        print("  2. python scripts/train_walking.py --from-standing --model models/best_standing_model.zip")
+        print("!"*60 + "\n")
+        
         print("Creating new PPO model for walking task...")
         model = PPO(
             policy='MlpPolicy',
