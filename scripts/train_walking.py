@@ -361,7 +361,7 @@ def main():
         act = policy_kwargs['activation_fn'].lower()
         policy_kwargs['activation_fn'] = getattr(nn, act_map.get(act, 'ReLU'))
 
-        device = walking.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
+    device = walking.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
     resume = args.model is not None
     
     # ========== INITIALIZE MODEL MANAGER ==========
