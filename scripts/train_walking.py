@@ -267,6 +267,9 @@ def main():
     seed = int(walking.get('seed', 42))
     total_timesteps = int(walking.get('total_timesteps', 15_000_000)) if args.timesteps is None else args.timesteps
     
+    learn_timesteps = total_timesteps
+    reset_num_timesteps = True
+    
     print(f"\n{'='*60}")
     print(f"WALKING TRAINING CONFIGURATION")
     print(f"{'='*60}")
@@ -358,7 +361,7 @@ def main():
         act = policy_kwargs['activation_fn'].lower()
         policy_kwargs['activation_fn'] = getattr(nn, act_map.get(act, 'ReLU'))
 
-    device = walking.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
+        device = walking.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
     resume = args.model is not None
     
     # ========== INITIALIZE MODEL MANAGER ==========
@@ -377,9 +380,6 @@ def main():
 
     if args.from_standing and args.model:
         # ========== TRANSFER FROM STANDING MODEL ==========
-        # This is CRITICAL for walking - the agent must learn to stand first!
-        # Standing obs: ~1484 dims (365 + 6) * 4
-        # Walking obs:  ~1492 dims (365 + 6 + 2) * 4  (+2 for commanded velocity)
         print(f"\n{'='*60}")
         print("TRANSFER LEARNING: Standing → Walking")
         print(f"{'='*60}")
@@ -427,19 +427,14 @@ def main():
                     walking_tensor = walking_state[key]
                     
                     if standing_tensor.shape == walking_tensor.shape:
-                        # Perfect match - direct transfer
                         walking_state[key] = standing_tensor
                         transferred += 1
                     elif len(standing_tensor.shape) == 2 and len(walking_tensor.shape) == 2:
-                        # Weight matrix with different input size (first layer)
-                        # Transfer what we can, initialize rest with small random values
                         min_in = min(standing_tensor.shape[1], walking_tensor.shape[1])
                         min_out = min(standing_tensor.shape[0], walking_tensor.shape[0])
                         
-                        # Copy overlapping weights
                         walking_state[key][:min_out, :min_in] = standing_tensor[:min_out, :min_in]
                         
-                        # Initialize new input dimensions (velocity command) with small values
                         if walking_tensor.shape[1] > standing_tensor.shape[1]:
                             new_dim = walking_tensor.shape[1] - standing_tensor.shape[1]
                             walking_state[key][:, -new_dim:] = torch.randn(
@@ -449,7 +444,6 @@ def main():
                         transferred += 1
                         print(f"  Partial transfer: {key} ({standing_tensor.shape} → {walking_tensor.shape})")
                     elif len(standing_tensor.shape) == 1 and len(walking_tensor.shape) == 1:
-                        # Bias vector
                         min_size = min(standing_tensor.shape[0], walking_tensor.shape[0])
                         walking_state[key][:min_size] = standing_tensor[:min_size]
                         transferred += 1
@@ -458,26 +452,24 @@ def main():
                 else:
                     skipped += 1
             
-            # Load transferred state
             model.policy.load_state_dict(walking_state)
             
             print(f"\n✓ Weight transfer complete:")
             print(f"  Transferred: {transferred} layers")
             print(f"  Skipped/new: {skipped} layers")
             print(f"\nThe walking model now has standing knowledge!")
-            print(f"It should be able to balance from the start.")
             print(f"{'='*60}\n")
             
+            # Already initialized at top, but confirm values
             learn_timesteps = total_timesteps
             reset_num_timesteps = True
-            resume = True  # Mark as handled
+            resume = True
             
         except Exception as e:
             print(f"✗ Transfer from standing failed: {e}")
             import traceback
             traceback.print_exc()
-            print("\n  Falling back to fresh model (this will be SLOW)...")
-            print("  Consider training standing first: python scripts/train_standing.py")
+            print("\n  Falling back to fresh model...")
             resume = False
     
     elif resume:
@@ -493,14 +485,14 @@ def main():
             remaining_timesteps = total_timesteps - current_timesteps
             
             if remaining_timesteps <= 0:
-                print(f"✗ Model already trained for {current_timesteps:,} steps (target: {total_timesteps:,})")
+                print(f"✗ Model already trained for {current_timesteps:,} steps")
                 return
             
             learn_timesteps = remaining_timesteps
             reset_num_timesteps = False
             
-            print(f"✓ Resuming from model with {current_timesteps:,} timesteps")
-            print(f"  Will train for {remaining_timesteps:,} more steps")
+            print(f"✓ Resuming from {current_timesteps:,} timesteps")
+            print(f"  Training {remaining_timesteps:,} more steps")
             
         except Exception as e:
             print(f"✗ Failed to load model: {e}")
@@ -508,17 +500,11 @@ def main():
             resume = False
     
     if not resume:
-        # Create fresh model - WARNING: This is very slow without standing pretrain!
+        # Create fresh model
         print("\n" + "!"*60)
-        print("WARNING: Training walking from scratch WITHOUT standing pretrain!")
-        print("This will be VERY slow. The agent needs to learn balance first.")
-        print("")
-        print("RECOMMENDED: Train standing first, then transfer:")
-        print("  1. python scripts/train_standing.py --timesteps 5000000")
-        print("  2. python scripts/train_walking.py --from-standing --model models/best_standing_model.zip")
+        print("WARNING: Training from scratch WITHOUT standing pretrain!")
         print("!"*60 + "\n")
         
-        print("Creating new PPO model for walking task...")
         model = PPO(
             policy='MlpPolicy',
             env=env,
@@ -537,10 +523,7 @@ def main():
             verbose=int(walking.get('verbose', 1)),
             device=device,
         )
-        learn_timesteps = total_timesteps
-        reset_num_timesteps = True
 
-    # Create callbacks
     callback_list = [
         EntropyScheduleCallback(initial_ent, final_ent, learn_timesteps, verbose=1),
         WalkingMetricsCallback(log_freq=int(walking.get('wandb_log_freq', 10000)), verbose=1),
@@ -549,6 +532,7 @@ def main():
             freq=int(walking.get('save_freq', 250_000))
         )
     ]
+    
     
     # Add WandB callbacks if enabled
     if use_wandb:
