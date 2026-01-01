@@ -149,7 +149,7 @@ walking:
   
   # Basic settings
   seed: 42
-  n_envs: 8  
+  n_envs: 12  
   device: cuda  # 'cuda' or 'cpu'
   
   # Episode settings
@@ -306,11 +306,7 @@ walking:
   early_stop:
     patience: 5
   
-  # ========== REWARD FUNCTION COMPONENTS (REBALANCED) ==========
-  # 
-  # KEY FIX: Velocity tracking is now the DOMINANT reward component
-  # Previous issue: Survival rewards (~40-50/step) >> tracking rewards (~5-10/step)
-  # New balance: Tracking (~25-40/step) >> Survival (~15-20/step)
+  #REWARD FUNCTION COMPONENTS
   #
   
   # Velocity tracking (Gaussian kernel) - NOW DOMINANT
