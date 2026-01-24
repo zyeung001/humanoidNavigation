@@ -44,23 +44,26 @@ class WalkingCurriculumEnv(WalkingEnv):
         self.speed_stages = [0.3, 0.6, 1.0, 1.5, 2.0, 2.5, 3.0]
         
         # Probability of standing command per stage
-        # Stage 0-1: More standing practice to build stability
-        self.standing_probability = [0.08, 0.05, 0.02, 0.0, 0.0, 0.0, 0.0]
+        # Stage 0: NO standing - we need to break the standing-still exploit
+        # Stage 1+: Gradually introduce standing practice
+        self.standing_probability = [0.0, 0.03, 0.02, 0.0, 0.0, 0.0, 0.0]
         
-        # RELAXED velocity error tolerances for curriculum advancement
-        # Stage 0 is VERY lenient - we just want the agent to START moving
-        # Key insight: 0.3 m/s commanded, 0.9 m/s tolerance = agent can be 3x off and still pass
-        self.velocity_tolerances = [0.9, 0.75, 0.6, 0.5, 0.45, 0.4, 0.35]
+        # Velocity error tolerances for curriculum advancement
+        # Stage 0: TIGHT tolerance (0.25) to break standing-still exploit
+        # Standing still with 0.3 m/s command = 0.3 error, which must FAIL
+        # Later stages gradually relax then tighten again
+        self.velocity_tolerances = [0.25, 0.35, 0.45, 0.50, 0.45, 0.40, 0.35]
         
-        # Minimum episode lengths - RELAXED for curriculum progression
-        # Stage 0: Just survive 60 steps (low bar to start)
-        self.min_episode_lengths = [60, 100, 150, 200, 300, 400, 500]
+        # Minimum episode lengths for curriculum progression
+        # Stage 0: 200 steps (2 sec) - long enough to require actual walking
+        self.min_episode_lengths = [200, 250, 300, 350, 400, 450, 500]
         
         # Height tolerances (walking naturally has lower COM)
         self.height_tolerances = [0.45, 0.40, 0.35, 0.30, 0.27, 0.24, 0.20]
         
-        # Direction diversity
-        self.direction_diversity = cfg.get('direction_diversity', True)
+        # Direction diversity - DISABLED by default for Stage 0
+        # Stage 0 should be boring: forward only, fixed speed
+        self.direction_diversity = cfg.get('direction_diversity', False)
         
         # Episode velocity error tracking
         self.episode_velocity_errors = []
@@ -171,8 +174,13 @@ class WalkingCurriculumEnv(WalkingEnv):
         elif self.direction_diversity:
             direction_type = np.random.choice(['forward', 'diagonal', 'lateral', 'backward', 'random'],
                                              p=[0.5, 0.25, 0.15, 0.02, 0.08])
-            
-            speed = np.random.uniform(0.1, self.max_commanded_speed)
+
+            # Stage 0-1: Fixed speed at max to avoid variance
+            # Later stages: Allow speed variation
+            if current_stage <= 1:
+                speed = self.max_commanded_speed  # Fixed speed
+            else:
+                speed = np.random.uniform(0.2, self.max_commanded_speed)
             
             if direction_type == 'forward':
                 angle = np.random.uniform(-np.pi/6, np.pi/6)
@@ -193,8 +201,27 @@ class WalkingCurriculumEnv(WalkingEnv):
             yaw_rate = np.random.uniform(-max_yaw, max_yaw) * (0.3 + 0.7 * current_stage / 6.0)
             self.fixed_command = (vx, vy, yaw_rate)
         else:
-            # Let command generator handle it
-            self.fixed_command = None
+            # No direction diversity
+            if current_stage == 0:
+                # Stage 0: Forward only, fixed speed, tiny angle variance
+                # This prevents standing-still exploit while keeping the task simple
+                angle = np.random.uniform(-np.pi/12, np.pi/12)  # ±15 degrees
+                speed = self.max_commanded_speed  # Fixed, not sampled
+                vx = speed * np.cos(angle)
+                vy = speed * np.sin(angle)
+                yaw_rate = 0.0
+                self.fixed_command = (vx, vy, yaw_rate)
+            elif current_stage == 1:
+                # Stage 1: Slightly more variety in direction
+                angle = np.random.uniform(-np.pi/6, np.pi/6)  # ±30 degrees
+                speed = self.max_commanded_speed
+                vx = speed * np.cos(angle)
+                vy = speed * np.sin(angle)
+                yaw_rate = 0.0
+                self.fixed_command = (vx, vy, yaw_rate)
+            else:
+                # Later stages: let command generator handle variety
+                self.fixed_command = None
         
         obs, info = super().reset(seed=seed)
         self.fixed_command = None
@@ -247,11 +274,9 @@ class WalkingCurriculumEnv(WalkingEnv):
             if len(self.fall_buffer) > self.advance_after:
                 self.fall_buffer = self.fall_buffer[-self.advance_after:]
             
-            # Warmup period with relaxed criteria
-            if self.total_episodes < self.warmup_episodes:
-                vel_tolerance_multiplier = 1.5  # 50% more lenient during warmup
-            else:
-                vel_tolerance_multiplier = 1.2  # Normal 20% buffer
+            # No warmup leniency - enforce strict velocity tracking from the start
+            # This prevents the standing-still exploit from being masked
+            vel_tolerance_multiplier = 1.0  # No buffer - velocity error must be below tolerance
             
             # SUCCESS CRITERIA - RELAXED for Stage 0 to encourage movement
             # Key insight: The agent needs to learn that MOVING is good
@@ -277,15 +302,25 @@ class WalkingCurriculumEnv(WalkingEnv):
             not_fallen = not terminated
             
             # NEW: Did the agent actually MOVE? (anti-standing-still check)
-            # For Stage 0-1, reward any movement attempt
             actual_speed_info = info.get('actual_speed', 0.0)
-            attempted_movement = actual_speed_info > 0.08 or self.commanded_speed < 0.1
-            
-            # Stage 0-1: Be very lenient to get the agent moving
-            if current_stage <= 1:
-                # Pass if: survived + attempted movement + (velocity OK OR height OK)
+            commanded_speed = info.get('commanded_speed', self.commanded_speed)
+
+            # Stage 0: STRICT movement requirement - must actually be moving
+            # This prevents standing-still from passing Stage 0
+            if current_stage == 0:
+                if commanded_speed > 0.1:
+                    # Require at least 30% of commanded speed
+                    min_required_speed = commanded_speed * 0.30
+                    is_moving = actual_speed_info >= min_required_speed
+                    success = bool(not_fallen and long_enough and vel_ok and is_moving)
+                else:
+                    # Standing command - just need to survive
+                    success = bool(not_fallen and long_enough and vel_ok)
+            elif current_stage == 1:
+                # Stage 1: Slightly relaxed - require some movement attempt
+                attempted_movement = actual_speed_info > 0.08 or commanded_speed < 0.1
                 success = bool(
-                    not_fallen and 
+                    not_fallen and
                     long_enough and
                     (vel_ok or (height_ok and attempted_movement))
                 )
@@ -335,21 +370,21 @@ class WalkingCurriculumEnv(WalkingEnv):
                     )
                 
                 # Path 4 - MOVEMENT-BASED (Stage 0-1 only)
-                # Key insight: For Stage 0, just getting the agent to MOVE is a win
-                # We can refine accuracy in later stages
+                # Key insight: For Stage 0, agent must actually be tracking velocity
+                # Tightened criteria to prevent standing-still exploitation
                 movement_advance = False
                 if current_stage <= 1:
-                    # Check if agent is actually moving (not just standing)
+                    # Check if agent is actually tracking velocity (not just standing)
                     if self.velocity_error_buffer:
-                        # If commanded 0.3 m/s and velocity error < 0.7, agent is moving somewhat
                         avg_error = np.mean(self.velocity_error_buffer[-10:])
-                        is_moving = avg_error < current_speed + 0.2  # If error < cmd + 0.2, agent moved
-                        
+                        # is_tracking: velocity error must be within tolerance
+                        is_tracking = avg_error < current_vel_tol * 1.2
+
                         movement_advance = (
-                            is_moving and
-                            fall_rate < 0.25 and  # Can fall sometimes while learning
-                            avg_ep_length > min_length * 1.5 and  # Survives reasonably
-                            success_rate >= 0.20  # Very low bar for Stage 0
+                            is_tracking and
+                            fall_rate < 0.20 and           # Tightened from 0.25
+                            avg_ep_length > min_length * 2.0 and  # Tightened from 1.5
+                            success_rate >= 0.35           # Tightened from 0.20
                         )
                 
                 # advance if any success

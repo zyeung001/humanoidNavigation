@@ -182,23 +182,23 @@ walking:
   
   # ========== VELOCITY COMMAND GENERATOR  ==========
   use_command_generator: true        # Use VelocityCommandGenerator
-  command_switch_interval: [2.0, 5.0]  # Random interval between command switches
-  stop_probability: 0.15             # 15% probability of stop command for braking practice
+  command_switch_interval: [10.0, 20.0]  # LONGER intervals for Stage 0 learning
+  stop_probability: 0.0              # NO stop commands - don't reward standing
   
   # ========== YAW RATE TRACKING  ==========
   include_yaw_rate: true             # Enable yaw rate tracking in observation/reward
   max_yaw_rate: 1.0                  # rad/s maximum commanded yaw rate
   yaw_rate_weight: 3.0               # Reward weight for yaw tracking
   
-  # ========== CURRICULUM LEARNING (RELAXED FOR STAGE 0) ==========
+  # ========== CURRICULUM LEARNING ==========
   curriculum_start_stage: 0
   curriculum_max_stage: 6
-  curriculum_advance_after: 15    # REDUCED from 20 (faster feedback)
-  warmup_episodes: 30             # REDUCED from 50 (get to advancement sooner)
-  curriculum_success_rate: 0.35   # RELAXED from 0.40 (easier advancement)            
-  
-  # Direction diversity - train with different velocity directions
-  direction_diversity: true
+  curriculum_advance_after: 15    # Episodes before considering advancement
+  warmup_episodes: 0              # NO warmup leniency - enforce strict criteria
+  curriculum_success_rate: 0.35   # Success rate needed to advance
+
+  # Direction diversity - DISABLED for Stage 0 (forward only)
+  direction_diversity: false
   
   # ========== ROBUSTNESS TRAINING (STAGE-CONTROLLED) ==========
   # Push perturbations DISABLED for Stage 0
@@ -224,12 +224,12 @@ walking:
   random_velocity_range: [-0.3, 0.3]
   
   # ========== FIX: RELAXED TERMINATION FOR WALKING ==========
-  # Issue: Height < 0.75m terminates immediately, not enough experience to learn stepping
-  # Solution: Lower threshold, add grace period, protect early episode
-  termination_height_threshold: 0.70      # LOWERED from 0.75 - more forgiving
+  # Issue: Height drops during natural gait shouldn't terminate
+  # Solution: Lower threshold, longer grace period, extended early protection
+  termination_height_threshold: 0.60      # Catch actual falls, not crouches
   termination_grace_period: 100           # Steps to track before terminating
-  termination_height_recovery_window: 20  # Consecutive low-height steps before term
-  early_termination_protection: 50        # Don't terminate in first N steps
+  termination_height_recovery_window: 80  # Full gait cycle (~0.8s at 100Hz)
+  early_termination_protection: 150       # Protect first 1.5s of episode
   
   # ========== REWARD FUNCTION ==========
   target_height: 1.40
@@ -242,15 +242,15 @@ walking:
     termination_penalty_constant: 50.0  
   
   # ========== PPO HYPERPARAMETERS ==========
-  
-  # Training schedule 
+
+  # Training schedule
   total_timesteps: 10_000_000
-  learning_rate: 0.0002          
+  learning_rate: 0.0003          # INCREASED: Faster adaptation for early training
   final_learning_rate: 0.00005   
   
   # PPO algorithm parameters
   n_steps: 2048
-  batch_size: 512
+  batch_size: 256                # REDUCED: Smaller batches for faster exploration
   n_epochs: 10
   
   gamma: 0.995
@@ -260,9 +260,9 @@ walking:
   clip_range: 0.2
   final_clip_range: 0.1
   
-  # Entropy regularization 
-  ent_coef: 0.03                
-  final_ent_coef: 0.01         
+  # Entropy regularization - INCREASED for exploration
+  ent_coef: 0.05                # Higher entropy to break standing-still trap
+  final_ent_coef: 0.015         
   
   # Value function
   vf_coef: 0.5

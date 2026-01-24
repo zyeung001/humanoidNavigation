@@ -382,6 +382,107 @@ class VideoRecordingCallback(BaseCallback):
             print(f"Video recording failed: {e}")
 
 
+class RewardBreakdownWandBCallback(BaseCallback):
+    """
+    WandB callback for comprehensive reward breakdown logging.
+
+    Logs:
+    - Individual reward components (mean/std)
+    - Termination cause distribution
+    - Behavior ratios (standing vs walking)
+    - Standing exploit ratio (critical diagnostic)
+    - Command effectiveness (achieved/commanded speed ratio)
+    """
+
+    def __init__(
+        self,
+        log_freq: int = 5000,
+        buffer_size: int = 1000,
+        verbose: int = 0
+    ):
+        super().__init__(verbose)
+        self.log_freq = log_freq
+        self.buffer_size = buffer_size
+
+        # Reward component buffers
+        self.reward_components: Dict[str, deque] = {}
+
+        # Termination tracking
+        self.termination_causes: deque = deque(maxlen=buffer_size)
+
+        # Behavior tracking
+        self.is_standing_buffer: deque = deque(maxlen=buffer_size)
+        self.standing_penalty_buffer: deque = deque(maxlen=buffer_size)
+        self.speed_ratio_buffer: deque = deque(maxlen=buffer_size)
+
+    def _on_step(self) -> bool:
+        infos = self.locals.get("infos", [])
+
+        for info in infos:
+            # Collect reward components
+            for key, value in info.items():
+                if key.startswith('reward/'):
+                    component_name = key.replace('reward/', '')
+                    if component_name not in self.reward_components:
+                        self.reward_components[component_name] = deque(maxlen=self.buffer_size)
+                    self.reward_components[component_name].append(value)
+
+            # Collect termination causes
+            if 'termination_cause' in info:
+                self.termination_causes.append(info['termination_cause'])
+
+            # Collect behavior metrics
+            if 'behavior/is_standing' in info:
+                self.is_standing_buffer.append(1 if info['behavior/is_standing'] else 0)
+            if 'behavior/standing_penalty_applied' in info:
+                self.standing_penalty_buffer.append(1 if info['behavior/standing_penalty_applied'] else 0)
+            if 'behavior/speed_ratio' in info:
+                self.speed_ratio_buffer.append(info['behavior/speed_ratio'])
+
+        # Log at intervals
+        if self.num_timesteps % self.log_freq == 0:
+            self._log_metrics()
+
+        return True
+
+    def _log_metrics(self):
+        if not WANDB_AVAILABLE or wandb.run is None:
+            return
+
+        log_dict = {"timesteps": self.num_timesteps}
+
+        # Log reward components
+        for component_name, values in self.reward_components.items():
+            if values:
+                log_dict[f"reward/{component_name}_mean"] = np.mean(values)
+                log_dict[f"reward/{component_name}_std"] = np.std(values)
+
+        # Log termination cause distribution
+        if self.termination_causes:
+            causes = list(self.termination_causes)
+            cause_counts = {}
+            for cause in causes:
+                cause_counts[cause] = cause_counts.get(cause, 0) + 1
+            total = len(causes)
+            for cause, count in cause_counts.items():
+                log_dict[f"termination/{cause}_ratio"] = count / total
+
+        # Log behavior metrics
+        if self.is_standing_buffer:
+            standing_ratio = np.mean(self.is_standing_buffer)
+            log_dict["behavior/standing_ratio"] = standing_ratio
+            log_dict["behavior/standing_exploit_ratio"] = standing_ratio  # Critical diagnostic
+
+        if self.standing_penalty_buffer:
+            log_dict["behavior/standing_penalty_ratio"] = np.mean(self.standing_penalty_buffer)
+
+        if self.speed_ratio_buffer:
+            log_dict["behavior/speed_ratio_mean"] = np.mean(self.speed_ratio_buffer)
+            log_dict["behavior/command_effectiveness"] = np.clip(np.mean(self.speed_ratio_buffer), 0, 1)
+
+        wandb.log(log_dict)
+
+
 def init_wandb_run(
     project: str = "humanoid_walking",
     name: Optional[str] = None,

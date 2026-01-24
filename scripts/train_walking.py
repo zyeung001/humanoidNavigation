@@ -37,8 +37,9 @@ from stable_baselines3.common.monitor import Monitor
 from src.environments.walking_curriculum import make_walking_curriculum_env
 from src.training.model_manager import ModelManager
 from src.training.callbacks import (
-    VelocityTrackingWandBCallback, 
+    VelocityTrackingWandBCallback,
     CurriculumWandBCallback,
+    RewardBreakdownWandBCallback,
     init_wandb_run,
     finish_wandb_run
 )
@@ -550,7 +551,11 @@ def main():
                 project_name=walking.get('wandb_project', 'humanoid_walking'),
                 config=walking
             ),
-            CurriculumWandBCallback(log_freq=5000)
+            CurriculumWandBCallback(log_freq=5000),
+            RewardBreakdownWandBCallback(
+                log_freq=int(walking.get('wandb_log_freq', 5000)),
+                buffer_size=1000
+            )
         ])
     
     callbacks = CallbackList(callback_list)

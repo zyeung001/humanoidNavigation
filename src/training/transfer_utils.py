@@ -58,14 +58,19 @@ class VecNormalizeExtender:
         self.walking_env = walking_env
         self.command_mean = command_mean
         self.command_var = command_var
-        
-        # Expected dimensions
+
+        # ========== NEW DIMENSION STRUCTURE ==========
+        # Walking now has: stacked body (1484) + command block ONCE (9) = 1493
+        # (Previously was: (body + cmd) * 4 = 1496)
         self.standing_per_frame = 371  # base(365) + com(6)
-        self.walking_per_frame = 374   # base(365) + com(6) + cmd(3)
         self.history_len = 4
         self.standing_total = self.standing_per_frame * self.history_len  # 1484
-        self.walking_total = self.walking_per_frame * self.history_len    # 1496
-        self.new_dims_per_frame = 3  # vx, vy, yaw_rate
+
+        # Walking: stacked body + command block (appended once, not per frame)
+        # Command block: [vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual,
+        #                 err_vx, err_vy, err_speed, err_angle] = 9 dims
+        self.command_block_dim = 9
+        self.walking_total = self.standing_total + self.command_block_dim  # 1493
         
     def extend(self) -> VecNormalize:
         """
@@ -164,36 +169,33 @@ class VecNormalizeExtender:
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Extend standing statistics to walking dimensions.
-        
-        The observation is history-stacked: [frame_t-3, frame_t-2, frame_t-1, frame_t]
-        Each frame has base(365) + com(6) + [cmd(3) for walking]
-        
-        We need to insert command feature statistics at the right positions.
+
+        NEW STRUCTURE (command block appended once, not per-frame):
+        - Stacked body: [body_t-3, body_t-2, body_t-1, body_t] = 1484 dims
+        - Command block: [vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual,
+                         err_vx, err_vy, err_speed, err_angle] = 9 dims
+        - Total: 1493 dims
+
+        Since standing uses the same body structure (1484 dims), we can
+        copy standing stats directly to the body portion and add fresh
+        command block stats at the end.
         """
         # Initialize walking arrays
         walking_mean = np.zeros(self.walking_total, dtype=np.float64)
         walking_var = np.ones(self.walking_total, dtype=np.float64)
-        
-        # For each history frame, copy standing stats and add command stats
-        for frame_idx in range(self.history_len):
-            # Source indices in standing observation
-            standing_start = frame_idx * self.standing_per_frame
-            standing_end = standing_start + self.standing_per_frame
-            
-            # Destination indices in walking observation
-            walking_start = frame_idx * self.walking_per_frame
-            walking_end_base = walking_start + self.standing_per_frame
-            walking_end = walking_start + self.walking_per_frame
-            
-            # Copy base + COM statistics
-            walking_mean[walking_start:walking_end_base] = standing_mean[standing_start:standing_end]
-            walking_var[walking_start:walking_end_base] = standing_var[standing_start:standing_end]
-            
-            # Add command feature statistics (new dims at end of each frame)
-            # Commands are in [-max_speed, max_speed], roughly normalized
-            walking_mean[walking_end_base:walking_end] = self.command_mean
-            walking_var[walking_end_base:walking_end] = self.command_var
-        
+
+        # Copy standing stats directly to body portion (first 1484 dims)
+        # Standing and walking share the same body feature structure
+        min_len = min(len(standing_mean), self.standing_total)
+        walking_mean[:min_len] = standing_mean[:min_len]
+        walking_var[:min_len] = standing_var[:min_len]
+
+        # Add command block statistics (last 9 dims)
+        # Command block is normalized to [-1, 1], so mean=0, var=1 is appropriate
+        cmd_start = self.standing_total
+        walking_mean[cmd_start:] = self.command_mean  # 0.0
+        walking_var[cmd_start:] = self.command_var    # 1.0
+
         return walking_mean, walking_var
     
     def _create_fresh_vecnorm(self) -> VecNormalize:
@@ -211,16 +213,15 @@ class VecNormalizeExtender:
         """Print verification info about the VecNormalize statistics."""
         mean = vecnorm.obs_rms.mean
         var = vecnorm.obs_rms.var
-        
+
         # Check first frame's base obs
         print(f"  Base obs mean range: [{mean[:20].min():.3f}, {mean[:20].max():.3f}]")
         print(f"  Base obs var range: [{var[:20].min():.3f}, {var[:20].max():.3f}]")
-        
-        # Check command features (last 3 dims of first frame)
-        cmd_start = self.standing_per_frame
-        cmd_end = self.walking_per_frame
-        print(f"  Command mean: {mean[cmd_start:cmd_end]}")
-        print(f"  Command var: {var[cmd_start:cmd_end]}")
+
+        # Check command block (last 9 dims, appended once)
+        cmd_start = self.standing_total  # 1484
+        print(f"  Command block mean: {mean[cmd_start:]}")
+        print(f"  Command block var: {var[cmd_start:]}")
 
 
 class PolicyTransfer:
@@ -268,11 +269,11 @@ class PolicyTransfer:
         self.walking_model = walking_model
         self.init_strategy = init_strategy
         self.device = device
-        
-        # Dimension info
-        self.standing_dim = 1484
-        self.walking_dim = 1496
-        self.new_dims = 12  # 3 commands × 4 frames
+
+        # Dimension info (NEW structure: body stacked + command block once)
+        self.standing_dim = 1484  # Body features × 4 frames
+        self.walking_dim = 1493   # Body (1484) + command block (9)
+        self.new_dims = 9         # Command block: [vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual, err_vx, err_vy, err_speed, err_angle]
         
     def transfer(self) -> Dict[str, Any]:
         """
@@ -491,17 +492,15 @@ class WarmupCollector:
         if self.verbose:
             print(f"\n✓ Warmup complete: {collected:,} steps, {episodes} episodes")
             print(f"  Final count: {self.env.obs_rms.count:.0f}")
-            
-            # Verify command feature statistics
-            # Command features are at indices [371:374] in each frame
-            per_frame = 374
-            for i in range(4):
-                cmd_start = i * per_frame + 371
-                cmd_end = i * per_frame + 374
-                cmd_mean = self.env.obs_rms.mean[cmd_start:cmd_end]
-                cmd_var = self.env.obs_rms.var[cmd_start:cmd_end]
-                print(f"  Frame {i} commands: mean={cmd_mean}, var={cmd_var}")
-        
+
+            # Verify command block statistics (last 9 dims, appended once)
+            # NEW structure: body (1484) + command block (9) = 1493
+            body_dim = 1484
+            cmd_mean = self.env.obs_rms.mean[body_dim:]
+            cmd_var = self.env.obs_rms.var[body_dim:]
+            print(f"  Command block mean: {cmd_mean}")
+            print(f"  Command block var: {cmd_var}")
+
         return self.env
 
 
@@ -511,7 +510,7 @@ def transfer_standing_to_walking(
     walking_env,
     walking_model_kwargs: Dict[str, Any],
     device: str = "cuda",
-    init_strategy: str = "xavier",
+    init_strategy: str = "velocity",  # FIX: Use velocity weights as template (not xavier)
     warmup_steps: int = 10000,
 ) -> Tuple[PPO, VecNormalize]:
     """
@@ -598,12 +597,11 @@ def transfer_standing_to_walking(
 
 if __name__ == "__main__":
     print("Transfer utils module - run tests")
-    
-    # Test VecNormalizeExtender dimensions
-    print("\nDimension calculations:")
-    print(f"  Standing per-frame: 371 (365 base + 6 COM)")
-    print(f"  Walking per-frame: 374 (365 base + 6 COM + 3 cmd)")
-    print(f"  Standing total: 371 × 4 = {371 * 4}")
-    print(f"  Walking total: 374 × 4 = {374 * 4}")
-    print(f"  New dims per frame: 3")
-    print(f"  Total new dims: 3 × 4 = 12")
+
+    # Test VecNormalizeExtender dimensions (NEW structure)
+    print("\nDimension calculations (NEW structure):")
+    print(f"  Body per-frame: 371 (365 base + 6 COM)")
+    print(f"  Standing total: 371 × 4 = {371 * 4} (body only)")
+    print(f"  Walking body: 371 × 4 = {371 * 4} (stacked)")
+    print(f"  Command block: 9 (vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual, err_vx, err_vy, err_speed, err_angle)")
+    print(f"  Walking total: {371 * 4} + 9 = {371 * 4 + 9}")

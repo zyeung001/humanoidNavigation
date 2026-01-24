@@ -164,42 +164,51 @@ class WalkingEnv(gym.Wrapper):
         self.obs_history = []
         self.include_com = bool(self.cfg.get('obs_include_com', False))
         self.feature_norm = bool(self.cfg.get('obs_feature_norm', False))
-        
+
         # Humanoid-v5 base observation_space.shape[0] = 350
-        base_obs_from_space = int(env.observation_space.shape[0])  
-        
+        base_obs_from_space = int(env.observation_space.shape[0])
+
         # Actual observations have 15 MORE dimensions than observation_space reports
         base_obs_dim = base_obs_from_space + 15  # Actual observations are 365 dims
-        
-        # Calculate dimension after all processing steps
+
+        # ========== NEW OBSERVATION STRUCTURE ==========
+        # FIX: Command signal was invisible (buried in history, crushed by normalization)
+        # Solution: Body features only in history, command block appended ONCE
+
+        # Body features (stacked in history)
         extra_dim = 6 if self.include_com else 0  # COM pos (3) + COM vel (3)
-        command_dim = 3 if self.include_yaw_rate else 2  # vx, vy, [yaw_rate]
-        feature_dim = base_obs_dim + extra_dim + command_dim
-        
+        self.body_dim_per_frame = base_obs_dim + extra_dim  # 371
+
+        # Command block (appended ONCE, not stacked)
+        # [vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual, err_vx, err_vy, err_speed, err_angle]
+        self.command_block_dim = 9
+
         if self.enable_history:
-            # History stacking multiplies dimension
-            total_dim = feature_dim * self.history_len
+            # Body features stacked, command block appended once
+            stacked_body_dim = self.body_dim_per_frame * self.history_len  # 1484
+            total_dim = stacked_body_dim + self.command_block_dim  # 1493
         else:
-            total_dim = feature_dim
-        
+            total_dim = self.body_dim_per_frame + self.command_block_dim
+
         # FREEZE observation dimension now (before VecNormalize initialization)
         self.frozen_obs_dim = total_dim
-        
+
         # Declare observation space with frozen dimension
         self.observation_space = Box(
-            low=-np.inf, 
-            high=np.inf, 
-            shape=(self.frozen_obs_dim,), 
+            low=-np.inf,
+            high=np.inf,
+            shape=(self.frozen_obs_dim,),
             dtype=np.float32
         )
-        
-        print(f"Walking environment observation space configuration:")
+
+        print(f"Walking environment observation space configuration (NEW):")
         print(f"  Base from env.observation_space: {base_obs_from_space}")
         print(f"  + Position inclusion adjustment: +15 → {base_obs_dim}")
         print(f"  + COM features: {extra_dim}")
-        print(f"  + Command features: {command_dim}")
-        print(f"  = Per-frame dimension: {feature_dim}")
+        print(f"  = Body dim per frame: {self.body_dim_per_frame}")
         print(f"  × History stack: {self.history_len if self.enable_history else 1}")
+        print(f"  = Stacked body dim: {self.body_dim_per_frame * self.history_len if self.enable_history else self.body_dim_per_frame}")
+        print(f"  + Command block (ONCE): {self.command_block_dim}")
         print(f"  = FROZEN dimension: {self.frozen_obs_dim}")
         print(f"  Velocity weight: {self.velocity_weight}")
         print(f"  Max commanded speed: {self.max_commanded_speed}")
@@ -588,8 +597,9 @@ class WalkingEnv(gym.Wrapper):
                 terminate = True
                 termination_penalty = -self.termination_penalty_constant
             else:
-                # Penalize but don't terminate yet
-                termination_penalty = -3.0 * self.low_height_steps
+                # Penalize but don't terminate yet - CAPPED to prevent excessive punishment
+                # Max penalty is -15 (not -60 from uncapped -3.0 * steps)
+                termination_penalty = -0.5 * min(self.low_height_steps, 30)
         else:
             # Height is OK, reset counter
             self.low_height_steps = 0
@@ -630,14 +640,60 @@ class WalkingEnv(gym.Wrapper):
         # Update state
         self.prev_height = height
         
-        # ========== TRACK REWARD COMPONENTS ==========
+        # ========== TRACK REWARD COMPONENTS (for logging) ==========
         self.reward_history['height'].append(height_reward)
         self.reward_history['upright'].append(upright_reward)
         self.reward_history['velocity'].append(stability_reward)
         self.reward_history['control'].append(control_cost)
         self.reward_history['velocity_tracking'].append(velocity_tracking_reward + progress_bonus)
         self.reward_history['jerk'].append(jerk_penalty)
-        
+
+        # ========== COMPREHENSIVE REWARD BREAKDOWN (Phase 4: Diagnostics) ==========
+        self._last_reward_components = {
+            'velocity_tracking': velocity_tracking_reward,
+            'progress_bonus': progress_bonus,
+            'standing_penalty': standing_penalty,
+            'yaw_tracking': yaw_tracking_reward,
+            'height': height_reward,
+            'upright': upright_reward,
+            'stability': stability_reward,
+            'smoothness': smoothness_reward,
+            'jerk_penalty': jerk_penalty,
+            'control_cost': control_cost,
+            'height_maintenance': height_maintenance,
+            'velocity_penalty': velocity_penalty,
+            'recovery_bonus': recovery_bonus,
+            'walking_bonus': walking_bonus,
+            'sustained_bonus': sustained_bonus,
+            'consistency_bonus': consistency_bonus,
+            'termination_penalty': termination_penalty,
+            'total': total_reward,
+        }
+
+        # ========== TERMINATION CAUSE TRACKING ==========
+        if terminate:
+            if height > 2.0:
+                self._termination_cause = 'height_too_high'
+            elif abs(quat[0]) < 0.5:
+                self._termination_cause = 'severely_tilted'
+            elif height < self.termination_height_threshold:
+                self._termination_cause = 'height_too_low'
+            else:
+                self._termination_cause = 'unknown'
+        else:
+            self._termination_cause = None
+
+        # ========== BEHAVIOR METRICS (for standing-still detection) ==========
+        self._behavior_metrics = {
+            'is_standing': actual_speed < 0.05,
+            'is_slow': actual_speed < 0.1,
+            'standing_penalty_applied': standing_penalty < 0,
+            'velocity_error': vel_error,
+            'actual_speed': actual_speed,
+            'commanded_speed': self.commanded_speed,
+            'speed_ratio': actual_speed / max(self.commanded_speed, 0.01),
+        }
+
         # ========== DETAILED DEBUG LOGGING ==========
         if self.current_step % 500 == 0:
             yaw_info = f", yaw_err={yaw_error:.3f}" if self.include_yaw_rate else ""
@@ -646,7 +702,7 @@ class WalkingEnv(gym.Wrapper):
                 f"actual=({com_vel_x:.2f},{com_vel_y:.2f}){yaw_info}, "
                 f"vel_err={vel_error:.3f}, r={total_reward:6.1f} "
                 f"[track={velocity_tracking_reward:.1f}, prog={progress_bonus:.1f}, stand_pen={standing_penalty:.1f}]")
-        
+
         return total_reward, terminate
 
     # ======== Action and Observation Processing ========
@@ -681,47 +737,101 @@ class WalkingEnv(gym.Wrapper):
         return action
 
     def _process_observation(self, obs: np.ndarray) -> np.ndarray:
-        """Process observation with correct dimension handling, including commanded velocity."""
-        features = [obs]
+        """
+        Process observation with NEW structure for command visibility.
+
+        FIX: Previously, command was buried in 1496-dim observation and crushed by
+        tanh normalization. Now we:
+        1. Stack BODY features only in history (no command)
+        2. Append command block ONCE at the end with explicit velocity errors
+        3. Normalize body with tanh(0.1*x), but keep command block in [-1, 1]
+
+        New observation structure:
+        - Stacked body: [body_t-3, body_t-2, body_t-1, body_t] = 1484 dims
+        - Command block: [vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual,
+                         err_vx, err_vy, err_speed, err_angle] = 9 dims
+        - Total: 1493 dims
+        """
+        # ========== BODY FEATURES ==========
+        body_features = [obs]
 
         # Add COM features if enabled
         if self.include_com:
             try:
                 com_pos = self.env.unwrapped.data.subtree_com[0]
                 com_vel = self.env.unwrapped.data.cdof_dot[:3] if hasattr(self.env.unwrapped.data, 'cdof_dot') else self.env.unwrapped.data.qvel[:3]
-                features.append(np.asarray(com_pos, dtype=np.float32))
-                features.append(np.asarray(com_vel, dtype=np.float32))
+                body_features.append(np.asarray(com_pos, dtype=np.float32))
+                body_features.append(np.asarray(com_vel, dtype=np.float32))
             except Exception as e:
                 print(f"Warning: Failed to add COM features: {e}")
 
-        # Add commanded velocity
-        # Include yaw_rate if enabled 
-        if self.include_yaw_rate:
-            features.append(np.array([self.commanded_vx_world, self.commanded_vy_world, self.commanded_yaw_rate], dtype=np.float32))
-        else:
-            features.append(np.array([self.commanded_vx_world, self.commanded_vy_world], dtype=np.float32))
+        # Concatenate body features (NO command here)
+        body_vec = np.concatenate([np.atleast_1d(f).ravel() for f in body_features]).astype(np.float32)
 
-        # Concatenate base + COM features + command
-        feat_vec = np.concatenate([np.atleast_1d(f).ravel() for f in features]).astype(np.float32)
-
-        # Feature normalization
+        # Normalize body features with tanh
         if self.feature_norm:
-            feat_vec = np.tanh(feat_vec * 0.1)
+            body_vec = np.tanh(body_vec * 0.1)
 
-        # History stacking
+        # ========== HISTORY STACKING (body only) ==========
         if self.enable_history:
-            self.obs_history.append(feat_vec)
-            
+            self.obs_history.append(body_vec)
+
             if len(self.obs_history) > self.history_len:
                 self.obs_history = self.obs_history[-self.history_len:]
-            
+
             if len(self.obs_history) < self.history_len:
                 pad_count = self.history_len - len(self.obs_history)
-                padded = [np.zeros_like(feat_vec) for _ in range(pad_count)] + self.obs_history
+                padded = [np.zeros_like(body_vec) for _ in range(pad_count)] + self.obs_history
             else:
                 padded = self.obs_history
-            
-            feat_vec = np.concatenate(padded, axis=0)
+
+            stacked_body = np.concatenate(padded, axis=0)
+        else:
+            stacked_body = body_vec
+
+        # ========== COMMAND BLOCK (appended ONCE, not stacked) ==========
+        # Get actual velocity from environment
+        linear_vel = self.env.unwrapped.data.qvel[0:3]
+        vx_actual = linear_vel[0]
+        vy_actual = linear_vel[1]
+
+        # Compute explicit velocity errors
+        err_vx = self.commanded_vx_world - vx_actual
+        err_vy = self.commanded_vy_world - vy_actual
+        err_speed = np.sqrt(err_vx**2 + err_vy**2)
+
+        # Error angle (direction mismatch)
+        if self.commanded_speed > 0.01:
+            cmd_angle = np.arctan2(self.commanded_vy_world, self.commanded_vx_world)
+            actual_speed = np.sqrt(vx_actual**2 + vy_actual**2)
+            if actual_speed > 0.01:
+                actual_angle = np.arctan2(vy_actual, vx_actual)
+                err_angle = cmd_angle - actual_angle
+                # Wrap to [-pi, pi]
+                err_angle = (err_angle + np.pi) % (2 * np.pi) - np.pi
+            else:
+                err_angle = 0.0
+        else:
+            err_angle = 0.0
+
+        # Normalize command block to [-1, 1] range (NOT crushed by tanh)
+        max_speed = max(self.max_commanded_speed, 1.0)  # Avoid division by zero
+        max_yaw = max(self.max_yaw_rate, 1.0)
+
+        command_block = np.array([
+            np.clip(self.commanded_vx_world / max_speed, -1.0, 1.0),   # vx_cmd normalized
+            np.clip(self.commanded_vy_world / max_speed, -1.0, 1.0),   # vy_cmd normalized
+            np.clip(self.commanded_yaw_rate / max_yaw, -1.0, 1.0),     # yaw_cmd normalized
+            np.clip(vx_actual / max_speed, -1.0, 1.0),                 # vx_actual normalized
+            np.clip(vy_actual / max_speed, -1.0, 1.0),                 # vy_actual normalized
+            np.clip(err_vx / max_speed, -1.0, 1.0),                    # err_vx normalized
+            np.clip(err_vy / max_speed, -1.0, 1.0),                    # err_vy normalized
+            np.clip(err_speed / max_speed, 0.0, 1.0),                  # err_speed normalized (always positive)
+            np.clip(err_angle / np.pi, -1.0, 1.0),                     # err_angle normalized
+        ], dtype=np.float32)
+
+        # ========== CONCATENATE: stacked body + command block ==========
+        feat_vec = np.concatenate([stacked_body, command_block], axis=0)
 
         # Handle dimension mismatch gracefully
         current_dim = feat_vec.shape[0]
@@ -752,7 +862,7 @@ class WalkingEnv(gym.Wrapper):
         actual_yaw_rate = angular_vel[2]  # Rotation around z-axis
         yaw_rate_error = abs(actual_yaw_rate - self.commanded_yaw_rate)
         
-        return {
+        info = {
             'height': self.env.unwrapped.data.qpos[2],
             'distance_from_origin': dist,
             'x_position': root_x,
@@ -773,6 +883,22 @@ class WalkingEnv(gym.Wrapper):
             'actual_yaw_rate': actual_yaw_rate,
             'actual_speed': np.sqrt(linear_vel[0]**2 + linear_vel[1]**2),
         }
+
+        # ========== INCLUDE REWARD COMPONENTS (Phase 4: Diagnostics) ==========
+        if hasattr(self, '_last_reward_components'):
+            for key, value in self._last_reward_components.items():
+                info[f'reward/{key}'] = value
+
+        # ========== INCLUDE TERMINATION CAUSE ==========
+        if hasattr(self, '_termination_cause') and self._termination_cause is not None:
+            info['termination_cause'] = self._termination_cause
+
+        # ========== INCLUDE BEHAVIOR METRICS ==========
+        if hasattr(self, '_behavior_metrics'):
+            for key, value in self._behavior_metrics.items():
+                info[f'behavior/{key}'] = value
+
+        return info
     
     def _apply_push_perturbation(self):
         """Apply periodic push perturbations to train robustness and recovery."""

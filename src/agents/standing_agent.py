@@ -9,13 +9,11 @@ standing_agent.py
 import os
 from typing import Callable, Optional
 
-import cv2
 import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
-from stable_baselines3.common.evaluation import evaluate_policy
 
 # Try to import wandb
 try:
@@ -49,54 +47,6 @@ def safe_step(env, action):
         return result
     else:
         raise ValueError(f"Unexpected step() return format: {len(result)} values")
-        
-def record_evaluation_video(model, env, n_episodes=1, max_steps_per_episode=1000):
-    """Record longer video for stability assessment"""
-    frame = render_env.render()
-    if frame is None:
-        print("Render returned None - check render_mode")
-        return []  # Early exit
-    frames = []
-
-    for episode in range(n_episodes):
-        obs = env.reset()
-        episode_frames = []
-        
-        for step in range(max_steps_per_episode):
-            try:
-                if hasattr(env, 'venv'):
-                    render_env = env.venv.envs[0]
-                elif hasattr(env, 'envs'):
-                    render_env = env.envs[0]
-                else:
-                    render_env = env
-                
-                frame = render_env.render()
-                if frame is not None and hasattr(frame, 'shape') and len(frame.shape) == 3:
-                    # Record every 2nd frame for speed
-                    if step % 2 == 0:
-                        episode_frames.append(frame)
-                    
-            except Exception as e:
-                if step == 0:
-                    print(f"Rendering failed: {e}")
-                break
-            
-            action, _ = model.predict(obs, deterministic=True)
-            obs, reward, terminated, truncated, info = safe_step(env, action)
-            
-            done = bool(terminated[0] if hasattr(terminated, '__len__') else terminated) or \
-                bool(truncated[0] if hasattr(truncated, '__len__') else truncated)
-            
-            if done:
-                break
-        
-        frames.extend(episode_frames[:200])  # Longer videos to show stability
-        
-        if len(frames) >= 300:
-            break
-    
-    return frames
 
 
 class StandingCallback(BaseCallback):
@@ -138,17 +88,6 @@ class StandingCallback(BaseCallback):
             self.episode_rewards = []
             self.episode_lengths = []
             self._current_episode_heights = []
-            
-            # NEW: Track reward components for detailed logging
-            self.reward_components = {
-                'height_reward': [],
-                'upright_reward': [],
-                'stability_reward': [],
-                'smoothness_reward': [],
-                'control_cost': [],
-                'sustained_bonus': []
-            }
-            
 
             os.makedirs("models/saved_models", exist_ok=True)
 

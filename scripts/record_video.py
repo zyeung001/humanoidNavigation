@@ -21,12 +21,8 @@ if SRC_DIR not in sys.path:
 from src.utils.visualization import setup_display, test_environment  # noqa: E402
 
 # import SB3 algorithms we support
-try:
-    from stable_baselines3 import PPO, A2C, SAC, TD3, DDPG
-    from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
-    SB3_AVAILABLE = True
-except Exception:
-    SB3_AVAILABLE = False
+from stable_baselines3 import PPO, A2C, SAC, TD3, DDPG
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 # Try to import custom environments with robust fallbacks
 CUSTOM_ENV_AVAILABLE = False
