@@ -83,10 +83,25 @@ class VecNormalizeExtender:
         with open(self.standing_path, 'rb') as f:
             standing_data = pickle.load(f)
         
-        # Extract running mean and variance
-        standing_mean = standing_data['obs_rms']['mean']
-        standing_var = standing_data['obs_rms']['var']
-        standing_count = standing_data['obs_rms']['count']
+        # Handle both VecNormalize object and dictionary formats
+        if isinstance(standing_data, dict):
+            # Dictionary format (older save format)
+            standing_mean = standing_data['obs_rms']['mean']
+            standing_var = standing_data['obs_rms']['var']
+            standing_count = standing_data['obs_rms']['count']
+            gamma = standing_data.get('gamma', 0.995)
+            ret_rms_data = standing_data.get('ret_rms', None)
+        elif hasattr(standing_data, 'obs_rms'):
+            # VecNormalize object (current SB3 format)
+            standing_mean = standing_data.obs_rms.mean.copy()
+            standing_var = standing_data.obs_rms.var.copy()
+            standing_count = standing_data.obs_rms.count
+            gamma = getattr(standing_data, 'gamma', 0.995)
+            ret_rms_data = standing_data.ret_rms if hasattr(standing_data, 'ret_rms') else None
+        else:
+            print(f"⚠ Unknown VecNormalize format: {type(standing_data)}")
+            print("  Creating fresh VecNormalize for walking")
+            return self._create_fresh_vecnorm()
         
         print(f"✓ Loaded standing VecNormalize statistics")
         print(f"  Standing dimension: {len(standing_mean)}")
@@ -96,6 +111,9 @@ class VecNormalizeExtender:
         expected_walking_dim = self.walking_env.observation_space.shape[0]
         if len(standing_mean) != self.standing_total:
             print(f"⚠ Unexpected standing dimension: {len(standing_mean)} (expected {self.standing_total})")
+            # Adjust expected dimensions based on actual
+            actual_standing_per_frame = len(standing_mean) // self.history_len
+            print(f"  Actual standing per-frame: {actual_standing_per_frame}")
         
         # Extend statistics to walking dimension
         walking_mean, walking_var = self._extend_statistics(
@@ -111,7 +129,7 @@ class VecNormalizeExtender:
             norm_reward=True,
             clip_obs=10.0,
             clip_reward=10.0,
-            gamma=standing_data.get('gamma', 0.995),
+            gamma=gamma,
         )
         
         # Inject extended statistics
@@ -120,10 +138,16 @@ class VecNormalizeExtender:
         walking_vecnorm.obs_rms.count = standing_count
         
         # Copy reward normalization statistics
-        if 'ret_rms' in standing_data and standing_data['ret_rms'] is not None:
-            walking_vecnorm.ret_rms.mean = standing_data['ret_rms']['mean']
-            walking_vecnorm.ret_rms.var = standing_data['ret_rms']['var']
-            walking_vecnorm.ret_rms.count = standing_data['ret_rms']['count']
+        if ret_rms_data is not None:
+            if isinstance(ret_rms_data, dict):
+                walking_vecnorm.ret_rms.mean = ret_rms_data['mean']
+                walking_vecnorm.ret_rms.var = ret_rms_data['var']
+                walking_vecnorm.ret_rms.count = ret_rms_data['count']
+            elif hasattr(ret_rms_data, 'mean'):
+                # RunningMeanStd object
+                walking_vecnorm.ret_rms.mean = ret_rms_data.mean
+                walking_vecnorm.ret_rms.var = ret_rms_data.var
+                walking_vecnorm.ret_rms.count = ret_rms_data.count
         
         # Mark as not needing initial update (already has good statistics)
         walking_vecnorm.training = True
