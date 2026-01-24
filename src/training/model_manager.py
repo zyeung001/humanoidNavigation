@@ -256,10 +256,9 @@ class ModelManager:
             config: Configuration dictionary
             run_name: Optional run name (uses timestamp if not provided)
         """
-        if run_name is None:
-            run_name = datetime.now().strftime("run_%Y%m%d_%H%M%S")
+        if run_name is None:  
         
-        config_path = self.config_dir / f"{run_name}.yaml"
+            config_path = self.config_dir / f"{run_name}.yaml"
         
         with open(config_path, 'w') as f:
             yaml.dump(config, f, default_flow_style=False)

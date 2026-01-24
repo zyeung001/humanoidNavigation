@@ -1,0 +1,585 @@
+# transfer_utils.py
+"""
+Transfer learning utilities for standing → walking policy transfer.
+
+Addresses the key issues in transfer learning:
+1. VecNormalize dimension mismatch (1484 → 1496 dims)
+2. Command feature weight initialization
+3. Normalization statistics extension
+"""
+
+import numpy as np
+import torch
+import pickle
+from pathlib import Path
+from typing import Optional, Dict, Any, Tuple
+from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import VecNormalize
+
+
+class VecNormalizeExtender:
+    """
+    Extends VecNormalize statistics from standing (1484-dim) to walking (1496-dim).
+    
+    The issue: Standing VecNormalize trained on 1484-dim observations cannot be 
+    directly loaded for walking (1496-dim). When load fails, SB3 creates fresh 
+    VecNormalize with random statistics, which corrupts transferred weights.
+    
+    Solution: Manually extend the running mean/var statistics to the new dimension,
+    using sensible defaults for the new command feature dimensions.
+    
+    Observation Layout (per frame, before history stacking):
+    - Base obs: 365 dims
+    - COM pos:  3 dims  
+    - COM vel:  3 dims
+    - Commands: 3 dims (vx, vy, yaw_rate) - NEW for walking
+    Total per frame: 374 dims (standing: 371)
+    With 4-frame history: 1496 dims (standing: 1484)
+    """
+    
+    def __init__(
+        self,
+        standing_vecnorm_path: str,
+        walking_env,
+        command_mean: float = 0.0,
+        command_var: float = 1.0,
+    ):
+        """
+        Initialize the VecNormalize extender.
+        
+        Args:
+            standing_vecnorm_path: Path to standing VecNormalize pickle
+            walking_env: The walking VecEnv (for dimension validation)
+            command_mean: Default mean for command features (0.0 is sensible)
+            command_var: Default variance for command features 
+                        (1.0 means commands are roughly in [-1, 1] range)
+        """
+        self.standing_path = Path(standing_vecnorm_path)
+        self.walking_env = walking_env
+        self.command_mean = command_mean
+        self.command_var = command_var
+        
+        # Expected dimensions
+        self.standing_per_frame = 371  # base(365) + com(6)
+        self.walking_per_frame = 374   # base(365) + com(6) + cmd(3)
+        self.history_len = 4
+        self.standing_total = self.standing_per_frame * self.history_len  # 1484
+        self.walking_total = self.walking_per_frame * self.history_len    # 1496
+        self.new_dims_per_frame = 3  # vx, vy, yaw_rate
+        
+    def extend(self) -> VecNormalize:
+        """
+        Create walking VecNormalize with extended statistics from standing.
+        
+        Returns:
+            VecNormalize wrapper for walking environment with extended stats
+        """
+        if not self.standing_path.exists():
+            print(f"⚠ Standing VecNormalize not found at {self.standing_path}")
+            print("  Creating fresh VecNormalize for walking (no transfer)")
+            return self._create_fresh_vecnorm()
+        
+        # Load standing VecNormalize data
+        with open(self.standing_path, 'rb') as f:
+            standing_data = pickle.load(f)
+        
+        # Extract running mean and variance
+        standing_mean = standing_data['obs_rms']['mean']
+        standing_var = standing_data['obs_rms']['var']
+        standing_count = standing_data['obs_rms']['count']
+        
+        print(f"✓ Loaded standing VecNormalize statistics")
+        print(f"  Standing dimension: {len(standing_mean)}")
+        print(f"  Sample count: {standing_count:,.0f}")
+        
+        # Validate dimensions
+        expected_walking_dim = self.walking_env.observation_space.shape[0]
+        if len(standing_mean) != self.standing_total:
+            print(f"⚠ Unexpected standing dimension: {len(standing_mean)} (expected {self.standing_total})")
+        
+        # Extend statistics to walking dimension
+        walking_mean, walking_var = self._extend_statistics(
+            standing_mean, standing_var
+        )
+        
+        print(f"  Extended to walking dimension: {len(walking_mean)}")
+        
+        # Create walking VecNormalize and inject extended statistics
+        walking_vecnorm = VecNormalize(
+            self.walking_env,
+            norm_obs=True,
+            norm_reward=True,
+            clip_obs=10.0,
+            clip_reward=10.0,
+            gamma=standing_data.get('gamma', 0.995),
+        )
+        
+        # Inject extended statistics
+        walking_vecnorm.obs_rms.mean = walking_mean
+        walking_vecnorm.obs_rms.var = walking_var
+        walking_vecnorm.obs_rms.count = standing_count
+        
+        # Copy reward normalization statistics
+        if 'ret_rms' in standing_data and standing_data['ret_rms'] is not None:
+            walking_vecnorm.ret_rms.mean = standing_data['ret_rms']['mean']
+            walking_vecnorm.ret_rms.var = standing_data['ret_rms']['var']
+            walking_vecnorm.ret_rms.count = standing_data['ret_rms']['count']
+        
+        # Mark as not needing initial update (already has good statistics)
+        walking_vecnorm.training = True
+        
+        print(f"✓ Extended VecNormalize created successfully")
+        self._verify_statistics(walking_vecnorm)
+        
+        return walking_vecnorm
+    
+    def _extend_statistics(
+        self,
+        standing_mean: np.ndarray,
+        standing_var: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Extend standing statistics to walking dimensions.
+        
+        The observation is history-stacked: [frame_t-3, frame_t-2, frame_t-1, frame_t]
+        Each frame has base(365) + com(6) + [cmd(3) for walking]
+        
+        We need to insert command feature statistics at the right positions.
+        """
+        # Initialize walking arrays
+        walking_mean = np.zeros(self.walking_total, dtype=np.float64)
+        walking_var = np.ones(self.walking_total, dtype=np.float64)
+        
+        # For each history frame, copy standing stats and add command stats
+        for frame_idx in range(self.history_len):
+            # Source indices in standing observation
+            standing_start = frame_idx * self.standing_per_frame
+            standing_end = standing_start + self.standing_per_frame
+            
+            # Destination indices in walking observation
+            walking_start = frame_idx * self.walking_per_frame
+            walking_end_base = walking_start + self.standing_per_frame
+            walking_end = walking_start + self.walking_per_frame
+            
+            # Copy base + COM statistics
+            walking_mean[walking_start:walking_end_base] = standing_mean[standing_start:standing_end]
+            walking_var[walking_start:walking_end_base] = standing_var[standing_start:standing_end]
+            
+            # Add command feature statistics (new dims at end of each frame)
+            # Commands are in [-max_speed, max_speed], roughly normalized
+            walking_mean[walking_end_base:walking_end] = self.command_mean
+            walking_var[walking_end_base:walking_end] = self.command_var
+        
+        return walking_mean, walking_var
+    
+    def _create_fresh_vecnorm(self) -> VecNormalize:
+        """Create fresh VecNormalize without transfer."""
+        return VecNormalize(
+            self.walking_env,
+            norm_obs=True,
+            norm_reward=True,
+            clip_obs=10.0,
+            clip_reward=10.0,
+            gamma=0.995,
+        )
+    
+    def _verify_statistics(self, vecnorm: VecNormalize):
+        """Print verification info about the VecNormalize statistics."""
+        mean = vecnorm.obs_rms.mean
+        var = vecnorm.obs_rms.var
+        
+        # Check first frame's base obs
+        print(f"  Base obs mean range: [{mean[:20].min():.3f}, {mean[:20].max():.3f}]")
+        print(f"  Base obs var range: [{var[:20].min():.3f}, {var[:20].max():.3f}]")
+        
+        # Check command features (last 3 dims of first frame)
+        cmd_start = self.standing_per_frame
+        cmd_end = self.walking_per_frame
+        print(f"  Command mean: {mean[cmd_start:cmd_end]}")
+        print(f"  Command var: {var[cmd_start:cmd_end]}")
+
+
+class PolicyTransfer:
+    """
+    Transfers policy weights from standing to walking model with proper initialization.
+    
+    Key fix: The command feature weights (12 new dims = 3 per frame × 4 frames)
+    were initialized with randn() * 0.01, which is essentially noise.
+    
+    Better approaches:
+    1. Zero initialization: Policy ignores commands initially, learns to use them
+    2. Xavier/Kaiming initialization: Proper scale for gradient flow
+    3. Copy from similar features: Use velocity feature weights as template
+    """
+    
+    # Command weight initialization strategies
+    INIT_ZERO = "zero"           # Zero out - policy ignores commands initially
+    INIT_XAVIER = "xavier"       # Xavier uniform - good gradient flow
+    INIT_KAIMING = "kaiming"     # Kaiming/He - best for ReLU-like activations  
+    INIT_SMALL_NOISE = "small"   # Small random (0.1 scale, not 0.01)
+    INIT_FROM_VELOCITY = "velocity"  # Copy from velocity observation weights
+    
+    def __init__(
+        self,
+        standing_model: PPO,
+        walking_model: PPO,
+        init_strategy: str = "xavier",
+        device: str = "cuda",
+    ):
+        """
+        Initialize policy transfer.
+        
+        Args:
+            standing_model: Pre-trained standing PPO model
+            walking_model: Fresh walking PPO model to transfer into
+            init_strategy: How to initialize new command feature weights
+                - "zero": Zero initialization (conservative)
+                - "xavier": Xavier uniform (recommended)
+                - "kaiming": He/Kaiming (for SiLU activation)
+                - "small": Small noise (0.1 scale)
+                - "velocity": Copy from velocity features
+            device: PyTorch device
+        """
+        self.standing_model = standing_model
+        self.walking_model = walking_model
+        self.init_strategy = init_strategy
+        self.device = device
+        
+        # Dimension info
+        self.standing_dim = 1484
+        self.walking_dim = 1496
+        self.new_dims = 12  # 3 commands × 4 frames
+        
+    def transfer(self) -> Dict[str, Any]:
+        """
+        Transfer weights from standing to walking policy.
+        
+        Returns:
+            Dictionary with transfer statistics
+        """
+        standing_state = self.standing_model.policy.state_dict()
+        walking_state = self.walking_model.policy.state_dict()
+        
+        stats = {
+            'transferred': 0,
+            'partial_transfer': 0,
+            'skipped': 0,
+            'new_layers': 0,
+            'first_layer_init': None,
+        }
+        
+        for key in walking_state.keys():
+            if key not in standing_state:
+                stats['new_layers'] += 1
+                continue
+            
+            standing_tensor = standing_state[key]
+            walking_tensor = walking_state[key]
+            
+            if standing_tensor.shape == walking_tensor.shape:
+                # Exact match - direct copy
+                walking_state[key] = standing_tensor.clone()
+                stats['transferred'] += 1
+                
+            elif len(standing_tensor.shape) == 2 and len(walking_tensor.shape) == 2:
+                # 2D weight matrix - handle dimension mismatch
+                walking_state[key] = self._transfer_2d_weights(
+                    key, standing_tensor, walking_tensor, stats
+                )
+                stats['partial_transfer'] += 1
+                
+            elif len(standing_tensor.shape) == 1 and len(walking_tensor.shape) == 1:
+                # 1D bias vector
+                walking_state[key] = self._transfer_1d_weights(
+                    standing_tensor, walking_tensor
+                )
+                stats['partial_transfer'] += 1
+            else:
+                stats['skipped'] += 1
+        
+        # Load transferred state
+        self.walking_model.policy.load_state_dict(walking_state)
+        
+        return stats
+    
+    def _transfer_2d_weights(
+        self,
+        key: str,
+        standing: torch.Tensor,
+        walking: torch.Tensor,
+        stats: Dict,
+    ) -> torch.Tensor:
+        """
+        Transfer 2D weight matrix with proper initialization for new dimensions.
+        
+        For the first layer (input layer), we need to handle the dimension mismatch
+        where walking has 12 extra input features (command velocities × 4 frames).
+        """
+        out_dim = walking.shape[0]
+        in_dim_standing = standing.shape[1]
+        in_dim_walking = walking.shape[1]
+        
+        # Create new weight tensor
+        new_weights = walking.clone()
+        
+        # Copy overlapping dimensions
+        min_out = min(standing.shape[0], walking.shape[0])
+        min_in = min(in_dim_standing, in_dim_walking)
+        new_weights[:min_out, :min_in] = standing[:min_out, :min_in]
+        
+        # Initialize new input dimensions (command features)
+        if in_dim_walking > in_dim_standing:
+            new_in_dims = in_dim_walking - in_dim_standing
+            new_weights_section = new_weights[:, -new_in_dims:]
+            
+            if self.init_strategy == self.INIT_ZERO:
+                # Zero initialization - policy ignores commands initially
+                new_weights[:, -new_in_dims:] = 0.0
+                init_scale = 0.0
+                
+            elif self.init_strategy == self.INIT_XAVIER:
+                # Xavier uniform initialization
+                fan_in = in_dim_walking
+                fan_out = out_dim
+                std = np.sqrt(2.0 / (fan_in + fan_out))
+                new_weights[:, -new_in_dims:] = torch.randn_like(
+                    new_weights_section, device=self.device
+                ) * std
+                init_scale = std
+                
+            elif self.init_strategy == self.INIT_KAIMING:
+                # Kaiming/He initialization (for SiLU activation)
+                std = np.sqrt(2.0 / in_dim_walking)
+                new_weights[:, -new_in_dims:] = torch.randn_like(
+                    new_weights_section, device=self.device
+                ) * std
+                init_scale = std
+                
+            elif self.init_strategy == self.INIT_SMALL_NOISE:
+                # Small random initialization (10x larger than original 0.01)
+                new_weights[:, -new_in_dims:] = torch.randn_like(
+                    new_weights_section, device=self.device
+                ) * 0.1
+                init_scale = 0.1
+                
+            elif self.init_strategy == self.INIT_FROM_VELOCITY:
+                # Copy weights from velocity features (similar semantic meaning)
+                # Velocity features are at indices 0:3 in base obs
+                velocity_weights = standing[:, :3]
+                # Tile to cover all new dims
+                n_copies = new_in_dims // 3 + 1
+                tiled = velocity_weights.repeat(1, n_copies)[:, :new_in_dims]
+                # Add small noise to break symmetry
+                new_weights[:, -new_in_dims:] = tiled + torch.randn_like(
+                    tiled, device=self.device
+                ) * 0.01
+                init_scale = float(velocity_weights.std().item())
+            else:
+                raise ValueError(f"Unknown init strategy: {self.init_strategy}")
+            
+            # Check if this is the first layer
+            if "mlp_extractor" in key and ("0" in key or "policy_net" in key):
+                stats['first_layer_init'] = {
+                    'strategy': self.init_strategy,
+                    'scale': init_scale,
+                    'new_dims': new_in_dims,
+                }
+                print(f"  First layer command weights initialized with {self.init_strategy}")
+                print(f"    Scale: {init_scale:.4f}")
+                print(f"    New input dims: {new_in_dims}")
+        
+        return new_weights
+    
+    def _transfer_1d_weights(
+        self,
+        standing: torch.Tensor,
+        walking: torch.Tensor,
+    ) -> torch.Tensor:
+        """Transfer 1D bias vectors."""
+        new_bias = walking.clone()
+        min_size = min(len(standing), len(walking))
+        new_bias[:min_size] = standing[:min_size]
+        return new_bias
+
+
+class WarmupCollector:
+    """
+    Collects observation statistics before starting actual training.
+    
+    Issue: When VecNormalize is fresh or partially initialized, the first
+    few thousand steps have incorrect normalization, causing the policy
+    to receive garbage observations.
+    
+    Solution: Run a warmup period with random actions to collect statistics
+    before loading transferred weights.
+    """
+    
+    def __init__(
+        self,
+        env: VecNormalize,
+        warmup_steps: int = 10000,
+        verbose: bool = True,
+    ):
+        """
+        Initialize warmup collector.
+        
+        Args:
+            env: VecNormalize environment
+            warmup_steps: Number of steps to collect
+            verbose: Print progress
+        """
+        self.env = env
+        self.warmup_steps = warmup_steps
+        self.verbose = verbose
+        
+    def collect(self):
+        """
+        Run warmup data collection with random actions.
+        
+        After this, VecNormalize will have stable statistics for the
+        walking observation space, including command features.
+        """
+        if self.verbose:
+            print(f"\n{'='*60}")
+            print(f"WARMUP: Collecting {self.warmup_steps:,} observation samples")
+            print(f"{'='*60}")
+        
+        obs = self.env.reset()
+        collected = 0
+        episodes = 0
+        
+        while collected < self.warmup_steps:
+            # Random action
+            action = np.array([self.env.action_space.sample()])
+            obs, reward, done, info = self.env.step(action)
+            collected += 1
+            
+            if done.any():
+                episodes += 1
+                obs = self.env.reset()
+            
+            if self.verbose and collected % 2000 == 0:
+                mean_range = (self.env.obs_rms.mean.min(), self.env.obs_rms.mean.max())
+                var_range = (self.env.obs_rms.var.min(), self.env.obs_rms.var.max())
+                print(f"  Step {collected:,}: mean=[{mean_range[0]:.3f}, {mean_range[1]:.3f}], "
+                      f"var=[{var_range[0]:.3f}, {var_range[1]:.3f}]")
+        
+        if self.verbose:
+            print(f"\n✓ Warmup complete: {collected:,} steps, {episodes} episodes")
+            print(f"  Final count: {self.env.obs_rms.count:.0f}")
+            
+            # Verify command feature statistics
+            # Command features are at indices [371:374] in each frame
+            per_frame = 374
+            for i in range(4):
+                cmd_start = i * per_frame + 371
+                cmd_end = i * per_frame + 374
+                cmd_mean = self.env.obs_rms.mean[cmd_start:cmd_end]
+                cmd_var = self.env.obs_rms.var[cmd_start:cmd_end]
+                print(f"  Frame {i} commands: mean={cmd_mean}, var={cmd_var}")
+        
+        return self.env
+
+
+def transfer_standing_to_walking(
+    standing_model_path: str,
+    standing_vecnorm_path: str,
+    walking_env,
+    walking_model_kwargs: Dict[str, Any],
+    device: str = "cuda",
+    init_strategy: str = "xavier",
+    warmup_steps: int = 10000,
+) -> Tuple[PPO, VecNormalize]:
+    """
+    Complete transfer from standing to walking model.
+    
+    This function handles:
+    1. VecNormalize extension
+    2. Warmup collection
+    3. Policy weight transfer with proper initialization
+    
+    Args:
+        standing_model_path: Path to standing model .zip
+        standing_vecnorm_path: Path to standing VecNormalize .pkl
+        walking_env: VecEnv for walking (not wrapped in VecNormalize yet)
+        walking_model_kwargs: Kwargs for PPO initialization
+        device: PyTorch device
+        init_strategy: How to initialize command feature weights
+        warmup_steps: Steps to collect for normalization (0 to skip)
+        
+    Returns:
+        (walking_model, walking_vecnorm) ready for training
+    """
+    print(f"\n{'='*60}")
+    print("TRANSFER LEARNING: Standing → Walking")
+    print(f"{'='*60}")
+    
+    # Step 1: Extend VecNormalize
+    print("\n[1/4] Extending VecNormalize statistics...")
+    extender = VecNormalizeExtender(
+        standing_vecnorm_path=standing_vecnorm_path,
+        walking_env=walking_env,
+        command_mean=0.0,
+        command_var=1.0,  # Commands are in ~[-3, 3] range
+    )
+    walking_vecnorm = extender.extend()
+    
+    # Step 2: Warmup collection (optional but recommended)
+    if warmup_steps > 0:
+        print(f"\n[2/4] Collecting warmup samples...")
+        collector = WarmupCollector(
+            env=walking_vecnorm,
+            warmup_steps=warmup_steps,
+            verbose=True,
+        )
+        walking_vecnorm = collector.collect()
+    else:
+        print(f"\n[2/4] Skipping warmup (warmup_steps=0)")
+    
+    # Step 3: Load standing model and create walking model
+    print(f"\n[3/4] Loading standing model and creating walking model...")
+    standing_model = PPO.load(standing_model_path, device=device)
+    print(f"  Standing obs space: {standing_model.observation_space.shape}")
+    print(f"  Walking obs space: {walking_vecnorm.observation_space.shape}")
+    
+    # Create walking model
+    walking_model = PPO(
+        env=walking_vecnorm,
+        device=device,
+        **walking_model_kwargs
+    )
+    
+    # Step 4: Transfer weights
+    print(f"\n[4/4] Transferring policy weights...")
+    transfer = PolicyTransfer(
+        standing_model=standing_model,
+        walking_model=walking_model,
+        init_strategy=init_strategy,
+        device=device,
+    )
+    stats = transfer.transfer()
+    
+    print(f"\n✓ Transfer complete:")
+    print(f"  Exact match: {stats['transferred']} layers")
+    print(f"  Partial transfer: {stats['partial_transfer']} layers")
+    print(f"  Skipped: {stats['skipped']} layers")
+    print(f"  New: {stats['new_layers']} layers")
+    if stats['first_layer_init']:
+        init_info = stats['first_layer_init']
+        print(f"  Command weight init: {init_info['strategy']} (scale={init_info['scale']:.4f})")
+    print(f"{'='*60}\n")
+    
+    return walking_model, walking_vecnorm
+
+
+if __name__ == "__main__":
+    print("Transfer utils module - run tests")
+    
+    # Test VecNormalizeExtender dimensions
+    print("\nDimension calculations:")
+    print(f"  Standing per-frame: 371 (365 base + 6 COM)")
+    print(f"  Walking per-frame: 374 (365 base + 6 COM + 3 cmd)")
+    print(f"  Standing total: 371 × 4 = {371 * 4}")
+    print(f"  Walking total: 374 × 4 = {374 * 4}")
+    print(f"  New dims per frame: 3")
+    print(f"  Total new dims: 3 × 4 = 12")

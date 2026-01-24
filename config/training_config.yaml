@@ -223,6 +223,14 @@ walking:
   random_velocity_init: false    # Disabled for Stage 0
   random_velocity_range: [-0.3, 0.3]
   
+  # ========== FIX: RELAXED TERMINATION FOR WALKING ==========
+  # Issue: Height < 0.75m terminates immediately, not enough experience to learn stepping
+  # Solution: Lower threshold, add grace period, protect early episode
+  termination_height_threshold: 0.70      # LOWERED from 0.75 - more forgiving
+  termination_grace_period: 100           # Steps to track before terminating
+  termination_height_recovery_window: 20  # Consecutive low-height steps before term
+  early_termination_protection: 50        # Don't terminate in first N steps
+  
   # ========== REWARD FUNCTION ==========
   target_height: 1.40
   height_error_threshold: 0.15

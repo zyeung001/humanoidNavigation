@@ -73,6 +73,17 @@ class WalkingEnv(gym.Wrapper):
         self.consistency_window = int(self.cfg.get('reward_consistency_window', 100))
         self.consistency_weight = float(self.cfg.get('reward_consistency_weight', 5.0))
         
+        # FIX 6: Relaxed termination with grace period for walking learning
+        # Issue: Height < 0.75m terminates immediately, not giving agent enough
+        # experience to learn stepping patterns. Solution: Add grace period.
+        self.termination_grace_period = int(self.cfg.get('termination_grace_period', 100))
+        self.termination_height_threshold = float(self.cfg.get('termination_height_threshold', 0.70))  # Lowered from 0.75
+        self.termination_height_recovery_window = int(self.cfg.get('termination_height_recovery_window', 20))
+        self.low_height_steps = 0  # Counter for consecutive low height steps
+        
+        # Early episode protection - don't terminate for first N steps
+        self.early_termination_protection = int(self.cfg.get('early_termination_protection', 50))
+        
         # Reward caps from config
         reward_caps = self.cfg.get('reward_caps', {})
         self.max_height_maintenance_penalty = reward_caps.get('max_height_maintenance_penalty', 15.0)
@@ -215,6 +226,9 @@ class WalkingEnv(gym.Wrapper):
         
         # FIX 5: Clear consistency tracking
         self.recent_vel_errors = []
+        
+        # FIX 6: Reset grace period counter
+        self.low_height_steps = 0
         
         # Clear reward history
         for key in self.reward_history:
@@ -544,14 +558,45 @@ class WalkingEnv(gym.Wrapper):
                 if self.current_step >= 1000:
                     sustained_bonus += 3.0
         
-        # ========== TERMINATION ==========
-        terminate = (height < 0.75 or height > 2.0 or abs(quat[0]) < 0.6)
+        # ========== TERMINATION (FIX 6: Grace period for walking) ==========
+        # Issue: Immediate termination at height < 0.75 prevents learning stepping
+        # Solution: Allow recovery time, protect early episode, use lower threshold
+        
         termination_penalty = 0.0
-        if terminate:
-            if height < 0.75 or abs(quat[0]) < 0.6:
+        terminate = False
+        
+        # Hard termination conditions (always apply)
+        if height > 2.0:
+            terminate = True
+            termination_penalty = -self.termination_penalty_constant * 0.5
+        elif abs(quat[0]) < 0.5:  # Severely tilted (lowered from 0.6)
+            terminate = True
+            termination_penalty = -self.termination_penalty_constant
+        
+        # Soft termination with grace period (height-based)
+        elif height < self.termination_height_threshold:  # Default 0.70 (lowered from 0.75)
+            self.low_height_steps += 1
+            
+            # Early episode protection - don't terminate in first N steps
+            if self.current_step < self.early_termination_protection:
+                terminate = False
+                # Still penalize but allow recovery
+                termination_penalty = -5.0  # Mild penalty, not full termination
+            
+            # Grace period - allow recovery attempts
+            elif self.low_height_steps >= self.termination_height_recovery_window:
+                terminate = True
                 termination_penalty = -self.termination_penalty_constant
             else:
-                termination_penalty = -self.termination_penalty_constant * 0.5
+                # Penalize but don't terminate yet
+                termination_penalty = -3.0 * self.low_height_steps
+        else:
+            # Height is OK, reset counter
+            self.low_height_steps = 0
+            
+            # Mild orientation penalty for slightly tilted but not critical
+            if abs(quat[0]) < 0.6:
+                termination_penalty = -5.0  # Warning, not termination
         
         # ========== TOTAL REWARD ==========
         # NEW STRUCTURE: Velocity tracking is now ~60-70% of positive rewards

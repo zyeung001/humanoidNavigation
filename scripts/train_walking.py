@@ -42,6 +42,12 @@ from src.training.callbacks import (
     init_wandb_run,
     finish_wandb_run
 )
+from src.training.transfer_utils import (
+    transfer_standing_to_walking,
+    VecNormalizeExtender,
+    PolicyTransfer,
+    WarmupCollector,
+)
 
 
 def load_yaml(path: str):
@@ -256,6 +262,15 @@ def main():
                         help='Use DummyVecEnv for easier debugging (no multiprocessing)')
     parser.add_argument('--n-envs', type=int, default=None,
                         help='Number of parallel environments (default: from config, use 4-8 for Colab)')
+    parser.add_argument('--standing-vecnorm', type=str, default='models/vecnorm.pkl',
+                        help='Path to standing VecNormalize (for transfer learning)')
+    parser.add_argument('--init-strategy', type=str, default='xavier',
+                        choices=['zero', 'xavier', 'kaiming', 'small', 'velocity'],
+                        help='Command feature weight initialization strategy')
+    parser.add_argument('--warmup-steps', type=int, default=10000,
+                        help='Warmup steps for VecNormalize before learning (0 to skip)')
+    parser.add_argument('--no-warmup', action='store_true',
+                        help='Skip warmup collection (faster but may degrade transfer)')
     args = parser.parse_args()
 
     # Load config
@@ -302,7 +317,12 @@ def main():
     env = None
     vecnorm_loaded = False
     
-    if not args.reset_vecnorm and os.path.exists(env_load_path):
+    # Skip VecNormalize loading if transferring from standing
+    # The transfer_utils module will handle VecNormalize extension
+    if args.from_standing and args.model:
+        print(f"Skipping VecNormalize load - transfer_utils will handle it")
+        # Keep env=None, the transfer function will set it up
+    elif not args.reset_vecnorm and os.path.exists(env_load_path):
         try:
             print(f"Attempting to load VecNormalize from: {env_load_path}")
             env = VecNormalize.load(env_load_path, vec)
@@ -315,7 +335,7 @@ def main():
             print(f"  Creating fresh VecNormalize wrapper instead...")
             env = None
     
-    if env is None:
+    if env is None and not (args.from_standing and args.model):
         print(f"Creating new VecNormalize wrapper")
         env = VecNormalize(
             vec,
@@ -379,91 +399,68 @@ def main():
         )
 
     if args.from_standing and args.model:
-        # ========== TRANSFER FROM STANDING MODEL ==========
-        print(f"\n{'='*60}")
-        print("TRANSFER LEARNING: Standing → Walking")
-        print(f"{'='*60}")
-        print(f"Loading standing model from: {args.model}")
+        # ========== IMPROVED TRANSFER FROM STANDING MODEL ==========
+        # Uses new transfer_utils module that properly handles:
+        # 1. VecNormalize dimension mismatch (1484 → 1496)
+        # 2. Command feature weight initialization (xavier instead of 0.01 noise)
+        # 3. Optional warmup for normalization statistics
         
         try:
-            # Load standing model to extract policy weights
-            standing_model = PPO.load(args.model, device=device)
+            # Determine warmup steps
+            warmup_steps = 0 if args.no_warmup else args.warmup_steps
             
-            print(f"✓ Standing model loaded successfully")
-            print(f"  Standing observation space: {standing_model.observation_space.shape}")
-            print(f"  Walking observation space: {env.observation_space.shape}")
+            # Standing VecNormalize path
+            standing_vecnorm_path = args.standing_vecnorm
+            if not os.path.exists(standing_vecnorm_path):
+                # Try common alternatives
+                alt_paths = [
+                    'models/vecnorm.pkl',
+                    'models/standing/latest/vecnorm.pkl',
+                    'models/standing/best/vecnorm.pkl',
+                ]
+                for alt in alt_paths:
+                    if os.path.exists(alt):
+                        standing_vecnorm_path = alt
+                        break
             
-            # Create new walking model with same architecture
-            print("\nCreating walking model with transferred weights...")
-            model = PPO(
-                policy='MlpPolicy',
-                env=env,
-                learning_rate=lr_fn,
-                n_steps=int(walking.get('n_steps', 2048)),
-                batch_size=int(walking.get('batch_size', 256)),
-                n_epochs=int(walking.get('n_epochs', 10)),
-                gamma=float(walking.get('gamma', 0.995)),
-                gae_lambda=float(walking.get('gae_lambda', 0.95)),
-                clip_range=clip_fn,
-                ent_coef=initial_ent,
-                vf_coef=float(walking.get('vf_coef', 0.5)),
-                max_grad_norm=float(walking.get('max_grad_norm', 0.5)),
-                policy_kwargs=policy_kwargs,
-                seed=seed,
-                verbose=int(walking.get('verbose', 1)),
+            # Prepare model kwargs
+            model_kwargs = {
+                'policy': 'MlpPolicy',
+                'learning_rate': lr_fn,
+                'n_steps': int(walking.get('n_steps', 2048)),
+                'batch_size': int(walking.get('batch_size', 256)),
+                'n_epochs': int(walking.get('n_epochs', 10)),
+                'gamma': float(walking.get('gamma', 0.995)),
+                'gae_lambda': float(walking.get('gae_lambda', 0.95)),
+                'clip_range': clip_fn,
+                'ent_coef': initial_ent,
+                'vf_coef': float(walking.get('vf_coef', 0.5)),
+                'max_grad_norm': float(walking.get('max_grad_norm', 0.5)),
+                'policy_kwargs': policy_kwargs,
+                'seed': seed,
+                'verbose': int(walking.get('verbose', 1)),
+            }
+            
+            # Use the new comprehensive transfer function
+            model, env = transfer_standing_to_walking(
+                standing_model_path=args.model,
+                standing_vecnorm_path=standing_vecnorm_path,
+                walking_env=vec,  # Raw VecEnv before VecNormalize
+                walking_model_kwargs=model_kwargs,
                 device=device,
+                init_strategy=args.init_strategy,
+                warmup_steps=warmup_steps,
             )
             
-            # Transfer compatible weights from standing to walking
-            standing_state = standing_model.policy.state_dict()
-            walking_state = model.policy.state_dict()
-            
-            transferred = 0
-            skipped = 0
-            
-            for key in walking_state.keys():
-                if key in standing_state:
-                    standing_tensor = standing_state[key]
-                    walking_tensor = walking_state[key]
-                    
-                    if standing_tensor.shape == walking_tensor.shape:
-                        walking_state[key] = standing_tensor
-                        transferred += 1
-                    elif len(standing_tensor.shape) == 2 and len(walking_tensor.shape) == 2:
-                        min_in = min(standing_tensor.shape[1], walking_tensor.shape[1])
-                        min_out = min(standing_tensor.shape[0], walking_tensor.shape[0])
-                        
-                        walking_state[key][:min_out, :min_in] = standing_tensor[:min_out, :min_in]
-                        
-                        if walking_tensor.shape[1] > standing_tensor.shape[1]:
-                            new_dim = walking_tensor.shape[1] - standing_tensor.shape[1]
-                            walking_state[key][:, -new_dim:] = torch.randn(
-                                walking_tensor.shape[0], new_dim, device=device
-                            ) * 0.01
-                        
-                        transferred += 1
-                        print(f"  Partial transfer: {key} ({standing_tensor.shape} → {walking_tensor.shape})")
-                    elif len(standing_tensor.shape) == 1 and len(walking_tensor.shape) == 1:
-                        min_size = min(standing_tensor.shape[0], walking_tensor.shape[0])
-                        walking_state[key][:min_size] = standing_tensor[:min_size]
-                        transferred += 1
-                    else:
-                        skipped += 1
-                else:
-                    skipped += 1
-            
-            model.policy.load_state_dict(walking_state)
-            
-            print(f"\n✓ Weight transfer complete:")
-            print(f"  Transferred: {transferred} layers")
-            print(f"  Skipped/new: {skipped} layers")
-            print(f"\nThe walking model now has standing knowledge!")
-            print(f"{'='*60}\n")
-            
-            # Already initialized at top, but confirm values
+            vecnorm_loaded = True  # We handled it in transfer
             learn_timesteps = total_timesteps
             reset_num_timesteps = True
             resume = True
+            
+            print(f"✓ Transfer complete! Init strategy: {args.init_strategy}")
+            if warmup_steps > 0:
+                print(f"  Warmup: {warmup_steps:,} steps collected")
+            print(f"{'='*60}\n")
             
         except Exception as e:
             print(f"✗ Transfer from standing failed: {e}")
@@ -471,6 +468,17 @@ def main():
             traceback.print_exc()
             print("\n  Falling back to fresh model...")
             resume = False
+            
+            # Create fresh VecNormalize if transfer failed
+            if env is None:
+                env = VecNormalize(
+                    vec,
+                    norm_obs=True,
+                    norm_reward=True,
+                    clip_obs=10.0,
+                    clip_reward=10.0,
+                    gamma=walking.get('gamma', 0.995),
+                )
     
     elif resume:
         # Resume from walking model
