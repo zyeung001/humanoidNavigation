@@ -107,7 +107,10 @@ def make_env_fns(n_envs: int, seed: int, cfg: dict, use_subproc: bool = True):
 
     if n_envs > 1 and use_subproc:
         print(f"Creating {n_envs} parallel environments with SubprocVecEnv...")
-        return SubprocVecEnv([make(i) for i in range(n_envs)], start_method='forkserver')
+        # Platform-specific start method: Windows requires 'spawn'
+        import platform
+        start_method = 'spawn' if platform.system() == 'Windows' else 'forkserver'
+        return SubprocVecEnv([make(i) for i in range(n_envs)], start_method=start_method)
     else:
         print(f"Creating {n_envs} environments with DummyVecEnv (sequential)...")
         return DummyVecEnv([make(i) for i in range(n_envs)])
