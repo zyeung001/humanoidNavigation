@@ -85,7 +85,12 @@ def make_env_fns(n_envs: int, seed: int, cfg: dict, use_subproc: bool = True):
     """
     def make(rank: int):
         def _init():
-            os.environ.setdefault("MUJOCO_GL", "egl")
+            # Platform-specific MuJoCo renderer
+            import platform
+            if platform.system() != 'Windows':
+                os.environ.setdefault("MUJOCO_GL", "egl")
+            # On Windows, don't set MUJOCO_GL - it auto-detects the correct renderer
+            
             try:
                 env = make_walking_curriculum_env(render_mode=None, config=cfg)
                 # Wrap with Monitor to track episode statistics
