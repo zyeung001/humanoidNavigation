@@ -274,10 +274,6 @@ def load_model(model_path, env, algo, is_vectorized=False):
             print(f"Model file not found at: {model_path}")
             return None
 
-    if not SB3_AVAILABLE:
-        print("Stable-Baselines3 not installed. Using random policy.")
-        return None
-
     algo_map = {
         "ppo": PPO,
         "a2c": A2C,
