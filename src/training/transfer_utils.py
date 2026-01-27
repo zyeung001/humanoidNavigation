@@ -472,18 +472,19 @@ class WarmupCollector:
         obs = self.env.reset()
         collected = 0
         episodes = 0
-        
+        n_envs = self.env.num_envs
+
         while collected < self.warmup_steps:
-            # Random action
-            action = np.array([self.env.action_space.sample()])
-            obs, reward, done, info = self.env.step(action)
-            collected += 1
-            
+            # Random actions for ALL parallel environments (FIX: was only generating 1 action)
+            actions = np.array([self.env.action_space.sample() for _ in range(n_envs)])
+            obs, reward, done, info = self.env.step(actions)
+            collected += n_envs  # FIX: Count observations from all envs, not just 1
+
             if done.any():
-                episodes += 1
-                obs = self.env.reset()
-            
-            if self.verbose and collected % 2000 == 0:
+                episodes += done.sum()  # Count all completed episodes
+                # VecEnv auto-resets, no need to call reset()
+
+            if self.verbose and collected % 2000 < n_envs:  # Trigger roughly every 2000
                 mean_range = (self.env.obs_rms.mean.min(), self.env.obs_rms.mean.max())
                 var_range = (self.env.obs_rms.var.min(), self.env.obs_rms.var.max())
                 print(f"  Step {collected:,}: mean=[{mean_range[0]:.3f}, {mean_range[1]:.3f}], "
