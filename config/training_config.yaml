@@ -226,10 +226,10 @@ walking:
   # ========== FIX: RELAXED TERMINATION FOR WALKING ==========
   # Issue: Height drops during natural gait shouldn't terminate
   # Solution: Lower threshold, longer grace period, extended early protection
-  termination_height_threshold: 0.60      # Catch actual falls, not crouches
+  termination_height_threshold: 0.70      # Raised from 0.60 - allow more natural gait
   termination_grace_period: 100           # Steps to track before terminating
   termination_height_recovery_window: 80  # Full gait cycle (~0.8s at 100Hz)
-  early_termination_protection: 150       # Protect first 1.5s of episode
+  early_termination_protection: 200       # Extended from 150 - protect first 2s of episode
   
   # ========== REWARD FUNCTION ==========
   target_height: 1.40
@@ -261,7 +261,7 @@ walking:
   final_clip_range: 0.1
   
   # Entropy regularization - INCREASED for exploration
-  ent_coef: 0.05                # Higher entropy to break standing-still trap
+  ent_coef: 0.10                # Higher entropy for Stage 0 exploration (was 0.05)
   final_ent_coef: 0.015         
   
   # Value function
@@ -319,7 +319,7 @@ walking:
   
   # Velocity tracking (Gaussian kernel) - NOW DOMINANT
   reward_tracking_weight: 25.0    # INCREASED from 12.0 (2x)
-  reward_tracking_bandwidth: 2.0  # REDUCED from 3.0 (more lenient gradient)
+  reward_tracking_bandwidth: 5.0  # INCREASED from 2.0 - steeper penalty for velocity errors
   
   # Direction/progress bonus
   reward_direction_weight: 8.0    # INCREASED from 5.0

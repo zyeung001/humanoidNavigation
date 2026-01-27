@@ -223,9 +223,26 @@ class WalkingCurriculumEnv(WalkingEnv):
                 # Later stages: let command generator handle variety
                 self.fixed_command = None
         
+        # Store the curriculum's fixed_command before calling parent reset
+        curriculum_fixed_command = self.fixed_command
+
         obs, info = super().reset(seed=seed)
-        self.fixed_command = None
-        
+
+        # FIX: Restore curriculum's fixed_command after parent reset
+        # Previously, setting self.fixed_command = None here would override
+        # the Stage 0 forward-only constraint, allowing random lateral commands
+        if curriculum_fixed_command is not None:
+            self.fixed_command = curriculum_fixed_command
+            # Also update the commanded velocity to match
+            self.commanded_vx_world = float(curriculum_fixed_command[0])
+            self.commanded_vy_world = float(curriculum_fixed_command[1])
+            self.commanded_yaw_rate = float(curriculum_fixed_command[2]) if len(curriculum_fixed_command) > 2 else 0.0
+            self.commanded_speed = np.sqrt(self.commanded_vx_world**2 + self.commanded_vy_world**2)
+            if self.commanded_speed > 0:
+                self.commanded_angle = np.arctan2(self.commanded_vy_world, self.commanded_vx_world)
+            else:
+                self.commanded_angle = 0.0
+
         return obs, info
 
     def step(self, action):
