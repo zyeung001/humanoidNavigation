@@ -77,18 +77,18 @@ class WalkingEnv(gym.Wrapper):
         # Issue: Height < 0.75m terminates immediately, not giving agent enough
         # experience to learn stepping patterns. Solution: Add grace period.
         self.termination_grace_period = int(self.cfg.get('termination_grace_period', 100))
-        self.termination_height_threshold = float(self.cfg.get('termination_height_threshold', 0.70))  # Lowered from 0.75
-        self.termination_height_recovery_window = int(self.cfg.get('termination_height_recovery_window', 20))
+        self.termination_height_threshold = float(self.cfg.get('termination_height_threshold', 0.55))  # Lowered: tolerate natural gait
+        self.termination_height_recovery_window = int(self.cfg.get('termination_height_recovery_window', 80))
         self.low_height_steps = 0  # Counter for consecutive low height steps
         
         # Early episode protection - don't terminate for first N steps
-        self.early_termination_protection = int(self.cfg.get('early_termination_protection', 50))
+        self.early_termination_protection = int(self.cfg.get('early_termination_protection', 150))
         
         # Reward caps from config
         reward_caps = self.cfg.get('reward_caps', {})
         self.max_height_maintenance_penalty = reward_caps.get('max_height_maintenance_penalty', 15.0)
         self.recovery_bonus_scale = reward_caps.get('recovery_bonus_scale', 50.0)
-        self.termination_penalty_constant = reward_caps.get('termination_penalty_constant', 50.0)
+        self.termination_penalty_constant = reward_caps.get('termination_penalty_constant', 25.0)
         
         # ========== WALKING-SPECIFIC CONFIG ==========
         self.velocity_weight = float(self.cfg.get('velocity_weight', 5.0))
@@ -434,13 +434,13 @@ class WalkingEnv(gym.Wrapper):
         standing_penalty = 0.0
         if self.commanded_speed > 0.1:
             if actual_speed < 0.05:
-                # SIGNIFICANT per-step penalty for standing when walking commanded
+                # Strong penalty for near-zero speed when walking commanded
+                standing_penalty = -25.0
+            elif actual_speed < 0.15:
                 standing_penalty = -15.0
-            elif actual_speed < 0.1:
-                standing_penalty = -8.0
-            elif actual_speed < self.commanded_speed * 0.3:
+            elif actual_speed < self.commanded_speed * 0.4:
                 # Not trying hard enough
-                standing_penalty = -3.0
+                standing_penalty = -5.0
         
         # ========== YAW RATE TRACKING REWARD ==========
         actual_yaw_rate = angular_vel[2]
@@ -508,8 +508,8 @@ class WalkingEnv(gym.Wrapper):
         # ========== HEIGHT MAINTENANCE (reduced) ==========
         height_velocity = height - self.prev_height if hasattr(self, 'prev_height') else 0.0
         height_maintenance = 0.0
-        if height_velocity < -0.005:
-            height_maintenance = -50.0 * np.clip(abs(height_velocity), 0.0, 0.1)
+        if height_velocity < -0.01:
+            height_maintenance = -self.max_height_maintenance_penalty * np.clip(abs(height_velocity), 0.0, 0.1)
         elif abs(height_velocity) < 0.003:
             height_maintenance = 1.0
         

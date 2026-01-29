@@ -326,8 +326,8 @@ class WalkingCurriculumEnv(WalkingEnv):
             # This prevents standing-still from passing Stage 0
             if current_stage == 0:
                 if commanded_speed > 0.1:
-                    # Require at least 30% of commanded speed
-                    min_required_speed = commanded_speed * 0.30
+                    # Require at least 50% of commanded speed
+                    min_required_speed = commanded_speed * 0.50
                     is_moving = actual_speed_info >= min_required_speed
                     success = bool(not_fallen and long_enough and vel_ok and is_moving)
                 else:

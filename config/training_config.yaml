@@ -167,7 +167,7 @@ walking:
   # ========== ACTION PREPROCESSING ==========
   
   action_smoothing: true
-  action_smoothing_tau: 0.20  # REDUCED: Smoother actions for stability
+  action_smoothing_tau: 0.08  # REDUCED: Faster reactions during walking gait
   
   action_symmetry: false
   pd_assist: false
@@ -226,21 +226,21 @@ walking:
   # ========== FIX: RELAXED TERMINATION FOR WALKING ==========
   # Issue: Height drops during natural gait shouldn't terminate
   # Solution: Lower threshold, longer grace period, extended early protection
-  termination_height_threshold: 0.70      # Raised from 0.60 - allow more natural gait
+  termination_height_threshold: 0.55      # Lowered: tolerate natural gait COM drops
   termination_grace_period: 100           # Steps to track before terminating
   termination_height_recovery_window: 80  # Full gait cycle (~0.8s at 100Hz)
-  early_termination_protection: 200       # Extended from 150 - protect first 2s of episode
+  early_termination_protection: 150       # Protect first 1.5s (~2 gait cycles)
   
   # ========== REWARD FUNCTION ==========
   target_height: 1.40
   height_error_threshold: 0.15
   height_stability_threshold: 0.20
-  
+
   reward_caps:
-    max_height_maintenance_penalty: 15.0  
-    recovery_bonus_scale: 50.0  
-    termination_penalty_constant: 50.0  
-  
+    max_height_maintenance_penalty: 8.0
+    recovery_bonus_scale: 50.0
+    termination_penalty_constant: 25.0
+
   # ========== PPO HYPERPARAMETERS ==========
 
   # Training schedule
@@ -250,8 +250,8 @@ walking:
   
   # PPO algorithm parameters
   n_steps: 2048
-  batch_size: 256                # REDUCED: Smaller batches for faster exploration
-  n_epochs: 10
+  batch_size: 512                # Larger batches for gradient stability
+  n_epochs: 15
   
   gamma: 0.995
   gae_lambda: 0.95
@@ -262,7 +262,7 @@ walking:
   
   # Entropy regularization - INCREASED for exploration
   ent_coef: 0.10                # Higher entropy for Stage 0 exploration (was 0.05)
-  final_ent_coef: 0.015         
+  final_ent_coef: 0.005
   
   # Value function
   vf_coef: 0.5
@@ -271,11 +271,11 @@ walking:
   max_grad_norm: 0.5
   
   # ========== VECNORMALIZE CONFIGURATION ==========
-  
+
   normalize: true
-  vecnormalize_clip_obs: 50.0 
-  vecnormalize_clip_reward: 50.0  
-  
+  vecnormalize_clip_obs: 10.0
+  vecnormalize_clip_reward: 10.0
+
   # ========== NETWORK ARCHITECTURE ==========
   
   policy_kwargs:

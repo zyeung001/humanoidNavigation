@@ -250,10 +250,11 @@ class PolicyTransfer:
         walking_model: PPO,
         init_strategy: str = "xavier",
         device: str = "cuda",
+        command_weight_scale: float = 5.0,
     ):
         """
         Initialize policy transfer.
-        
+
         Args:
             standing_model: Pre-trained standing PPO model
             walking_model: Fresh walking PPO model to transfer into
@@ -264,11 +265,14 @@ class PolicyTransfer:
                 - "small": Small noise (0.1 scale)
                 - "velocity": Copy from velocity features
             device: PyTorch device
+            command_weight_scale: Multiplier for new command weights to make
+                them visible against 1484 trained standing weights
         """
         self.standing_model = standing_model
         self.walking_model = walking_model
         self.init_strategy = init_strategy
         self.device = device
+        self.command_weight_scale = command_weight_scale
 
         # Dimension info (NEW structure: body stacked + command block once)
         self.standing_dim = 1484  # Body features × 4 frames
@@ -324,7 +328,25 @@ class PolicyTransfer:
         
         # Load transferred state
         self.walking_model.policy.load_state_dict(walking_state)
-        
+
+        # Re-initialize value function for new task
+        # Standing value function predicts standing-task returns, causing
+        # value estimation errors that destabilize early walking training
+        import torch.nn as nn
+        reinit_count = 0
+        with torch.no_grad():
+            for name, param in self.walking_model.policy.named_parameters():
+                if 'value' in name.lower() or 'vf' in name.lower():
+                    if 'bias' in name.lower():
+                        nn.init.constant_(param, 0.0)
+                        reinit_count += 1
+                    elif param.dim() >= 2:
+                        nn.init.orthogonal_(param, gain=1.0)
+                        reinit_count += 1
+
+        stats['value_fn_reinit'] = reinit_count
+        print(f"  Value function re-initialized: {reinit_count} parameters")
+
         return stats
     
     def _transfer_2d_weights(
@@ -401,16 +423,20 @@ class PolicyTransfer:
                 init_scale = float(velocity_weights.std().item())
             else:
                 raise ValueError(f"Unknown init strategy: {self.init_strategy}")
-            
+
+            # Boost command weights to be visible against 1484 trained standing weights
+            new_weights[:, -new_in_dims:] *= self.command_weight_scale
+
             # Check if this is the first layer
             if "mlp_extractor" in key and ("0" in key or "policy_net" in key):
                 stats['first_layer_init'] = {
                     'strategy': self.init_strategy,
-                    'scale': init_scale,
+                    'scale': init_scale * self.command_weight_scale,
                     'new_dims': new_in_dims,
                 }
                 print(f"  First layer command weights initialized with {self.init_strategy}")
-                print(f"    Scale: {init_scale:.4f}")
+                print(f"    Base scale: {init_scale:.4f}, boosted by {self.command_weight_scale}x")
+                print(f"    Effective scale: {init_scale * self.command_weight_scale:.4f}")
                 print(f"    New input dims: {new_in_dims}")
         
         return new_weights
@@ -490,17 +516,27 @@ class WarmupCollector:
                 print(f"  Step {collected:,}: mean=[{mean_range[0]:.3f}, {mean_range[1]:.3f}], "
                       f"var=[{var_range[0]:.3f}, {var_range[1]:.3f}]")
         
+        # Prevent variance collapse for command dimensions
+        # During Stage 0 warmup, near-constant fixed commands cause variance
+        # to collapse to ~0.001, making commands invisible to the policy
+        body_dim = 1484
+        cmd_var = self.env.obs_rms.var[body_dim:].copy()
+        cmd_var_clamped = np.maximum(cmd_var, 0.5)
+        self.env.obs_rms.var[body_dim:] = cmd_var_clamped
+
+        # Reset command mean to 0 to prevent mean shift from biased sampling
+        self.env.obs_rms.mean[body_dim:] = 0.0
+
         if self.verbose:
             print(f"\n✓ Warmup complete: {collected:,} steps, {episodes} episodes")
             print(f"  Final count: {self.env.obs_rms.count:.0f}")
 
             # Verify command block statistics (last 9 dims, appended once)
-            # NEW structure: body (1484) + command block (9) = 1493
-            body_dim = 1484
             cmd_mean = self.env.obs_rms.mean[body_dim:]
             cmd_var = self.env.obs_rms.var[body_dim:]
-            print(f"  Command block mean: {cmd_mean}")
-            print(f"  Command block var: {cmd_var}")
+            print(f"  Command block mean (post-clamp): {cmd_mean}")
+            print(f"  Command block var (post-clamp): {cmd_var}")
+            print(f"  Command var before clamping: {cmd_var_clamped}")
 
         return self.env
 
@@ -580,6 +616,7 @@ def transfer_standing_to_walking(
         walking_model=walking_model,
         init_strategy=init_strategy,
         device=device,
+        command_weight_scale=5.0,
     )
     stats = transfer.transfer()
     
