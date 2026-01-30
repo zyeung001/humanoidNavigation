@@ -519,24 +519,20 @@ class WarmupCollector:
         # Prevent variance collapse for command dimensions
         # During Stage 0 warmup, near-constant fixed commands cause variance
         # to collapse to ~0.001, making commands invisible to the policy
+        # Commands are pre-normalized to [-1, 1], so identity stats (mean=0, var=1) are correct
         body_dim = 1484
-        cmd_var = self.env.obs_rms.var[body_dim:].copy()
-        cmd_var_clamped = np.maximum(cmd_var, 0.5)
-        self.env.obs_rms.var[body_dim:] = cmd_var_clamped
-
-        # Reset command mean to 0 to prevent mean shift from biased sampling
+        self.env.obs_rms.var[body_dim:] = 1.0
         self.env.obs_rms.mean[body_dim:] = 0.0
 
         if self.verbose:
             print(f"\n✓ Warmup complete: {collected:,} steps, {episodes} episodes")
             print(f"  Final count: {self.env.obs_rms.count:.0f}")
 
-            # Verify command block statistics (last 9 dims, appended once)
+            # Verify command block statistics (last 9 dims, pinned to identity)
             cmd_mean = self.env.obs_rms.mean[body_dim:]
             cmd_var = self.env.obs_rms.var[body_dim:]
-            print(f"  Command block mean (post-clamp): {cmd_mean}")
-            print(f"  Command block var (post-clamp): {cmd_var}")
-            print(f"  Command var before clamping: {cmd_var_clamped}")
+            print(f"  Command block mean (pinned): {cmd_mean}")
+            print(f"  Command block var (pinned): {cmd_var}")
 
         return self.env
 

@@ -433,10 +433,11 @@ class WalkingEnv(gym.Wrapper):
         # ========== FIX 3: STANDING PENALTY (breaks "stand still" exploit) ==========
         standing_penalty = 0.0
         if self.commanded_speed > 0.1:
-            if actual_speed < 0.05:
+            if actual_speed < 0.10:
                 # Strong penalty for near-zero speed when walking commanded
+                # Threshold raised: natural COM oscillation reaches 0.06-0.08 m/s
                 standing_penalty = -25.0
-            elif actual_speed < 0.15:
+            elif actual_speed < 0.20:
                 standing_penalty = -15.0
             elif actual_speed < self.commanded_speed * 0.4:
                 # Not trying hard enough
@@ -505,12 +506,13 @@ class WalkingEnv(gym.Wrapper):
         jerk_penalty = reward_metrics.jerk_penalty
         control_cost = -0.003 * np.sum(np.square(action))
         
-        # ========== HEIGHT MAINTENANCE (reduced) ==========
+        # ========== HEIGHT MAINTENANCE (disabled for walking) ==========
+        # Natural gait oscillation causes COM height drops that are not falls.
+        # Penalizing these punishes walking itself. Keep only the static reward
+        # for very stable height (standing-still detector doesn't need this).
         height_velocity = height - self.prev_height if hasattr(self, 'prev_height') else 0.0
         height_maintenance = 0.0
-        if height_velocity < -0.01:
-            height_maintenance = -self.max_height_maintenance_penalty * np.clip(abs(height_velocity), 0.0, 0.1)
-        elif abs(height_velocity) < 0.003:
+        if abs(height_velocity) < 0.003:
             height_maintenance = 1.0
         
         # ========== RECOVERY BONUS (reduced) ==========
@@ -544,8 +546,11 @@ class WalkingEnv(gym.Wrapper):
         if len(self.recent_vel_errors) >= 50:
             recent_std = np.std(self.recent_vel_errors[-50:])
             recent_mean = np.mean(self.recent_vel_errors[-50:])
-            
-            if recent_mean < 0.5 and recent_std < 0.25:
+
+            # Gate on actual movement: don't reward consistency while standing still
+            if self.commanded_speed > 0.1 and actual_speed < 0.15:
+                consistency_bonus = 0.0
+            elif recent_mean < 0.5 and recent_std < 0.25:
                 consistency_bonus = self.consistency_weight * (1.0 - recent_std / 0.25) * (1.0 - recent_mean / 0.5)
         
         # ========== DURATION BONUS (conditional on tracking) ==========

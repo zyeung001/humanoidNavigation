@@ -129,7 +129,7 @@ def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnor
                 'obs_include_com': yaml_config.get('obs_include_com', True),
                 'obs_feature_norm': yaml_config.get('obs_feature_norm', True),
                 'action_smoothing': yaml_config.get('action_smoothing', True),
-                'action_smoothing_tau': 0.2,  # CRITICAL: Must match training
+                'action_smoothing_tau': yaml_config.get('action_smoothing_tau', 0.2),
                 'max_episode_steps': yaml_config.get('max_episode_steps', 5000),
                 'random_height_init': False,
                 'velocity_weight': yaml_config.get('velocity_weight', 5.0),
@@ -210,7 +210,7 @@ def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnor
                 'obs_include_com': yaml_config.get('obs_include_com', True),
                 'obs_feature_norm': yaml_config.get('obs_feature_norm', True),
                 'action_smoothing': yaml_config.get('action_smoothing', True),
-                'action_smoothing_tau': 0.2,
+                'action_smoothing_tau': yaml_config.get('action_smoothing_tau', 0.2),
                 'max_episode_steps': yaml_config.get('max_episode_steps', 5000),
                 'random_height_init': False,
             }

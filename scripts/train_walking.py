@@ -121,6 +121,30 @@ def make_env_fns(n_envs: int, seed: int, cfg: dict, use_subproc: bool = True):
         return DummyVecEnv([make(i) for i in range(n_envs)])
 
 
+class CommandStatsProtectorCallback(BaseCallback):
+    """
+    Periodically re-pin VecNormalize stats for command dims to identity.
+
+    Commands are pre-normalized to [-1, 1] in the environment, so VecNormalize
+    should pass them through unchanged (mean=0, var=1). Without this, the running
+    stats drift during training and crush the command signal.
+    """
+    def __init__(self, body_dim: int = 1484, pin_freq: int = 10_000, verbose: int = 0):
+        super().__init__(verbose)
+        self.body_dim = body_dim
+        self.pin_freq = pin_freq
+
+    def _on_step(self) -> bool:
+        if self.num_timesteps % self.pin_freq == 0:
+            env = self.model.get_env()
+            if hasattr(env, 'obs_rms'):
+                env.obs_rms.mean[self.body_dim:] = 0.0
+                env.obs_rms.var[self.body_dim:] = 1.0
+                if self.verbose and self.num_timesteps % 50_000 == 0:
+                    print(f"  [CommandProtector] Re-pinned command stats at step {self.num_timesteps:,}")
+        return True
+
+
 class EntropyScheduleCallback(BaseCallback):
     """
     Custom callback to schedule entropy coefficient during training.
@@ -304,7 +328,7 @@ def main():
 
     # Ensure walking-specific settings
     walking.setdefault('curriculum_start_stage', 0)
-    walking.setdefault('curriculum_max_stage', 6)   
+    walking.setdefault('curriculum_max_stage', 1)
     walking.setdefault('curriculum_advance_after', 20)
     walking.setdefault('curriculum_success_rate', 0.70)
     walking.setdefault('action_smoothing', True)
@@ -542,6 +566,7 @@ def main():
         )
 
     callback_list = [
+        CommandStatsProtectorCallback(body_dim=1484, pin_freq=10_000, verbose=1),
         EntropyScheduleCallback(initial_ent, final_ent, learn_timesteps, verbose=1),
         WalkingMetricsCallback(log_freq=int(walking.get('wandb_log_freq', 10000)), verbose=1),
         SaveWithModelManagerCallback(
@@ -577,8 +602,8 @@ def main():
     print(f"  Environments: {n_envs}")
     print(f"  Device: {device}")
     print(f"  VecNormalize: {'LOADED' if vecnorm_loaded else 'NEW'}")
-    print(f"  Curriculum stages: 0-{walking.get('curriculum_max_stage', 6)}")
-    print(f"  Max speed range: 0.0 - 3.0 m/s")
+    print(f"  Curriculum stages: 0-{walking.get('curriculum_max_stage', 1)}")
+    print(f"  Max speed range: 0.3 - 1.5 m/s")
     print(f"  Velocity weight: {walking.get('velocity_weight', 5.0)}")
     print(f"  Action smoothing tau: {walking.get('action_smoothing_tau', 0.2)}")
     print(f"{'='*60}\n")

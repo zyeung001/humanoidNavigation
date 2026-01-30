@@ -15,15 +15,10 @@ from .walking_env import WalkingEnv
 
 class WalkingCurriculumEnv(WalkingEnv):
     """
-    Curriculum Stages for Walking:
-    0: 0.3 m/s max - Very slow walk (NO perturbations)
-    1: 0.6 m/s max - Slow walk (gentle perturbations)
-    2: 1.0 m/s max - Normal walk
-    3: 1.5 m/s max - Fast walk
-    4: 2.0 m/s max - Light jog
-    5: 2.5 m/s max - Jog
-    6: 3.0 m/s max - Fast jog / run
-    
+    Simplified 2-Stage Curriculum for Walking:
+    0: 0.3 m/s max - Basic walking (NO perturbations, forward only)
+    1: 1.5 m/s max - Moderate walking (gentle perturbations, wider direction)
+
     Advancement: Multiple paths to advance:
     1. Standard: success_rate >= threshold AND avg_vel_error < tolerance
     2. Length-based: avg_episode_length > 2x min AND fall_rate < 15%
@@ -33,33 +28,19 @@ class WalkingCurriculumEnv(WalkingEnv):
     def __init__(self, render_mode: Optional[str] = None, config: Optional[Dict[str, Any]] = None):
         cfg = (config or {}).copy()
         self.stage = int(cfg.get('curriculum_start_stage', 0))
-        self.max_stage = int(cfg.get('curriculum_max_stage', 6))
+        self.max_stage = int(cfg.get('curriculum_max_stage', 1))
         self.advance_after = int(cfg.get('curriculum_advance_after', 20))  # Increased for more stable estimate
         self.success_buffer = []
         self.velocity_error_buffer = []
         self.episode_length_buffer = []
         self.stage_success_threshold = float(cfg.get('curriculum_success_rate', 0.35))  # RELAXED: 35%
 
-        # Speed stages (m/s) - Progressive difficulty
-        self.speed_stages = [0.3, 0.6, 1.0, 1.5, 2.0, 2.5, 3.0]
-        
-        # Probability of standing command per stage
-        # Stage 0: NO standing - we need to break the standing-still exploit
-        # Stage 1+: Gradually introduce standing practice
-        self.standing_probability = [0.0, 0.03, 0.02, 0.0, 0.0, 0.0, 0.0]
-        
-        # Velocity error tolerances for curriculum advancement
-        # Stage 0: TIGHT tolerance (0.25) to break standing-still exploit
-        # Standing still with 0.3 m/s command = 0.3 error, which must FAIL
-        # Later stages gradually relax then tighten again
-        self.velocity_tolerances = [0.25, 0.35, 0.45, 0.50, 0.45, 0.40, 0.35]
-        
-        # Minimum episode lengths for curriculum progression
-        # Stage 0: 200 steps (2 sec) - long enough to require actual walking
-        self.min_episode_lengths = [200, 250, 300, 350, 400, 450, 500]
-        
-        # Height tolerances (walking naturally has lower COM)
-        self.height_tolerances = [0.45, 0.40, 0.35, 0.30, 0.27, 0.24, 0.20]
+        # Simplified 2-stage curriculum
+        self.speed_stages = [0.3, 1.5]
+        self.standing_probability = [0.0, 0.0]
+        self.velocity_tolerances = [0.25, 0.40]
+        self.min_episode_lengths = [200, 300]
+        self.height_tolerances = [0.45, 0.35]
         
         # Direction diversity - DISABLED by default for Stage 0
         # Stage 0 should be boring: forward only, fixed speed
@@ -91,63 +72,31 @@ class WalkingCurriculumEnv(WalkingEnv):
 
     def _apply_stage_settings(self, cfg: Dict[str, Any], stage: int) -> None:
         """Configure curriculum stage with progressive difficulty.
-        
-        FIX 3: Stage 0 has NO perturbations for stability-first learning.
+
+        Simplified 2-stage curriculum:
+        Stage 0: No perturbations, forward only, basic walking
+        Stage 1: Moderate perturbations, wider direction, faster speeds
         """
         cfg['max_commanded_speed'] = self.speed_stages[min(stage, len(self.speed_stages) - 1)]
-        
+
         if stage == 0:
-            # FIX 3: Stage 0 - Focus on basic walking, NO perturbations
-            cfg['domain_rand'] = False
-            cfg['max_episode_steps'] = 2000  # Longer episodes for learning
-            cfg['push_enabled'] = False  # CRITICAL: No pushes during Stage 0
-            cfg['random_height_init'] = False  # CRITICAL: Start at normal height
-            cfg['random_height_prob'] = 0.0
-            cfg['velocity_weight'] = 6.0  # Higher tracking weight
-        elif stage == 1:
-            # Stage 1: Introduce gentle perturbations
+            # Stage 0 - Focus on basic walking, NO perturbations
             cfg['domain_rand'] = False
             cfg['max_episode_steps'] = 2000
-            cfg['push_enabled'] = True
-            cfg['push_magnitude_range'] = [20.0, 50.0]  # Gentler pushes
-            cfg['push_interval'] = 400  # Less frequent
-            cfg['random_height_init'] = True
-            cfg['random_height_prob'] = 0.10  # Only 10%
-            cfg['velocity_weight'] = 5.0
-        elif stage == 2:
-            # Stage 2: Normal difficulty
+            cfg['push_enabled'] = False
+            cfg['random_height_init'] = False
+            cfg['random_height_prob'] = 0.0
+            cfg['velocity_weight'] = 6.0
+        else:
+            # Stage 1 - Moderate perturbations, wider speed range
             cfg['domain_rand'] = False
             cfg['max_episode_steps'] = 2500
             cfg['push_enabled'] = True
-            cfg['push_magnitude_range'] = [30.0, 80.0]
+            cfg['push_magnitude_range'] = [20.0, 80.0]
             cfg['push_interval'] = 300
             cfg['random_height_init'] = True
             cfg['random_height_prob'] = 0.15
             cfg['velocity_weight'] = 5.0
-        elif stage <= 4:
-            # Mid walking stages: moderate randomization
-            cfg['domain_rand'] = True
-            cfg['rand_mass_range'] = [0.98, 1.02]
-            cfg['rand_friction_range'] = [0.98, 1.02]
-            cfg['max_episode_steps'] = 2500
-            cfg['push_enabled'] = True
-            cfg['push_magnitude_range'] = [40.0, 100.0]
-            cfg['push_interval'] = 250
-            cfg['random_height_init'] = True
-            cfg['random_height_prob'] = 0.20
-            cfg['velocity_weight'] = 4.0
-        else:
-            # Final stages: full difficulty
-            cfg['domain_rand'] = True
-            cfg['rand_mass_range'] = [0.95, 1.05]
-            cfg['rand_friction_range'] = [0.95, 1.05]
-            cfg['max_episode_steps'] = 3000
-            cfg['push_enabled'] = True
-            cfg['push_magnitude_range'] = [50.0, 150.0]
-            cfg['push_interval'] = 200
-            cfg['random_height_init'] = True
-            cfg['random_height_prob'] = 0.25
-            cfg['velocity_weight'] = 3.0
 
     def reset(self, seed: Optional[int] = None):
         # Clear episode velocity error tracking
@@ -198,7 +147,7 @@ class WalkingCurriculumEnv(WalkingEnv):
             vy = speed * np.sin(angle)
             # Sample yaw rate with reduced probability for early stages
             max_yaw = getattr(self, 'max_yaw_rate', 1.0)
-            yaw_rate = np.random.uniform(-max_yaw, max_yaw) * (0.3 + 0.7 * current_stage / 6.0)
+            yaw_rate = np.random.uniform(-max_yaw, max_yaw) * (0.3 + 0.7 * current_stage / max(self.max_stage, 1))
             self.fixed_command = (vx, vy, yaw_rate)
         else:
             # No direction diversity
