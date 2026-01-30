@@ -178,7 +178,7 @@ walking:
   max_commanded_speed: 0.3  # Starting speed (curriculum controls this)
   
   # Speed curriculum stages (m/s) - progressive from very slow to running
-  curriculum_max_speed_stages: [0.3, 0.6, 1.0, 1.5, 2.0, 2.5, 3.0]
+  curriculum_max_speed_stages: [0.3, 1.5]
   
   # ========== VELOCITY COMMAND GENERATOR  ==========
   use_command_generator: true        # Use VelocityCommandGenerator
@@ -192,7 +192,7 @@ walking:
   
   # ========== CURRICULUM LEARNING ==========
   curriculum_start_stage: 0
-  curriculum_max_stage: 6
+  curriculum_max_stage: 1
   curriculum_advance_after: 15    # Episodes before considering advancement
   warmup_episodes: 0              # NO warmup leniency - enforce strict criteria
   curriculum_success_rate: 0.35   # Success rate needed to advance
