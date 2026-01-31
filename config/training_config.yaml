@@ -4,7 +4,7 @@ standing:
   
   # Basic settings
   seed: 42
-  n_envs: 8  # Parallel environments
+  n_envs: 12  # Parallel environments
   device: cuda  # 'cuda' or 'cpu'
   
   # Episode settings
@@ -52,7 +52,7 @@ standing:
   # ========== PPO HYPERPARAMETERS ==========
   
   # Training schedule
-  total_timesteps: 10_000_000 
+  total_timesteps: 5_000_000
   learning_rate: 0.0003
   final_learning_rate: 0.00005  # Linear decay
   
