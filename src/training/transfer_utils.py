@@ -142,17 +142,14 @@ class VecNormalizeExtender:
         walking_vecnorm.obs_rms.var = walking_var
         walking_vecnorm.obs_rms.count = standing_count
         
-        # Copy reward normalization statistics
-        if ret_rms_data is not None:
-            if isinstance(ret_rms_data, dict):
-                walking_vecnorm.ret_rms.mean = ret_rms_data['mean']
-                walking_vecnorm.ret_rms.var = ret_rms_data['var']
-                walking_vecnorm.ret_rms.count = ret_rms_data['count']
-            elif hasattr(ret_rms_data, 'mean'):
-                # RunningMeanStd object
-                walking_vecnorm.ret_rms.mean = ret_rms_data.mean
-                walking_vecnorm.ret_rms.var = ret_rms_data.var
-                walking_vecnorm.ret_rms.count = ret_rms_data.count
+        # RESET reward normalization statistics (do NOT copy from standing)
+        # Standing and walking have completely different reward distributions.
+        # Copying standing's ret_rms causes normalized rewards to have no variance,
+        # which starves the value function of gradient signal.
+        walking_vecnorm.ret_rms.mean = 0.0
+        walking_vecnorm.ret_rms.var = 1.0
+        walking_vecnorm.ret_rms.count = 1e-4
+        print(f"  ret_rms RESET (not copied from standing) - walking rewards have different distribution")
         
         # Mark as not needing initial update (already has good statistics)
         walking_vecnorm.training = True

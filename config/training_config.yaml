@@ -226,7 +226,7 @@ walking:
   # ========== FIX: RELAXED TERMINATION FOR WALKING ==========
   # Issue: Height drops during natural gait shouldn't terminate
   # Solution: Lower threshold, longer grace period, extended early protection
-  termination_height_threshold: 0.55      # Lowered: tolerate natural gait COM drops
+  termination_height_threshold: 0.70      # Raised: prevents crouching exploit while tolerating gait oscillation
   termination_grace_period: 100           # Steps to track before terminating
   termination_height_recovery_window: 80  # Full gait cycle (~0.8s at 100Hz)
   early_termination_protection: 150       # Protect first 1.5s (~2 gait cycles)
@@ -260,8 +260,8 @@ walking:
   clip_range: 0.2
   final_clip_range: 0.1
   
-  # Entropy regularization - INCREASED for exploration
-  ent_coef: 0.10                # Higher entropy for Stage 0 exploration (was 0.05)
+  # Entropy regularization - moderate for transfer learning stability
+  ent_coef: 0.02                # Reduced from 0.10 - high entropy caused log_std explosion
   final_ent_coef: 0.005
   
   # Value function

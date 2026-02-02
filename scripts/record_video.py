@@ -338,10 +338,8 @@ def safe_step(env, action, is_vectorized=False):
 def safe_render(env, is_vectorized=False):
     """Handle rendering for different environment types"""
     try:
-        if is_vectorized:
-            frame = env.render(mode='rgb_array')
-        else:
-            frame = env.render()
+        # Note: render mode is set at env creation, not passed to render()
+        frame = env.render()
         return frame
     except Exception as e:
         print(f"Render error: {e}")

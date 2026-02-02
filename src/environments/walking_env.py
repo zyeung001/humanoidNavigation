@@ -77,7 +77,7 @@ class WalkingEnv(gym.Wrapper):
         # Issue: Height < 0.75m terminates immediately, not giving agent enough
         # experience to learn stepping patterns. Solution: Add grace period.
         self.termination_grace_period = int(self.cfg.get('termination_grace_period', 100))
-        self.termination_height_threshold = float(self.cfg.get('termination_height_threshold', 0.55))  # Lowered: tolerate natural gait
+        self.termination_height_threshold = float(self.cfg.get('termination_height_threshold', 0.70))  # Raised: prevents crouching exploit
         self.termination_height_recovery_window = int(self.cfg.get('termination_height_recovery_window', 80))
         self.low_height_steps = 0  # Counter for consecutive low height steps
         
@@ -465,13 +465,11 @@ class WalkingEnv(gym.Wrapper):
         else:
             base_height_reward = 8.0 - 5.0 * np.clip((height - 1.5) / 0.2, 0.0, 1.0)
         
-        # CONDITION: Scale height reward by velocity tracking quality
-        if self.commanded_speed > 0.1:
-            # If velocity error is high, reduce height reward
-            tracking_quality = np.exp(-2.0 * vel_error**2)  # 0-1 scale
-            height_reward = base_height_reward * (0.3 + 0.7 * tracking_quality)
-        else:
-            height_reward = base_height_reward
+        # Height reward is ALWAYS fully applied (not conditioned on velocity tracking)
+        # Conditioning on tracking quality during early training (when tracking is poor)
+        # scaled height reward to 30%, telling the robot "don't bother standing either",
+        # which accelerated collapse.
+        height_reward = base_height_reward
         
         # ========== CONDITIONAL UPRIGHT REWARD ==========
         upright_error = 1.0 - abs(quat[0])
@@ -482,12 +480,10 @@ class WalkingEnv(gym.Wrapper):
         else:
             base_upright = 0.0
         
-        # Condition on velocity tracking when walking is commanded
-        if self.commanded_speed > 0.1:
-            tracking_quality = np.exp(-2.0 * vel_error**2)
-            upright_reward = base_upright * (0.4 + 0.6 * tracking_quality)
-        else:
-            upright_reward = base_upright
+        # Upright reward is ALWAYS fully applied (not conditioned on velocity tracking)
+        # Same reasoning as height reward: conditioning penalizes standing when
+        # the robot can't yet walk, accelerating collapse.
+        upright_reward = base_upright
         
         # ========== STABILITY REWARD (smaller, conditional) ==========
         angular_momentum = np.sum(np.square(angular_vel))

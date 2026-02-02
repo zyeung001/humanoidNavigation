@@ -145,6 +145,36 @@ class CommandStatsProtectorCallback(BaseCallback):
         return True
 
 
+class LogStdClampCallback(BaseCallback):
+    """
+    Safety net: clamps policy log_std to prevent action distribution explosion.
+
+    When entropy coefficient is too high or value function is unstable,
+    log_std can grow exponentially, making all actions pure noise.
+    This callback clamps log_std to [-3, 2] every `clamp_freq` steps,
+    bounding action std to [0.05, 7.4].
+    """
+    def __init__(self, log_std_min: float = -3.0, log_std_max: float = 2.0,
+                 clamp_freq: int = 1000, verbose: int = 0):
+        super().__init__(verbose)
+        self.log_std_min = log_std_min
+        self.log_std_max = log_std_max
+        self.clamp_freq = clamp_freq
+
+    def _on_step(self) -> bool:
+        if self.num_timesteps % self.clamp_freq == 0:
+            if hasattr(self.model.policy, 'log_std'):
+                with torch.no_grad():
+                    log_std = self.model.policy.log_std
+                    old_max = log_std.max().item()
+                    log_std.clamp_(self.log_std_min, self.log_std_max)
+                    new_max = log_std.max().item()
+                    if self.verbose and old_max > self.log_std_max:
+                        print(f"  [LogStdClamp] Clamped log_std: {old_max:.3f} -> {new_max:.3f} "
+                              f"at step {self.num_timesteps:,}")
+        return True
+
+
 class EntropyScheduleCallback(BaseCallback):
     """
     Custom callback to schedule entropy coefficient during training.
@@ -389,12 +419,18 @@ def main():
     final_clip = float(walking.get('final_clip_range', 0.1))
     clip_fn = clip_schedule(initial_clip, final_clip, total_timesteps)
 
-    # Entropy coefficient 
+    # Entropy coefficient
     initial_ent = float(walking.get('ent_coef', 0.02))
     final_ent = float(walking.get('final_ent_coef', 0.005))
     if final_ent <= 0:
         print(f"  WARNING: final_ent_coef={final_ent} is non-positive, forcing to 0.005")
         final_ent = 0.005
+
+    # Override entropy for transfer from standing - high entropy causes log_std explosion
+    if args.from_standing and args.model:
+        transfer_ent = min(initial_ent, 0.01)
+        print(f"  Transfer mode: clamping ent_coef from {initial_ent:.4f} to {transfer_ent:.4f}")
+        initial_ent = transfer_ent
 
     # Policy/net arch
     policy_kwargs = walking.get('policy_kwargs', {
@@ -567,6 +603,7 @@ def main():
 
     callback_list = [
         CommandStatsProtectorCallback(body_dim=1484, pin_freq=10_000, verbose=1),
+        LogStdClampCallback(log_std_min=-3.0, log_std_max=2.0, clamp_freq=1000, verbose=1),
         EntropyScheduleCallback(initial_ent, final_ent, learn_timesteps, verbose=1),
         WalkingMetricsCallback(log_freq=int(walking.get('wandb_log_freq', 10000)), verbose=1),
         SaveWithModelManagerCallback(
