@@ -245,13 +245,14 @@ walking:
 
   # Training schedule
   total_timesteps: 10_000_000
-  learning_rate: 0.0003          # INCREASED: Faster adaptation for early training
+  learning_rate: 0.0001          # Reduced for transfer stability (0.0003 caused divergence)
   final_learning_rate: 0.00005   
   
   # PPO algorithm parameters
   n_steps: 2048
-  batch_size: 512                # Larger batches for gradient stability
-  n_epochs: 15
+  batch_size: 2048               # Large batches to reduce minibatch count and stabilize gradients
+  n_epochs: 4                    # Reduced from 15 - prevents policy divergence during transfer
+  target_kl: 0.03               # Early stopping per epoch if KL exceeds threshold
   
   gamma: 0.995
   gae_lambda: 0.95
