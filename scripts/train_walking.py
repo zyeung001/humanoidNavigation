@@ -505,6 +505,7 @@ def main():
                 'ent_coef': initial_ent,
                 'vf_coef': float(walking.get('vf_coef', 0.5)),
                 'max_grad_norm': float(walking.get('max_grad_norm', 0.5)),
+                'target_kl': float(walking['target_kl']) if 'target_kl' in walking else None,
                 'policy_kwargs': policy_kwargs,
                 'seed': seed,
                 'verbose': int(walking.get('verbose', 1)),
@@ -592,9 +593,10 @@ def main():
             gamma=float(walking.get('gamma', 0.995)),
             gae_lambda=float(walking.get('gae_lambda', 0.95)),
             clip_range=clip_fn,
-            ent_coef=initial_ent, 
+            ent_coef=initial_ent,
             vf_coef=float(walking.get('vf_coef', 0.5)),
             max_grad_norm=float(walking.get('max_grad_norm', 0.5)),
+            target_kl=float(walking['target_kl']) if 'target_kl' in walking else None,
             policy_kwargs=policy_kwargs,
             seed=seed,
             verbose=int(walking.get('verbose', 1)),
@@ -603,7 +605,7 @@ def main():
 
     callback_list = [
         CommandStatsProtectorCallback(body_dim=1484, pin_freq=10_000, verbose=1),
-        LogStdClampCallback(log_std_min=-3.0, log_std_max=2.0, clamp_freq=1000, verbose=1),
+        LogStdClampCallback(log_std_min=-3.0, log_std_max=0.5, clamp_freq=100, verbose=1),
         EntropyScheduleCallback(initial_ent, final_ent, learn_timesteps, verbose=1),
         WalkingMetricsCallback(log_freq=int(walking.get('wandb_log_freq', 10000)), verbose=1),
         SaveWithModelManagerCallback(
