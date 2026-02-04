@@ -151,11 +151,13 @@ class LogStdClampCallback(BaseCallback):
 
     When entropy coefficient is too high or value function is unstable,
     log_std can grow exponentially, making all actions pure noise.
-    This callback clamps log_std to [-3, 2] every `clamp_freq` steps,
-    bounding action std to [0.05, 7.4].
+
+    Default bounds [-2, 1] give action std range [0.14, 2.7] - enough variance
+    for exploration while preventing explosion. Clamp infrequently (every 2000
+    steps) to let the policy explore between safety checks.
     """
-    def __init__(self, log_std_min: float = -3.0, log_std_max: float = 2.0,
-                 clamp_freq: int = 1000, verbose: int = 0):
+    def __init__(self, log_std_min: float = -2.0, log_std_max: float = 1.0,
+                 clamp_freq: int = 2000, verbose: int = 0):
         super().__init__(verbose)
         self.log_std_min = log_std_min
         self.log_std_max = log_std_max
@@ -426,11 +428,12 @@ def main():
         print(f"  WARNING: final_ent_coef={final_ent} is non-positive, forcing to 0.005")
         final_ent = 0.005
 
-    # Override entropy for transfer from standing - high entropy causes log_std explosion
+    # NOTE: Previously capped entropy to 0.01 during transfer, but this killed exploration
+    # and prevented the agent from discovering walking. The log_std explosion was caused
+    # by other issues (VecNormalize variance collapse, reward instability) which are now fixed.
+    # Keep entropy at configured value (0.05) to enable exploration.
     if args.from_standing and args.model:
-        transfer_ent = min(initial_ent, 0.01)
-        print(f"  Transfer mode: clamping ent_coef from {initial_ent:.4f} to {transfer_ent:.4f}")
-        initial_ent = transfer_ent
+        print(f"  Transfer mode: using configured ent_coef={initial_ent:.4f} (exploration enabled)")
 
     # Policy/net arch
     policy_kwargs = walking.get('policy_kwargs', {
@@ -605,7 +608,9 @@ def main():
 
     callback_list = [
         CommandStatsProtectorCallback(body_dim=1484, pin_freq=10_000, verbose=1),
-        LogStdClampCallback(log_std_min=-3.0, log_std_max=0.5, clamp_freq=100, verbose=1),
+        # FIX: log_std_max was 0.5 (std=1.65), now 1.0 (std=2.7) for more exploration
+        # FIX: clamp_freq was 100, now 2000 to let policy explore between clamps
+        LogStdClampCallback(log_std_min=-2.0, log_std_max=1.0, clamp_freq=2000, verbose=1),
         EntropyScheduleCallback(initial_ent, final_ent, learn_timesteps, verbose=1),
         WalkingMetricsCallback(log_freq=int(walking.get('wandb_log_freq', 10000)), verbose=1),
         SaveWithModelManagerCallback(

@@ -226,7 +226,7 @@ walking:
   # ========== FIX: RELAXED TERMINATION FOR WALKING ==========
   # Issue: Height drops during natural gait shouldn't terminate
   # Solution: Lower threshold, longer grace period, extended early protection
-  termination_height_threshold: 0.70      # Raised: prevents crouching exploit while tolerating gait oscillation
+  termination_height_threshold: 0.60      # LOWERED: Allow natural gait oscillation (0.70 was too strict)
   termination_grace_period: 100           # Steps to track before terminating
   termination_height_recovery_window: 80  # Full gait cycle (~0.8s at 100Hz)
   early_termination_protection: 150       # Protect first 1.5s (~2 gait cycles)
@@ -245,25 +245,26 @@ walking:
 
   # Training schedule
   total_timesteps: 10_000_000
-  learning_rate: 0.0001          # Reduced for transfer stability (0.0003 caused divergence)
-  final_learning_rate: 0.00005   
-  
+  learning_rate: 0.0002          # Moderate LR for exploration (was 0.0001 - too conservative)
+  final_learning_rate: 0.00005
+
   # PPO algorithm parameters
   n_steps: 2048
-  batch_size: 2048               # Large batches to reduce minibatch count and stabilize gradients
-  n_epochs: 4                    # Reduced from 15 - prevents policy divergence during transfer
+  batch_size: 512                # Smaller batches = better gradient signal for exploration (was 2048)
+  n_epochs: 8                    # More gradient steps per rollout (was 4)
   target_kl: 0.03               # Early stopping per epoch if KL exceeds threshold
-  
+
   gamma: 0.995
   gae_lambda: 0.95
-  
+
   # Policy optimization
   clip_range: 0.2
   final_clip_range: 0.1
-  
-  # Entropy regularization - moderate for transfer learning stability
-  ent_coef: 0.02                # Reduced from 0.10 - high entropy caused log_std explosion
-  final_ent_coef: 0.005
+
+  # Entropy regularization - HIGH for Stage 0 exploration
+  # The agent MUST explore to discover walking generates reward
+  ent_coef: 0.05                # INCREASED: Need exploration to escape standing-still optimum
+  final_ent_coef: 0.015         # INCREASED: Maintain some exploration throughout
   
   # Value function
   vf_coef: 0.5
