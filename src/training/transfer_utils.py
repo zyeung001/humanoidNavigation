@@ -146,10 +146,11 @@ class VecNormalizeExtender:
         # Standing and walking have completely different reward distributions.
         # Copying standing's ret_rms causes normalized rewards to have no variance,
         # which starves the value function of gradient signal.
+        # FIX: Use var=100.0 for less aggressive initial normalization (was 1.0)
         walking_vecnorm.ret_rms.mean = 0.0
-        walking_vecnorm.ret_rms.var = 1.0
-        walking_vecnorm.ret_rms.count = 1e-4
-        print(f"  ret_rms RESET (not copied from standing) - walking rewards have different distribution")
+        walking_vecnorm.ret_rms.var = 100.0  # FIX: Higher initial var = gentler normalization
+        walking_vecnorm.ret_rms.count = 1.0
+        print(f"  ret_rms RESET with var=100.0 (gentler normalization for stability)")
         
         # Mark as not needing initial update (already has good statistics)
         walking_vecnorm.training = True

@@ -237,22 +237,22 @@ walking:
   height_stability_threshold: 0.20
 
   reward_caps:
-    max_height_maintenance_penalty: 8.0
-    recovery_bonus_scale: 50.0
-    termination_penalty_constant: 25.0
+    max_height_maintenance_penalty: 0.8   # FIX: Reduced from 8.0 (10x)
+    recovery_bonus_scale: 5.0             # FIX: Reduced from 50.0 (10x)
+    termination_penalty_constant: 2.5     # FIX: Reduced from 25.0 (10x)
 
   # ========== PPO HYPERPARAMETERS ==========
 
   # Training schedule
   total_timesteps: 10_000_000
-  learning_rate: 0.0002          # Moderate LR for exploration (was 0.0001 - too conservative)
-  final_learning_rate: 0.00005
+  learning_rate: 0.00005         # FIX: Reduced from 0.0002 - smaller steps for stability
+  final_learning_rate: 0.00002
 
   # PPO algorithm parameters
   n_steps: 2048
-  batch_size: 512                # Smaller batches = better gradient signal for exploration (was 2048)
-  n_epochs: 8                    # More gradient steps per rollout (was 4)
-  target_kl: 0.03               # Early stopping per epoch if KL exceeds threshold
+  batch_size: 2048               # FIX: Increased from 512 - more stable gradients
+  n_epochs: 5                    # FIX: Reduced from 8 - fewer epochs with larger batches
+  # target_kl: null              # FIX: REMOVED - was causing early stop at step 0
 
   gamma: 0.995
   gae_lambda: 0.95
@@ -261,10 +261,10 @@ walking:
   clip_range: 0.2
   final_clip_range: 0.1
 
-  # Entropy regularization - HIGH for Stage 0 exploration
-  # The agent MUST explore to discover walking generates reward
-  ent_coef: 0.05                # INCREASED: Need exploration to escape standing-still optimum
-  final_ent_coef: 0.015         # INCREASED: Maintain some exploration throughout
+  # Entropy regularization - REDUCED for stability
+  # High entropy was causing action distribution explosion (std=2.72)
+  ent_coef: 0.005                # FIX: Reduced from 0.05 - stop action explosion
+  final_ent_coef: 0.001          # FIX: Reduced from 0.015
   
   # Value function
   vf_coef: 0.5
@@ -316,27 +316,28 @@ walking:
   early_stop:
     patience: 5
   
-  #REWARD FUNCTION COMPONENTS
-  #
-  
-  # Velocity tracking (Gaussian kernel) - NOW DOMINANT
-  reward_tracking_weight: 25.0    # INCREASED from 12.0 (2x)
-  reward_tracking_bandwidth: 5.0  # INCREASED from 2.0 - steeper penalty for velocity errors
-  
+  # ========== REWARD FUNCTION COMPONENTS ==========
+  # FIX: All rewards scaled down by 10x to bring episode rewards to ~500 (was ~5000)
+  # This is CRITICAL for PPO stability - high rewards caused KL divergence explosion
+
+  # Velocity tracking (Gaussian kernel)
+  reward_tracking_weight: 2.5     # FIX: Reduced from 25.0 (10x)
+  reward_tracking_bandwidth: 5.0  # Keep steep gradient for velocity errors
+
   # Direction/progress bonus
-  reward_direction_weight: 8.0    # INCREASED from 5.0
-  
-  # Stability rewards - REDUCED to prevent survival-only optimization
-  reward_height_weight: 3.0       # REDUCED from 5.0
-  reward_upright_weight: 2.0      # REDUCED from 3.0
-  reward_alive_weight: 0.5        # REDUCED from 1.0
-  
-  # Penalties
-  reward_action_penalty: 0.003    # REDUCED from 0.005 (allow more dynamic actions)
-  reward_jerk_penalty: 0.008      # REDUCED from 0.01
-  
-  # Consistency reward 
-  reward_consistency_weight: 8.0  # INCREASED from 5.0 (reward stable tracking)
+  reward_direction_weight: 0.8    # FIX: Reduced from 8.0 (10x)
+
+  # Stability rewards
+  reward_height_weight: 0.3       # FIX: Reduced from 3.0 (10x)
+  reward_upright_weight: 0.2      # FIX: Reduced from 2.0 (10x)
+  reward_alive_weight: 0.05       # FIX: Reduced from 0.5 (10x)
+
+  # Penalties (keep small)
+  reward_action_penalty: 0.0003   # FIX: Reduced from 0.003 (10x)
+  reward_jerk_penalty: 0.0008     # FIX: Reduced from 0.008 (10x)
+
+  # Consistency reward
+  reward_consistency_weight: 0.8  # FIX: Reduced from 8.0 (10x)
   reward_consistency_window: 100  
   # WandB logging 
   use_wandb: true

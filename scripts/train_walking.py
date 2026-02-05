@@ -607,10 +607,11 @@ def main():
         )
 
     callback_list = [
-        CommandStatsProtectorCallback(body_dim=1484, pin_freq=10_000, verbose=1),
-        # FIX: log_std_max was 0.5 (std=1.65), now 1.0 (std=2.7) for more exploration
-        # FIX: clamp_freq was 100, now 2000 to let policy explore between clamps
-        LogStdClampCallback(log_std_min=-2.0, log_std_max=1.0, clamp_freq=2000, verbose=1),
+        # FIX: Pin command stats EVERY step to prevent variance drift
+        CommandStatsProtectorCallback(body_dim=1484, pin_freq=1, verbose=0),
+        # FIX: log_std_max=-0.5 caps std at 0.6 (was 1.0 -> std=2.7 causing noise)
+        # FIX: clamp_freq=500 for tighter control
+        LogStdClampCallback(log_std_min=-2.0, log_std_max=-0.5, clamp_freq=500, verbose=1),
         EntropyScheduleCallback(initial_ent, final_ent, learn_timesteps, verbose=1),
         WalkingMetricsCallback(log_freq=int(walking.get('wandb_log_freq', 10000)), verbose=1),
         SaveWithModelManagerCallback(
@@ -637,6 +638,42 @@ def main():
     
     callbacks = CallbackList(callback_list)
 
+    # ========== PRE-TRAINING VERIFICATION (FIX: diagnose issues early) ==========
+    print(f"\n{'='*60}")
+    print("PRE-TRAINING VERIFICATION")
+    print(f"{'='*60}")
+
+    # Check policy log_std
+    if hasattr(model.policy, 'log_std'):
+        log_std_val = model.policy.log_std.mean().item()
+        std_val = np.exp(log_std_val)
+        print(f"Policy log_std: {log_std_val:.3f} (std = {std_val:.3f})")
+        if log_std_val > 0:
+            print("  WARNING: log_std > 0, will be clamped by callback")
+
+    # Check VecNormalize stats
+    print(f"\nVecNormalize observation stats:")
+    print(f"  obs_rms.var min: {env.obs_rms.var.min():.4f}")
+    print(f"  obs_rms.var max: {env.obs_rms.var.max():.4f}")
+    print(f"  ret_rms.var: {env.ret_rms.var:.4f}")
+
+    # Check command dims specifically (last 9 dims)
+    cmd_start = 1484
+    print(f"\nCommand block stats (dims {cmd_start}:{cmd_start+9}):")
+    print(f"  mean: {env.obs_rms.mean[cmd_start:]}")
+    print(f"  var: {env.obs_rms.var[cmd_start:]}")
+    if env.obs_rms.var[cmd_start:].min() < 0.5:
+        print("  WARNING: Command variance < 0.5, may need re-pinning")
+
+    # PPO config verification
+    print(f"\nPPO Configuration:")
+    print(f"  Learning rate: {model.learning_rate}")
+    print(f"  Entropy coef: {model.ent_coef}")
+    print(f"  Batch size: {model.batch_size}")
+    print(f"  Target KL: {model.target_kl}")
+
+    print(f"{'='*60}")
+
     # Train
     print(f"\n{'='*60}")
     print(f"Starting WALKING training:")
@@ -648,10 +685,10 @@ def main():
     print(f"  VecNormalize: {'LOADED' if vecnorm_loaded else 'NEW'}")
     print(f"  Curriculum stages: 0-{walking.get('curriculum_max_stage', 1)}")
     print(f"  Max speed range: 0.3 - 1.5 m/s")
-    print(f"  Velocity weight: {walking.get('velocity_weight', 5.0)}")
+    print(f"  Reward tracking weight: {walking.get('reward_tracking_weight', 2.5)}")
     print(f"  Action smoothing tau: {walking.get('action_smoothing_tau', 0.2)}")
     print(f"{'='*60}\n")
-    
+
     model.learn(
         total_timesteps=learn_timesteps, 
         callback=callbacks, 
