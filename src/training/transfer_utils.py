@@ -345,6 +345,26 @@ class PolicyTransfer:
         stats['value_fn_reinit'] = reinit_count
         print(f"  Value function re-initialized: {reinit_count} parameters")
 
+        # FIX: Reset log_std to sane value - standing model often has corrupted/exploded log_std
+        # If log_std is too high, actions become pure noise and KL explodes to millions
+        if hasattr(self.walking_model.policy, 'log_std'):
+            with torch.no_grad():
+                old_log_std = self.walking_model.policy.log_std.mean().item()
+                old_std = np.exp(old_log_std)
+
+                # Reset to -0.5 (std = 0.6) - reasonable for exploration
+                target_log_std = -0.5
+                self.walking_model.policy.log_std.fill_(target_log_std)
+
+                new_std = np.exp(target_log_std)
+                print(f"  log_std RESET: {old_log_std:.3f} (std={old_std:.1f}) → {target_log_std:.3f} (std={new_std:.2f})")
+
+                if old_log_std > 2.0:
+                    print(f"  WARNING: Standing model had corrupted log_std={old_log_std:.1f}!")
+                    print(f"           This would have caused KL explosion. Now fixed.")
+
+                stats['log_std_reset'] = {'old': old_log_std, 'new': target_log_std}
+
         return stats
     
     def _transfer_2d_weights(
