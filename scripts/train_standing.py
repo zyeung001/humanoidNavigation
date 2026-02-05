@@ -79,19 +79,47 @@ class EntropyScheduleCallback(BaseCallback):
         self.initial_ent = initial_ent
         self.final_ent = final_ent
         self.total_timesteps = total_timesteps
-        
+
     def _on_step(self) -> bool:
         # Calculate current entropy coefficient based on progress
         progress = self.num_timesteps / self.total_timesteps
         current_ent = self.initial_ent * (1.0 - progress) + self.final_ent * progress
-        
+
         # Update the model's entropy coefficient
         self.model.ent_coef = current_ent
-        
+
         # Log occasionally
         if self.verbose and self.num_timesteps % 50000 == 0:
             print(f"Entropy coefficient updated to: {current_ent:.6f}")
-        
+
+        return True
+
+
+class LogStdClampCallback(BaseCallback):
+    """
+    Clamp policy log_std to prevent action distribution explosion.
+
+    CRITICAL: Without this, log_std can drift to extreme values (e.g., 8.979),
+    causing std = 7934 which makes actions pure noise. This corrupts the model
+    weights and makes transfer learning impossible.
+    """
+    def __init__(self, log_std_min: float = -2.0, log_std_max: float = 0.5,
+                 clamp_freq: int = 500, verbose: int = 1):
+        super().__init__(verbose)
+        self.log_std_min = log_std_min
+        self.log_std_max = log_std_max
+        self.clamp_freq = clamp_freq
+
+    def _on_step(self) -> bool:
+        if self.num_timesteps % self.clamp_freq == 0:
+            if hasattr(self.model.policy, 'log_std'):
+                with torch.no_grad():
+                    old_mean = self.model.policy.log_std.mean().item()
+                    self.model.policy.log_std.clamp_(self.log_std_min, self.log_std_max)
+                    new_mean = self.model.policy.log_std.mean().item()
+
+                    if self.verbose and abs(old_mean - new_mean) > 0.01:
+                        print(f"  [LogStdClamp] {old_mean:.3f} → {new_mean:.3f} (std: {np.exp(new_mean):.2f})")
         return True
 
 
@@ -265,6 +293,7 @@ def main():
 
     callbacks = CallbackList([
         EntropyScheduleCallback(initial_ent, final_ent, learn_timesteps, verbose=1),
+        LogStdClampCallback(log_std_min=-2.0, log_std_max=0.5, clamp_freq=500, verbose=1),
         SaveVecNormCallback(vecnorm_path, freq=int(standing.get('save_freq', 100_000)))
     ])
 
