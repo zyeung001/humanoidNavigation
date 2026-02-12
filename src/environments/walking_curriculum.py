@@ -2,7 +2,8 @@
 walking_curriculum.py
 
 Curriculum learning for walking task.
-Progressive stages from standing (0 m/s) to fast walking (3 m/s).
+Progressive 3-stage curriculum for ~2ft (0.6m) humanoid sim-to-real transfer.
+Speeds are realistic for small bipedal robots (max ~0.8 m/s).
 """
 
 from __future__ import annotations
@@ -15,9 +16,10 @@ from .walking_env import WalkingEnv
 
 class WalkingCurriculumEnv(WalkingEnv):
     """
-    Simplified 2-Stage Curriculum for Walking:
-    0: 0.3 m/s max - Basic walking (NO perturbations, forward only)
-    1: 1.5 m/s max - Moderate walking (gentle perturbations, wider direction)
+    3-Stage Curriculum for Walking (~2ft / 0.6m humanoid, sim-to-real):
+    0: 0.15 m/s - Baby steps, learn balance while moving (NO perturbations, forward only)
+    1: 0.40 m/s - Normal walking pace (light perturbations, wider direction)
+    2: 0.80 m/s - Brisk walking near real-world max (moderate perturbations, full direction)
 
     Advancement: Multiple paths to advance:
     1. Standard: success_rate >= threshold AND avg_vel_error < tolerance
@@ -35,12 +37,13 @@ class WalkingCurriculumEnv(WalkingEnv):
         self.episode_length_buffer = []
         self.stage_success_threshold = float(cfg.get('curriculum_success_rate', 0.35))  # RELAXED: 35%
 
-        # Simplified 2-stage curriculum
-        self.speed_stages = [0.3, 1.5]
-        self.standing_probability = [0.0, 0.0]
-        self.velocity_tolerances = [0.25, 0.40]
-        self.min_episode_lengths = [200, 300]
-        self.height_tolerances = [0.45, 0.35]
+        # 3-stage curriculum for ~2ft humanoid (sim-to-real)
+        speed_stages_cfg = cfg.get('curriculum_max_speed_stages', [0.15, 0.4, 0.8])
+        self.speed_stages = speed_stages_cfg
+        self.standing_probability = [0.0] * len(speed_stages_cfg)
+        self.velocity_tolerances = [0.12, 0.20, 0.30]
+        self.min_episode_lengths = [200, 300, 400]
+        self.height_tolerances = [0.45, 0.40, 0.35]
         
         # Direction diversity - DISABLED by default for Stage 0
         # Stage 0 should be boring: forward only, fixed speed
@@ -73,24 +76,35 @@ class WalkingCurriculumEnv(WalkingEnv):
     def _apply_stage_settings(self, cfg: Dict[str, Any], stage: int) -> None:
         """Configure curriculum stage with progressive difficulty.
 
-        Simplified 2-stage curriculum:
-        Stage 0: No perturbations, forward only, basic walking
-        Stage 1: Moderate perturbations, wider direction, faster speeds
+        3-stage curriculum for ~2ft humanoid (sim-to-real):
+        Stage 0: Baby steps (0.15 m/s) - no perturbations, forward only
+        Stage 1: Normal walk (0.40 m/s) - light perturbations, wider direction
+        Stage 2: Brisk walk (0.80 m/s) - moderate perturbations, full direction
         """
         cfg['max_commanded_speed'] = self.speed_stages[min(stage, len(self.speed_stages) - 1)]
 
         if stage == 0:
-            # Stage 0 - Focus on basic walking, NO perturbations
+            # Stage 0 - Baby steps, learn to balance while moving
             cfg['domain_rand'] = False
             cfg['max_episode_steps'] = 2000
             cfg['push_enabled'] = False
             cfg['random_height_init'] = False
             cfg['random_height_prob'] = 0.0
             cfg['velocity_weight'] = 6.0
-        else:
-            # Stage 1 - Moderate perturbations, wider speed range
+        elif stage == 1:
+            # Stage 1 - Normal walking pace, light perturbations
             cfg['domain_rand'] = False
             cfg['max_episode_steps'] = 2500
+            cfg['push_enabled'] = True
+            cfg['push_magnitude_range'] = [10.0, 40.0]
+            cfg['push_interval'] = 350
+            cfg['random_height_init'] = False
+            cfg['random_height_prob'] = 0.0
+            cfg['velocity_weight'] = 5.0
+        else:
+            # Stage 2 - Brisk walking, moderate perturbations, domain rand
+            cfg['domain_rand'] = True
+            cfg['max_episode_steps'] = 3000
             cfg['push_enabled'] = True
             cfg['push_magnitude_range'] = [20.0, 80.0]
             cfg['push_interval'] = 300
@@ -167,6 +181,15 @@ class WalkingCurriculumEnv(WalkingEnv):
                 vx = speed * np.cos(angle)
                 vy = speed * np.sin(angle)
                 yaw_rate = 0.0
+                self.fixed_command = (vx, vy, yaw_rate)
+            elif current_stage == 2:
+                # Stage 2: Full direction range, variable speed
+                angle = np.random.uniform(-np.pi/4, np.pi/4)  # ±45 degrees
+                speed = np.random.uniform(0.2, self.max_commanded_speed)
+                vx = speed * np.cos(angle)
+                vy = speed * np.sin(angle)
+                max_yaw = getattr(self, 'max_yaw_rate', 1.0)
+                yaw_rate = np.random.uniform(-max_yaw * 0.5, max_yaw * 0.5)
                 self.fixed_command = (vx, vy, yaw_rate)
             else:
                 # Later stages: let command generator handle variety
@@ -274,7 +297,7 @@ class WalkingCurriculumEnv(WalkingEnv):
             # Stage 0: STRICT movement requirement - must actually be moving
             # This prevents standing-still from passing Stage 0
             if current_stage == 0:
-                if commanded_speed > 0.1:
+                if commanded_speed > 0.05:
                     # Require at least 50% of commanded speed
                     min_required_speed = commanded_speed * 0.50
                     is_moving = actual_speed_info >= min_required_speed
@@ -284,12 +307,15 @@ class WalkingCurriculumEnv(WalkingEnv):
                     success = bool(not_fallen and long_enough and vel_ok)
             elif current_stage == 1:
                 # Stage 1: Slightly relaxed - require some movement attempt
-                attempted_movement = actual_speed_info > 0.08 or commanded_speed < 0.1
+                attempted_movement = actual_speed_info > 0.05 or commanded_speed < 0.05
                 success = bool(
                     not_fallen and
                     long_enough and
                     (vel_ok or (height_ok and attempted_movement))
                 )
+            elif current_stage == 2:
+                # Stage 2: Full criteria - velocity tracking + stability
+                success = bool(not_fallen and long_enough and vel_ok and height_ok)
             else:
                 # Later stages: Standard criteria
                 success = bool((not_fallen and criteria_met >= 2) or criteria_met == 3)
