@@ -250,8 +250,8 @@ walking:
 
   # PPO algorithm parameters
   n_steps: 2048
-  batch_size: 2048               # FIX: Increased from 512 - more stable gradients
-  n_epochs: 5                    # FIX: Reduced from 8 - fewer epochs with larger batches
+  batch_size: 512                # REQUIRED: Small batches for exploration (2048 kills it)
+  n_epochs: 10                   # Standard epochs for batch_size=512
   # target_kl: null              # FIX: REMOVED - was causing early stop at step 0
 
   gamma: 0.995
@@ -261,10 +261,11 @@ walking:
   clip_range: 0.2
   final_clip_range: 0.1
 
-  # Entropy regularization - REDUCED for stability
-  # High entropy was causing action distribution explosion (std=2.72)
-  ent_coef: 0.005                # FIX: Reduced from 0.05 - stop action explosion
-  final_ent_coef: 0.001          # FIX: Reduced from 0.015
+  # Entropy regularization - MUST be high for exploration
+  # Without exploration, agent stays stuck at standing-still local optimum
+  # Action explosion was caused by VecNormalize/reward issues, NOT entropy
+  ent_coef: 0.05                 # REQUIRED: High entropy for walking discovery
+  final_ent_coef: 0.015          # REQUIRED: Minimum for continued exploration
   
   # Value function
   vf_coef: 0.5
