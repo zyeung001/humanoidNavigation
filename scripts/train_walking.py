@@ -180,21 +180,33 @@ class LogStdClampCallback(BaseCallback):
 class EntropyScheduleCallback(BaseCallback):
     """
     Custom callback to schedule entropy coefficient during training.
+
+    Tracks progress relative to training start, not absolute timesteps.
+    This is critical for resume: if resuming at 10M with 7M remaining,
+    progress should go 0→1 over those 7M steps, not start at 10M/7M=1.43.
     """
     def __init__(self, initial_ent: float, final_ent: float, total_timesteps: int, verbose: int = 0):
         super().__init__(verbose)
         self.initial_ent = initial_ent
         self.final_ent = final_ent
         self.total_timesteps = total_timesteps
-        
+        self._start_timesteps = None
+
+    def _on_training_start(self) -> None:
+        self._start_timesteps = self.model.num_timesteps
+
     def _on_step(self) -> bool:
-        progress = self.num_timesteps / self.total_timesteps
+        if self._start_timesteps is None:
+            self._start_timesteps = self.num_timesteps
+
+        elapsed = self.num_timesteps - self._start_timesteps
+        progress = min(elapsed / max(self.total_timesteps, 1), 1.0)
         current_ent = self.initial_ent * (1.0 - progress) + self.final_ent * progress
         self.model.ent_coef = current_ent
-        
+
         if self.verbose and self.num_timesteps % 50000 == 0:
-            print(f"Entropy coefficient updated to: {current_ent:.6f}")
-        
+            print(f"Entropy coefficient: {current_ent:.6f} (progress: {progress:.1%})")
+
         return True
 
 
@@ -377,29 +389,68 @@ def main():
 
     # VecNormalize paths
     vecnorm_path = walking.get('vecnormalize_path', 'models/vecnorm_walking.pkl')
-    env_load_path = args.vecnorm if args.vecnorm else vecnorm_path
+    vecnorm_explicitly_provided = args.vecnorm is not None
 
     env = None
     vecnorm_loaded = False
-    
+
     # Skip VecNormalize loading if transferring from standing
     # The transfer_utils module will handle VecNormalize extension
     if args.from_standing and args.model:
         print(f"Skipping VecNormalize load - transfer_utils will handle it")
         # Keep env=None, the transfer function will set it up
-    elif not args.reset_vecnorm and os.path.exists(env_load_path):
-        try:
-            print(f"Attempting to load VecNormalize from: {env_load_path}")
-            env = VecNormalize.load(env_load_path, vec)
-            vecnorm_loaded = True
-            print(f"✓ Successfully loaded VecNormalize statistics")
-            print(f"  - Mean: {env.obs_rms.mean[:5]}...")
-            print(f"  - Var: {env.obs_rms.var[:5]}...")
-        except Exception as e:
-            print(f"✗ Failed to load VecNormalize: {e}")
-            print(f"  Creating fresh VecNormalize wrapper instead...")
-            env = None
-    
+    elif not args.reset_vecnorm:
+        # Build list of candidate vecnorm paths to try
+        candidates = []
+        if args.vecnorm:
+            candidates.append(args.vecnorm)
+        if args.model:
+            # Auto-detect: look next to the model file
+            model_dir = os.path.dirname(args.model)
+            candidates.append(os.path.join(model_dir, 'vecnorm.pkl'))
+        candidates.append(vecnorm_path)  # Config default
+        # Also try common ModelManager paths
+        candidates.extend([
+            'models/walking/latest/vecnorm.pkl',
+            'models/walking/best/vecnorm.pkl',
+            'models/walking/final/vecnorm.pkl',
+        ])
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_candidates = []
+        for c in candidates:
+            normed = os.path.normpath(c)
+            if normed not in seen:
+                seen.add(normed)
+                unique_candidates.append(c)
+
+        for candidate_path in unique_candidates:
+            if os.path.exists(candidate_path):
+                try:
+                    print(f"Attempting to load VecNormalize from: {candidate_path}")
+                    env = VecNormalize.load(candidate_path, vec)
+                    vecnorm_loaded = True
+                    print(f"✓ Successfully loaded VecNormalize statistics")
+                    print(f"  - Mean[:5]: {env.obs_rms.mean[:5]}")
+                    print(f"  - Var[:5]: {env.obs_rms.var[:5]}")
+                    print(f"  - ret_rms.var: {env.ret_rms.var:.4f}")
+                    break
+                except Exception as e:
+                    print(f"✗ Failed to load VecNormalize from {candidate_path}: {e}")
+                    env = None
+
+        if env is None and vecnorm_explicitly_provided:
+            print(f"\n{'!'*60}")
+            print(f"ERROR: --vecnorm was explicitly provided but could not be loaded!")
+            print(f"  Provided path: {args.vecnorm}")
+            print(f"  Tried: {unique_candidates}")
+            print(f"  Resuming without VecNormalize stats will destroy performance.")
+            print(f"{'!'*60}\n")
+            raise FileNotFoundError(
+                f"VecNormalize file not found or failed to load. "
+                f"Tried: {unique_candidates}"
+            )
+
     if env is None and not (args.from_standing and args.model):
         print(f"Creating new VecNormalize wrapper")
         env = VecNormalize(
