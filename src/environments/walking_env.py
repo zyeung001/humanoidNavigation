@@ -68,6 +68,11 @@ class WalkingEnv(gym.Wrapper):
         self.push_countdown = 0  # Counter for push duration
         self.current_push_force = np.zeros(3)  # Current push force being applied
         
+        # Arm posture penalty (prevent chicken-wing arms)
+        self.arm_posture_weight = float(self.cfg.get('reward_arm_posture_weight', 0.0))
+        self.arm_joint_indices = slice(18, 24)  # qpos indices for 6 arm joints
+        self.arm_ref_angles = np.zeros(6, dtype=np.float32)  # Natural resting pose (arms down)
+
         # FIX 5: Consistency reward for reducing velocity error variance
         self.recent_vel_errors = []
         self.consistency_window = int(self.cfg.get('reward_consistency_window', 100))
@@ -494,6 +499,12 @@ class WalkingEnv(gym.Wrapper):
         jerk_penalty = reward_metrics.jerk_penalty
         control_cost = -0.0003 * np.sum(np.square(action))  # FIX: was -0.003
 
+        # ========== ARM POSTURE PENALTY (prevent chicken-wing arms) ==========
+        arm_posture_penalty = 0.0
+        if self.arm_posture_weight > 0:
+            arm_qpos = self.env.unwrapped.data.qpos[self.arm_joint_indices]
+            arm_posture_penalty = -self.arm_posture_weight * np.sum((arm_qpos - self.arm_ref_angles)**2)
+
         # ========== HEIGHT MAINTENANCE ==========
         height_velocity = height - self.prev_height if hasattr(self, 'prev_height') else 0.0
         height_maintenance = 0.0
@@ -616,6 +627,7 @@ class WalkingEnv(gym.Wrapper):
             # PENALTIES
             jerk_penalty +
             control_cost +
+            arm_posture_penalty +
             height_maintenance +
             velocity_penalty +
 
@@ -650,6 +662,7 @@ class WalkingEnv(gym.Wrapper):
             'smoothness': smoothness_reward,
             'jerk_penalty': jerk_penalty,
             'control_cost': control_cost,
+            'arm_posture_penalty': arm_posture_penalty,
             'height_maintenance': height_maintenance,
             'velocity_penalty': velocity_penalty,
             'recovery_bonus': recovery_bonus,
