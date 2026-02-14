@@ -342,45 +342,24 @@ class WalkingCurriculumEnv(WalkingEnv):
                 
                 # Path 2 - lenght based
                 # if agent consistently survives long episodes without falling
+                # TIGHTENED: Also requires minimum success rate to prevent premature advancement
                 length_based_advance = (
-                    avg_ep_length > min_length * 2.5 and  # 2.5x required length
-                    fall_rate < 0.15 and                   # <15% falls
-                    avg_recent_vel_error < current_vel_tol * 1.6  # More lenient error
+                    avg_ep_length > min_length * 3.0 and   # Tightened from 2.5x
+                    fall_rate < 0.10 and                    # Tightened from 0.15
+                    avg_recent_vel_error < current_vel_tol * 1.3 and  # Tightened from 1.6
+                    success_rate >= 0.20                    # NEW: Must have some success
                 )
-                
-                # Path 3 - improvement based
-                # if agent shows consistent improvement
-                improvement_advance = False
-                if len(self.velocity_error_buffer) >= self.advance_after:
-                    early_errors = self.velocity_error_buffer[:self.advance_after // 2]
-                    recent_errors = self.velocity_error_buffer[-(self.advance_after // 2):]
-                    improvement = np.mean(early_errors) - np.mean(recent_errors)
-                    improvement_advance = (
-                        improvement > 0.08 and  # At least 0.08 m/s improvement
-                        np.mean(recent_errors) < current_vel_tol * 1.5 and
-                        success_rate >= 0.25  # RELAXED from 0.30
-                    )
-                
-                # Path 4 - MOVEMENT-BASED (Stage 0-1 only)
-                # Key insight: For Stage 0, agent must actually be tracking velocity
-                # Tightened criteria to prevent standing-still exploitation
-                movement_advance = False
-                if current_stage <= 1:
-                    # Check if agent is actually tracking velocity (not just standing)
-                    if self.velocity_error_buffer:
-                        avg_error = np.mean(self.velocity_error_buffer[-10:])
-                        # is_tracking: velocity error must be within tolerance
-                        is_tracking = avg_error < current_vel_tol * 1.2
 
-                        movement_advance = (
-                            is_tracking and
-                            fall_rate < 0.20 and           # Tightened from 0.25
-                            avg_ep_length > min_length * 2.0 and  # Tightened from 1.5
-                            success_rate >= 0.35           # Tightened from 0.20
-                        )
-                
-                # advance if any success
-                should_advance = standard_advance or length_based_advance or improvement_advance or movement_advance
+                # Path 3 - improvement based - DISABLED
+                # This path was too lenient and allowed advancement without real skill
+                improvement_advance = False
+
+                # Path 4 - MOVEMENT-BASED - DISABLED
+                # This path allowed advancement with low success rates
+                movement_advance = False
+
+                # Only advance via standard or length-based (both require real performance)
+                should_advance = standard_advance or length_based_advance
                 
                 if should_advance and self.stage < self.max_stage:
                     old_stage = self.stage

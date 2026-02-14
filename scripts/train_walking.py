@@ -660,9 +660,9 @@ def main():
     callback_list = [
         # FIX: Pin command stats EVERY step to prevent variance drift
         CommandStatsProtectorCallback(body_dim=1484, pin_freq=1, verbose=0),
-        # FIX: log_std_max=-0.5 caps std at 0.6 (was 1.0 -> std=2.7 causing noise)
-        # FIX: clamp_freq=500 for tighter control
-        LogStdClampCallback(log_std_min=-2.0, log_std_max=-0.5, clamp_freq=500, verbose=1),
+        # log_std_max=0.5 allows std up to 1.65 for exploration (CLAUDE.md requires high exploration)
+        # Previous -0.5 killed exploration, agent couldn't discover walking gaits
+        LogStdClampCallback(log_std_min=-2.0, log_std_max=0.5, clamp_freq=500, verbose=1),
         EntropyScheduleCallback(initial_ent, final_ent, learn_timesteps, verbose=1),
         WalkingMetricsCallback(log_freq=int(walking.get('wandb_log_freq', 10000)), verbose=1),
         SaveWithModelManagerCallback(

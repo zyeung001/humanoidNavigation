@@ -500,10 +500,15 @@ class WalkingEnv(gym.Wrapper):
         control_cost = -0.0003 * np.sum(np.square(action))  # FIX: was -0.003
 
         # ========== ARM POSTURE PENALTY (prevent chicken-wing arms) ==========
+        # Only penalize EXTREME arm deviations (>0.5 rad ≈ 30°) to allow natural arm swing
+        # Small arm movements aid bipedal balance; only chicken-wing poses should be penalized
         arm_posture_penalty = 0.0
         if self.arm_posture_weight > 0:
             arm_qpos = self.env.unwrapped.data.qpos[self.arm_joint_indices]
-            arm_posture_penalty = -self.arm_posture_weight * np.sum((arm_qpos - self.arm_ref_angles)**2)
+            arm_deviations = np.abs(arm_qpos - self.arm_ref_angles)
+            # Dead zone: no penalty below 0.5 rad, quadratic above
+            extreme_deviations = np.maximum(arm_deviations - 0.5, 0.0)
+            arm_posture_penalty = -self.arm_posture_weight * np.sum(extreme_deviations**2)
 
         # ========== HEIGHT MAINTENANCE ==========
         height_velocity = height - self.prev_height if hasattr(self, 'prev_height') else 0.0
