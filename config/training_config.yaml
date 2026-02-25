@@ -336,7 +336,7 @@ walking:
   # Penalties (keep small)
   reward_action_penalty: 0.0003   # FIX: Reduced from 0.003 (10x)
   reward_jerk_penalty: 0.0008     # FIX: Reduced from 0.008 (10x)
-  reward_arm_posture_weight: 0.15 # Only penalizes extreme deviations >30° (dead zone protects natural swing)
+  reward_arm_posture_weight: 2.0  # Strong penalty to keep arms at sides for sim-to-real transfer
 
   # Consistency reward
   reward_consistency_weight: 0.8  # FIX: Reduced from 8.0 (10x)
