@@ -41,9 +41,9 @@ class WalkingCurriculumEnv(WalkingEnv):
         speed_stages_cfg = cfg.get('curriculum_max_speed_stages', [0.15, 0.4, 0.8])
         self.speed_stages = speed_stages_cfg
         self.standing_probability = [0.0] * len(speed_stages_cfg)
-        self.velocity_tolerances = [0.12, 0.20, 0.30]
-        self.min_episode_lengths = [200, 300, 400]
-        self.height_tolerances = [0.45, 0.40, 0.35]
+        self.velocity_tolerances = [0.15, 0.20, 0.30, 0.40]
+        self.min_episode_lengths = [200, 300, 400, 500]
+        self.height_tolerances = [0.45, 0.40, 0.35, 0.30]
         
         # Direction diversity - DISABLED by default for Stage 0
         # Stage 0 should be boring: forward only, fixed speed
@@ -77,9 +77,10 @@ class WalkingCurriculumEnv(WalkingEnv):
         """Configure curriculum stage with progressive difficulty.
 
         3-stage curriculum for ~2ft humanoid (sim-to-real):
-        Stage 0: Baby steps (0.15 m/s) - no perturbations, forward only
-        Stage 1: Normal walk (0.40 m/s) - light perturbations, wider direction
-        Stage 2: Brisk walk (0.80 m/s) - moderate perturbations, full direction
+        Stage 0: Baby steps (0.30 m/s) - no perturbations, forward only
+        Stage 1: Normal walk (0.60 m/s) - light perturbations, wider direction
+        Stage 2: Brisk walk (1.00 m/s) - moderate perturbations, full direction
+        Stage 3: Fast walk (1.50 m/s) - full perturbations, domain rand, sim-to-real ready
         """
         cfg['max_commanded_speed'] = self.speed_stages[min(stage, len(self.speed_stages) - 1)]
 
@@ -101,7 +102,7 @@ class WalkingCurriculumEnv(WalkingEnv):
             cfg['random_height_init'] = False
             cfg['random_height_prob'] = 0.0
             cfg['velocity_weight'] = 5.0
-        else:
+        elif stage == 2:
             # Stage 2 - Brisk walking, moderate perturbations, domain rand
             cfg['domain_rand'] = True
             cfg['max_episode_steps'] = 3000
@@ -110,6 +111,20 @@ class WalkingCurriculumEnv(WalkingEnv):
             cfg['push_interval'] = 300
             cfg['random_height_init'] = True
             cfg['random_height_prob'] = 0.15
+            cfg['velocity_weight'] = 5.0
+        else:
+            # Stage 3 - Fast walk, full perturbations, sim-to-real hardening
+            cfg['domain_rand'] = True
+            cfg['rand_mass_range'] = [0.90, 1.10]
+            cfg['rand_friction_range'] = [0.90, 1.10]
+            cfg['max_episode_steps'] = 4000
+            cfg['push_enabled'] = True
+            cfg['push_magnitude_range'] = [30.0, 100.0]
+            cfg['push_interval'] = 250
+            cfg['random_height_init'] = True
+            cfg['random_height_prob'] = 0.20
+            cfg['random_velocity_init'] = True
+            cfg['random_velocity_range'] = [-0.3, 0.3]
             cfg['velocity_weight'] = 5.0
 
     def reset(self, seed: Optional[int] = None):

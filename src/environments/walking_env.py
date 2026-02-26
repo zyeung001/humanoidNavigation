@@ -708,7 +708,7 @@ class WalkingEnv(gym.Wrapper):
                 f"h={height:.3f}, cmd=({self.commanded_vx_world:.2f},{self.commanded_vy_world:.2f}), "
                 f"actual=({com_vel_x:.2f},{com_vel_y:.2f}){yaw_info}, "
                 f"vel_err={vel_error:.3f}, r={total_reward:6.1f} "
-                f"[track={velocity_tracking_reward:.1f}, prog={progress_bonus:.1f}, stand_pen={standing_penalty:.1f}]")
+                f"[track={velocity_tracking_reward:.1f}, prog={progress_bonus:.1f}, stand_pen={standing_penalty:.1f}, arm={arm_posture_penalty:.1f}]")
 
         return total_reward, terminate
 

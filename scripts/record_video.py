@@ -133,7 +133,7 @@ def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnor
                 'max_episode_steps': yaml_config.get('max_episode_steps', 5000),
                 'random_height_init': False,
                 'velocity_weight': yaml_config.get('velocity_weight', 5.0),
-                'max_commanded_speed': 3.0,  # Allow full range during inference
+                'max_commanded_speed': max(yaml_config.get('curriculum_max_speed_stages', [1.5])),  # Use training max
             }
         else:
             training_config = {
@@ -145,7 +145,7 @@ def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnor
                 'max_episode_steps': 5000,
                 'random_height_init': False,
                 'velocity_weight': 5.0,
-                'max_commanded_speed': 3.0,
+                'max_commanded_speed': 1.5,  # Match training max
             }
         
         # Set fixed velocity command if provided
