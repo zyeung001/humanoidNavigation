@@ -71,7 +71,7 @@ def simulate_and_plot(
     
     # Get generator statistics
     stats = generator.get_statistics()
-    print(f"\nGenerator Statistics:")
+    print("\nGenerator Statistics:")
     print(f"  Total commands sampled: {stats['total_commands']}")
     print(f"  Stop commands: {stats['stop_commands']}")
     print(f"  Stop ratio: {stats['stop_ratio']:.1%}")

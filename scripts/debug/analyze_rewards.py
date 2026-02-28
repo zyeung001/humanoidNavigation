@@ -97,7 +97,7 @@ def analyze_reward_components(env, n_steps: int = 1000, verbose: bool = True):
         print(f"  Upright Reward:    {np.mean(upright_rewards):+8.2f} ± {np.std(upright_rewards):.2f} per step")
     if stability_rewards:
         print(f"  Stability Reward:  {np.mean(stability_rewards):+8.2f} ± {np.std(stability_rewards):.2f} per step")
-    print(f"  -"*25)
+    print("  -"*25)
     print(f"  TOTAL:             {np.mean(total_rewards):+8.2f} ± {np.std(total_rewards):.2f} per step")
     
     # Verify tracking dominance
@@ -135,7 +135,7 @@ def analyze_reward_components(env, n_steps: int = 1000, verbose: bool = True):
     
     # Curriculum info
     if hasattr(env, 'stage'):
-        print(f"\n📚 CURRICULUM STATUS:")
+        print("\n📚 CURRICULUM STATUS:")
         print("-"*50)
         print(f"  Current stage:         {env.stage}")
         print(f"  Max commanded speed:   {env.max_commanded_speed:.2f} m/s")

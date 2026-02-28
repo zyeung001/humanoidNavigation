@@ -18,7 +18,7 @@ SRC_DIR = os.path.join(PROJECT_ROOT, 'src')
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
-from src.utils.visualization import setup_display, test_environment  # noqa: E402
+from src.utils.visualization import setup_display  # noqa: E402
 
 # import SB3 algorithms we support
 from stable_baselines3 import PPO, A2C, SAC, TD3, DDPG
@@ -33,16 +33,12 @@ make_walking_curriculum_env = None
 
 try:
     from src.environments.standing_env import make_standing_env  # type: ignore
-    from src.environments.standing_curriculum import make_standing_curriculum_env  # type: ignore
     from src.environments.walking_env import make_walking_env  # type: ignore
-    from src.environments.walking_curriculum import make_walking_curriculum_env  # type: ignore
     CUSTOM_ENV_AVAILABLE = True
 except Exception:
     try:
         from environments.standing_env import make_standing_env  # type: ignore
-        from environments.standing_curriculum import make_standing_curriculum_env  # type: ignore
         from environments.walking_env import make_walking_env  # type: ignore
-        from environments.walking_curriculum import make_walking_curriculum_env  # type: ignore
         CUSTOM_ENV_AVAILABLE = True
     except Exception:
         CUSTOM_ENV_AVAILABLE = False
@@ -118,7 +114,7 @@ def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnor
             print("WARNING: Walking environment not available. Check imports.")
             return None, False
         
-        print(f"Creating custom walking environment...")
+        print("Creating custom walking environment...")
         
         # Load walking configuration from YAML
         yaml_config = load_training_config(task=task_type)
@@ -183,7 +179,7 @@ def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnor
                     vec_env = VecNormalize.load(vecnorm_path, vec_env)
                     vec_env.training = False
                     vec_env.norm_reward = False
-                    print(f" VecNormalize loaded and configured for inference")
+                    print(" VecNormalize loaded and configured for inference")
                 except Exception as e:
                     print(f" VecNormalize loading failed: {e}")
                     raise
@@ -200,7 +196,7 @@ def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnor
             env = gym.make(env_name, render_mode=render_mode)
             return env, False
         
-        print(f"Creating custom standing environment...")
+        print("Creating custom standing environment...")
         
         yaml_config = load_training_config(task='standing')
         
@@ -246,7 +242,7 @@ def create_environment(env_name, render_mode="rgb_array", task_type=None, vecnor
                     vec_env = VecNormalize.load(vecnorm_path, vec_env)
                     vec_env.training = False
                     vec_env.norm_reward = False
-                    print(f" VecNormalize loaded")
+                    print(" VecNormalize loaded")
                 except Exception as e:
                     print(f" VecNormalize loading failed: {e}")
                     raise
@@ -386,7 +382,6 @@ def record_video(env, model, args, is_vectorized=False):
         return
 
     print("Starting video recording...")
-    total_steps = 0
     total_frames = 0
     
     # Tracking metrics for walking
@@ -474,7 +469,7 @@ def record_video(env, model, args, is_vectorized=False):
     
     # Print overall walking metrics
     if all_velocity_errors:
-        print(f"\n=== Walking Performance Summary ===")
+        print("\n=== Walking Performance Summary ===")
         print(f"  Total velocity errors recorded: {len(all_velocity_errors)}")
         print(f"  Mean velocity error: {np.mean(all_velocity_errors):.4f} m/s")
         print(f"  Std velocity error: {np.std(all_velocity_errors):.4f} m/s")

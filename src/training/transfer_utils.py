@@ -12,7 +12,7 @@ import numpy as np
 import torch
 import pickle
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Dict, Any, Tuple
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import VecNormalize
 
@@ -95,25 +95,22 @@ class VecNormalizeExtender:
             standing_var = standing_data['obs_rms']['var']
             standing_count = standing_data['obs_rms']['count']
             gamma = standing_data.get('gamma', 0.995)
-            ret_rms_data = standing_data.get('ret_rms', None)
         elif hasattr(standing_data, 'obs_rms'):
             # VecNormalize object (current SB3 format)
             standing_mean = standing_data.obs_rms.mean.copy()
             standing_var = standing_data.obs_rms.var.copy()
             standing_count = standing_data.obs_rms.count
             gamma = getattr(standing_data, 'gamma', 0.995)
-            ret_rms_data = standing_data.ret_rms if hasattr(standing_data, 'ret_rms') else None
         else:
             print(f"⚠ Unknown VecNormalize format: {type(standing_data)}")
             print("  Creating fresh VecNormalize for walking")
             return self._create_fresh_vecnorm()
         
-        print(f"✓ Loaded standing VecNormalize statistics")
+        print("✓ Loaded standing VecNormalize statistics")
         print(f"  Standing dimension: {len(standing_mean)}")
         print(f"  Sample count: {standing_count:,.0f}")
         
         # Validate dimensions
-        expected_walking_dim = self.walking_env.observation_space.shape[0]
         if len(standing_mean) != self.standing_total:
             print(f"⚠ Unexpected standing dimension: {len(standing_mean)} (expected {self.standing_total})")
             # Adjust expected dimensions based on actual
@@ -150,12 +147,12 @@ class VecNormalizeExtender:
         walking_vecnorm.ret_rms.mean = 0.0
         walking_vecnorm.ret_rms.var = 100.0  # FIX: Higher initial var = gentler normalization
         walking_vecnorm.ret_rms.count = 1.0
-        print(f"  ret_rms RESET with var=100.0 (gentler normalization for stability)")
+        print("  ret_rms RESET with var=100.0 (gentler normalization for stability)")
         
         # Mark as not needing initial update (already has good statistics)
         walking_vecnorm.training = True
         
-        print(f"✓ Extended VecNormalize created successfully")
+        print("✓ Extended VecNormalize created successfully")
         self._verify_statistics(walking_vecnorm)
         
         return walking_vecnorm
@@ -361,7 +358,7 @@ class PolicyTransfer:
 
                 if old_log_std > 2.0:
                     print(f"  WARNING: Standing model had corrupted log_std={old_log_std:.1f}!")
-                    print(f"           This would have caused KL explosion. Now fixed.")
+                    print("           This would have caused KL explosion. Now fixed.")
 
                 stats['log_std_reset'] = {'old': old_log_std, 'new': target_log_std}
 
@@ -600,7 +597,7 @@ def transfer_standing_to_walking(
     
     # Step 2: Warmup collection (optional but recommended)
     if warmup_steps > 0:
-        print(f"\n[2/4] Collecting warmup samples...")
+        print("\n[2/4] Collecting warmup samples...")
         collector = WarmupCollector(
             env=walking_vecnorm,
             warmup_steps=warmup_steps,
@@ -608,10 +605,10 @@ def transfer_standing_to_walking(
         )
         walking_vecnorm = collector.collect()
     else:
-        print(f"\n[2/4] Skipping warmup (warmup_steps=0)")
+        print("\n[2/4] Skipping warmup (warmup_steps=0)")
     
     # Step 3: Load standing model and create walking model
-    print(f"\n[3/4] Loading standing model and creating walking model...")
+    print("\n[3/4] Loading standing model and creating walking model...")
     standing_model = PPO.load(standing_model_path, device=device)
     print(f"  Standing obs space: {standing_model.observation_space.shape}")
     print(f"  Walking obs space: {walking_vecnorm.observation_space.shape}")
@@ -624,7 +621,7 @@ def transfer_standing_to_walking(
     )
     
     # Step 4: Transfer weights
-    print(f"\n[4/4] Transferring policy weights...")
+    print("\n[4/4] Transferring policy weights...")
     transfer = PolicyTransfer(
         standing_model=standing_model,
         walking_model=walking_model,
@@ -634,7 +631,7 @@ def transfer_standing_to_walking(
     )
     stats = transfer.transfer()
     
-    print(f"\n✓ Transfer complete:")
+    print("\n✓ Transfer complete:")
     print(f"  Exact match: {stats['transferred']} layers")
     print(f"  Partial transfer: {stats['partial_transfer']} layers")
     print(f"  Skipped: {stats['skipped']} layers")
@@ -652,8 +649,8 @@ if __name__ == "__main__":
 
     # Test VecNormalizeExtender dimensions (NEW structure)
     print("\nDimension calculations (NEW structure):")
-    print(f"  Body per-frame: 371 (365 base + 6 COM)")
+    print("  Body per-frame: 371 (365 base + 6 COM)")
     print(f"  Standing total: 371 × 4 = {371 * 4} (body only)")
     print(f"  Walking body: 371 × 4 = {371 * 4} (stacked)")
-    print(f"  Command block: 9 (vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual, err_vx, err_vy, err_speed, err_angle)")
+    print("  Command block: 9 (vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual, err_vx, err_vy, err_speed, err_angle)")
     print(f"  Walking total: {371 * 4} + 9 = {371 * 4 + 9}")

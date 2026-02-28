@@ -5,7 +5,7 @@ standing_curriculum.py
 
 from __future__ import annotations
 
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional
 import numpy as np
 
 from .standing_env import StandingEnv
@@ -46,7 +46,7 @@ class StandingCurriculumEnv(StandingEnv):
         print(f"  FIXED curriculum initialized at stage {self.stage}")
         print(f"  Target: {self.base_target_height:.2f}m ± {self.height_tolerances[self.stage]:.2f}m")
         print(f"  Min episode length: {self.min_episode_lengths[self.stage]} steps")
-        print(f"  Recovery stage (0.80m) included: Stage 0")
+        print("  Recovery stage (0.80m) included: Stage 0")
 
     def _apply_stage_settings(self, cfg: Dict[str, Any], stage: int) -> None:
         """Configure curriculum stage with progressive difficulty."""

@@ -3,7 +3,6 @@
 import os
 import sys
 import warnings
-from datetime import datetime
 import argparse
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -165,17 +164,17 @@ def main():
             print(f"Attempting to load VecNormalize from: {env_load_path}")
             env = VecNormalize.load(env_load_path, vec)
             vecnorm_loaded = True
-            print(f"✓ Successfully loaded VecNormalize statistics")
+            print("✓ Successfully loaded VecNormalize statistics")
             print(f"  - Mean: {env.obs_rms.mean[:5]}...")
             print(f"  - Var: {env.obs_rms.var[:5]}...")
         except Exception as e:
             print(f"✗ Failed to load VecNormalize: {e}")
-            print(f"  Creating fresh VecNormalize wrapper instead...")
+            print("  Creating fresh VecNormalize wrapper instead...")
             env = None
     
     if env is None:
         # Create fresh VecNormalize
-        print(f"Creating new VecNormalize wrapper")
+        print("Creating new VecNormalize wrapper")
         env = VecNormalize(
             vec,
             norm_obs=True,
@@ -245,7 +244,7 @@ def main():
             
         except Exception as e:
             print(f"✗ Failed to load model: {e}")
-            print(f"  Starting fresh training instead...")
+            print("  Starting fresh training instead...")
             resume = False
     
     if not resume:
@@ -299,7 +298,7 @@ def main():
 
     # Train
     print(f"\n{'='*60}")
-    print(f"Starting standing training:")
+    print("Starting standing training:")
     print(f"  Mode: {'RESUME' if resume else 'FRESH START'}")
     print(f"  Training steps: {learn_timesteps:,}")
     print(f"  Target total: {total_timesteps:,}")

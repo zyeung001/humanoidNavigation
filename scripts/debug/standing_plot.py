@@ -11,7 +11,6 @@ sys.path.insert(0, project_root)
 import numpy as np
 import matplotlib.pyplot as plt
 from stable_baselines3 import PPO
-import gymnasium as gym
 from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv
 
 # Import the CORRECT environment - the one used during training
@@ -77,7 +76,7 @@ def main():
                     print(f"  - {f} ({size:.1f} KB)")
         return
     
-    print(f"=== Running Diagnostic ===")
+    print("=== Running Diagnostic ===")
     print(f"Model: {args.model}")
     print(f"VecNormalize: {args.vecnorm}")
     print(f"Steps: {args.steps}")
@@ -128,7 +127,7 @@ def main():
     # Load model
     try:
         model = PPO.load(args.model, env=env)
-        print(f" Model loaded successfully")
+        print(" Model loaded successfully")
         print(f"  Model observation space: {model.observation_space.shape}\n")
     except Exception as e:
         print(f" Error loading model: {e}")
@@ -183,7 +182,7 @@ def main():
     ax1.axhline(y=args.target_height, color='r', linestyle='--', 
                 label=f'Target ({args.target_height}m)', linewidth=2)
     ax1.axhline(y=args.target_height - 0.05, color='g', linestyle=':', 
-                label=f'Acceptable range (±5cm)', linewidth=1, alpha=0.5)
+                label='Acceptable range (±5cm)', linewidth=1, alpha=0.5)
     ax1.axhline(y=args.target_height + 0.05, color='g', linestyle=':', 
                 linewidth=1, alpha=0.5)
     ax1.set_xlabel('Step', fontsize=12)
@@ -230,18 +229,18 @@ def main():
     print(f"{'DIAGNOSTIC RESULTS':^50}")
     print(f"{'='*50}")
     
-    print(f"\n Height Metrics:")
+    print("\n Height Metrics:")
     print(f"   Mean height:           {mean_height:.3f}m")
     print(f"   Target height:         {args.target_height:.3f}m")
     print(f"   Height error:          {height_error:.3f}m ({height_error*100:.1f}cm)")
     print(f"   Std deviation:         {std_height:.3f}m")
     print(f"   Time in range (±5cm):  {percent_in_range:.1f}%")
     
-    print(f"\n Action Metrics:")
+    print("\n Action Metrics:")
     print(f"   Mean action magnitude: {mean_action:.3f}")
     print(f"   Std action magnitude:  {np.std(actions_taken):.3f}")
     
-    print(f"\n Performance Metrics:")
+    print("\n Performance Metrics:")
     print(f"   Episode length:        {len(heights)} steps")
     print(f"   Total reward:          {total_reward:.1f}")
     print(f"   Mean reward:           {mean_reward:.2f}")

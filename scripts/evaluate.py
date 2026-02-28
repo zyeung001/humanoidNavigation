@@ -223,7 +223,7 @@ def main():
         output_path = args.output or f"data/videos/{args.task}_eval.mp4"
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         
-        print(f"\nRecording video...")
+        print("\nRecording video...")
         
         # Recreate env with rendering
         env = make_eval_env(args.task, config, render_mode="rgb_array")

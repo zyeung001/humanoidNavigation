@@ -9,7 +9,6 @@ Features:
 - Config archiving
 """
 
-import os
 import shutil
 from pathlib import Path
 from datetime import datetime

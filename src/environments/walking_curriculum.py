@@ -8,7 +8,7 @@ Speeds are realistic for small bipedal robots (max ~0.8 m/s).
 
 from __future__ import annotations
 
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional
 import numpy as np
 
 from .walking_env import WalkingEnv
@@ -245,10 +245,8 @@ class WalkingCurriculumEnv(WalkingEnv):
             height = info.get('height', 0.0)
             
             current_stage = min(self.stage, len(self.speed_stages) - 1)
-            current_speed = self.speed_stages[current_stage]
             current_vel_tol = self.velocity_tolerances[current_stage]
             min_length = self.min_episode_lengths[current_stage]
-            height_tol = self.height_tolerances[current_stage]
             
             # Use episode-average velocity error (after stabilization)
             if len(self.episode_velocity_errors) > self.stabilization_steps:

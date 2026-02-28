@@ -45,9 +45,6 @@ from src.training.callbacks import (
 )
 from src.training.transfer_utils import (
     transfer_standing_to_walking,
-    VecNormalizeExtender,
-    PolicyTransfer,
-    WarmupCollector,
 )
 
 
@@ -363,7 +360,7 @@ def main():
     reset_num_timesteps = True
     
     print(f"\n{'='*60}")
-    print(f"WALKING TRAINING CONFIGURATION")
+    print("WALKING TRAINING CONFIGURATION")
     print(f"{'='*60}")
     print(f"  Parallel environments: {n_envs}")
     print(f"  Total timesteps: {total_timesteps:,}")
@@ -397,7 +394,7 @@ def main():
     # Skip VecNormalize loading if transferring from standing
     # The transfer_utils module will handle VecNormalize extension
     if args.from_standing and args.model:
-        print(f"Skipping VecNormalize load - transfer_utils will handle it")
+        print("Skipping VecNormalize load - transfer_utils will handle it")
         # Keep env=None, the transfer function will set it up
     elif not args.reset_vecnorm:
         # Build list of candidate vecnorm paths to try
@@ -430,7 +427,7 @@ def main():
                     print(f"Attempting to load VecNormalize from: {candidate_path}")
                     env = VecNormalize.load(candidate_path, vec)
                     vecnorm_loaded = True
-                    print(f"✓ Successfully loaded VecNormalize statistics")
+                    print("✓ Successfully loaded VecNormalize statistics")
                     print(f"  - Mean[:5]: {env.obs_rms.mean[:5]}")
                     print(f"  - Var[:5]: {env.obs_rms.var[:5]}")
                     print(f"  - ret_rms.var: {env.ret_rms.var:.4f}")
@@ -441,10 +438,10 @@ def main():
 
         if env is None and vecnorm_explicitly_provided:
             print(f"\n{'!'*60}")
-            print(f"ERROR: --vecnorm was explicitly provided but could not be loaded!")
+            print("ERROR: --vecnorm was explicitly provided but could not be loaded!")
             print(f"  Provided path: {args.vecnorm}")
             print(f"  Tried: {unique_candidates}")
-            print(f"  Resuming without VecNormalize stats will destroy performance.")
+            print("  Resuming without VecNormalize stats will destroy performance.")
             print(f"{'!'*60}\n")
             raise FileNotFoundError(
                 f"VecNormalize file not found or failed to load. "
@@ -452,7 +449,7 @@ def main():
             )
 
     if env is None and not (args.from_standing and args.model):
-        print(f"Creating new VecNormalize wrapper")
+        print("Creating new VecNormalize wrapper")
         env = VecNormalize(
             vec,
             norm_obs=True,
@@ -628,7 +625,7 @@ def main():
             
         except Exception as e:
             print(f"✗ Failed to load model: {e}")
-            print(f"  Starting fresh training instead...")
+            print("  Starting fresh training instead...")
             resume = False
     
     if not resume:
@@ -703,7 +700,7 @@ def main():
             print("  WARNING: log_std > 0, will be clamped by callback")
 
     # Check VecNormalize stats
-    print(f"\nVecNormalize observation stats:")
+    print("\nVecNormalize observation stats:")
     print(f"  obs_rms.var min: {env.obs_rms.var.min():.4f}")
     print(f"  obs_rms.var max: {env.obs_rms.var.max():.4f}")
     print(f"  ret_rms.var: {env.ret_rms.var:.4f}")
@@ -717,7 +714,7 @@ def main():
         print("  WARNING: Command variance < 0.5, may need re-pinning")
 
     # PPO config verification
-    print(f"\nPPO Configuration:")
+    print("\nPPO Configuration:")
     print(f"  Learning rate: {model.learning_rate}")
     print(f"  Entropy coef: {model.ent_coef}")
     print(f"  Batch size: {model.batch_size}")
@@ -727,7 +724,7 @@ def main():
 
     # Train
     print(f"\n{'='*60}")
-    print(f"Starting WALKING training:")
+    print("Starting WALKING training:")
     print(f"  Mode: {'RESUME' if resume else 'FRESH START'}")
     print(f"  Training steps: {learn_timesteps:,}")
     print(f"  Target total: {total_timesteps:,}")
@@ -769,11 +766,11 @@ def main():
     print(f"\n{'='*60}")
     print("WALKING TRAINING COMPLETE!")
     print(f"{'='*60}")
-    print(f"\nModel locations:")
+    print("\nModel locations:")
     print(f"  Final:  {model_manager.final_dir / 'model.zip'}")
     print(f"  Best:   {model_manager.best_dir / 'model.zip'} (vel_error: {best_info['metric']:.4f})")
     print(f"  Latest: {model_manager.latest_dir / 'model.zip'}")
-    print(f"\nTo record demo videos, run:")
+    print("\nTo record demo videos, run:")
     print(f"  python scripts/evaluate.py --task walking --model {model_manager.best_dir / 'model.zip'} --record --vx 1.0 --vy 0.0")
 
 
