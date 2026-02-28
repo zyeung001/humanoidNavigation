@@ -1,0 +1,125 @@
+action_smoothing: true
+action_smoothing_tau: 0.08
+action_symmetry: false
+batch_size: 512
+best_model_path: models/best_walking_model
+checkpoint_dir: data/checkpoints/walking
+checkpoint_prefix: walking
+clip_range: 0.2
+command_switch_interval:
+- 10.0
+- 20.0
+curriculum_advance_after: 15
+curriculum_max_speed_stages:
+- 0.3
+- 0.6
+- 1.0
+- 1.5
+curriculum_max_stage: 3
+curriculum_start_stage: 0
+curriculum_success_rate: 0.35
+device: cuda
+direction_diversity: false
+domain_rand: false
+early_stop:
+  patience: 5
+early_termination_protection: 150
+ent_coef: 0.05
+episode_print_freq: 1000
+eval_freq: 100000
+final_clip_range: 0.1
+final_ent_coef: 0.015
+final_learning_rate: 2.0e-05
+final_model_path: models/final_walking_model
+gae_lambda: 0.95
+gamma: 0.995
+height_error_threshold: 0.15
+height_stability_threshold: 0.2
+include_yaw_rate: true
+learning_rate: 5.0e-05
+log_dir: data/logs/walking
+max_commanded_speed: 0.3
+max_episode_steps: 5000
+max_grad_norm: 0.5
+max_yaw_rate: 1.0
+n_envs: 12
+n_epochs: 10
+n_eval_episodes: 5
+n_steps: 2048
+normalize: true
+obs_feature_norm: true
+obs_history: 4
+obs_include_com: true
+pd_assist: false
+policy_kwargs:
+  activation_fn: !!python/name:torch.nn.modules.activation.SiLU ''
+  net_arch:
+  - pi:
+    - 512
+    - 512
+    - 256
+    vf:
+    - 512
+    - 512
+    - 256
+  ortho_init: true
+push_duration: 4
+push_enabled: false
+push_interval: 250
+push_magnitude_range:
+- 30.0
+- 100.0
+rand_friction_range:
+- 0.97
+- 1.03
+rand_mass_range:
+- 0.97
+- 1.03
+random_height_init: false
+random_height_prob: 0.0
+random_height_range:
+- -0.25
+- 0.1
+random_velocity_init: false
+random_velocity_range:
+- -0.3
+- 0.3
+reward_action_penalty: 0.0003
+reward_alive_weight: 0.05
+reward_arm_posture_weight: 8.0
+reward_caps:
+  max_height_maintenance_penalty: 0.8
+  recovery_bonus_scale: 5.0
+  termination_penalty_constant: 2.5
+reward_consistency_weight: 0.8
+reward_consistency_window: 100
+reward_direction_weight: 0.8
+reward_height_weight: 0.3
+reward_jerk_penalty: 0.0008
+reward_tracking_bandwidth: 5.0
+reward_tracking_weight: 2.5
+reward_upright_weight: 0.2
+save_freq: 250000
+seed: 42
+stop_probability: 0.0
+target_height: 1.4
+target_reward_threshold: 3000
+termination_grace_period: 100
+termination_height_recovery_window: 80
+termination_height_threshold: 0.6
+total_timesteps: 10000000
+use_command_generator: true
+use_tensorboard: true
+use_wandb: true
+vecnormalize_clip_obs: 10.0
+vecnormalize_clip_reward: 10.0
+vecnormalize_path: models/vecnorm_walking.pkl
+velocity_error_threshold: 0.5
+velocity_weight: 5.0
+verbose: 1
+vf_coef: 0.5
+video_freq: 500000
+wandb_log_freq: 5000
+wandb_project: humanoid_walking
+warmup_episodes: 0
+yaw_rate_weight: 3.0

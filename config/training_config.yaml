@@ -189,7 +189,7 @@ walking:
   # ========== YAW RATE TRACKING  ==========
   include_yaw_rate: true             # Enable yaw rate tracking in observation/reward
   max_yaw_rate: 1.0                  # rad/s maximum commanded yaw rate
-  yaw_rate_weight: 3.0               # Reward weight for yaw tracking
+  yaw_rate_weight: 0.5               # Reward weight for yaw tracking (was 3.0 - too much free reward for standing)
   
   # ========== CURRICULUM LEARNING ==========
   curriculum_start_stage: 0
@@ -323,8 +323,8 @@ walking:
   # This is CRITICAL for PPO stability - high rewards caused KL divergence explosion
 
   # Velocity tracking (Gaussian kernel)
-  reward_tracking_weight: 2.5     # FIX: Reduced from 25.0 (10x)
-  reward_tracking_bandwidth: 5.0  # Keep steep gradient for velocity errors
+  reward_tracking_weight: 4.0     # Increased from 2.5 - walking must be dominant signal
+  reward_tracking_bandwidth: 20.0  # Increased from 5.0 - sharper Gaussian so standing loses most reward
 
   # Direction/progress bonus
   reward_direction_weight: 0.8    # FIX: Reduced from 8.0 (10x)
