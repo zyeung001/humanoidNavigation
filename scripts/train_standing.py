@@ -15,6 +15,9 @@ SRC_DIR = os.path.join(PROJECT_ROOT, 'src')
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
+from src.utils import configure_mujoco_gl, get_subprocess_start_method
+configure_mujoco_gl()
+
 import yaml
 import numpy as np
 import torch
@@ -51,7 +54,7 @@ def clip_schedule(initial: float, final: float, total_steps: int):
 def make_env_fns(n_envs: int, seed: int, cfg: dict):
     def make(rank: int):
         def _init():
-            os.environ.setdefault("MUJOCO_GL", "egl")
+            configure_mujoco_gl()
             env = make_standing_curriculum_env(render_mode=None, config=cfg)
             if hasattr(env, 'reset'):
                 env.reset(seed=seed + rank)
@@ -64,7 +67,10 @@ def make_env_fns(n_envs: int, seed: int, cfg: dict):
         return _init
 
     if n_envs > 1:
-        return SubprocVecEnv([make(i) for i in range(n_envs)])
+        return SubprocVecEnv(
+            [make(i) for i in range(n_envs)],
+            start_method=get_subprocess_start_method(),
+        )
     return DummyVecEnv([make(0)])
 
 
@@ -123,6 +129,12 @@ class LogStdClampCallback(BaseCallback):
 
 
 def main():
+    import platform
+    import stable_baselines3
+    print(f"Python {sys.version} on {platform.system()}")
+    print(f"torch={torch.__version__} sb3={stable_baselines3.__version__} "
+          f"cuda={torch.cuda.is_available()}")
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, default=None, help='Path to load model from (without .zip)')
     parser.add_argument('--vecnorm', type=str, default=None, help='Path to load VecNormalize from')
@@ -323,4 +335,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\nTraining interrupted by user (Ctrl+C)")
+        print("   To resume, use: python scripts/train_standing.py --model models/final_standing_model")
+    except Exception as e:
+        print(f"\n\nTraining failed with error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise

@@ -26,6 +26,9 @@ SRC_DIR = os.path.join(PROJECT_ROOT, 'src')
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
+from src.utils import configure_mujoco_gl, get_subprocess_start_method
+configure_mujoco_gl()
+
 import yaml
 import numpy as np
 import torch
@@ -82,12 +85,7 @@ def make_env_fns(n_envs: int, seed: int, cfg: dict, use_subproc: bool = True):
     """
     def make(rank: int):
         def _init():
-            # Platform-specific MuJoCo renderer
-            import platform
-            if platform.system() != 'Windows':
-                os.environ.setdefault("MUJOCO_GL", "egl")
-            # On Windows, don't set MUJOCO_GL - it auto-detects the correct renderer
-            
+            configure_mujoco_gl()
             try:
                 env = make_walking_curriculum_env(render_mode=None, config=cfg)
                 # Wrap with Monitor to track episode statistics
@@ -108,10 +106,8 @@ def make_env_fns(n_envs: int, seed: int, cfg: dict, use_subproc: bool = True):
         return _init
 
     if n_envs > 1 and use_subproc:
-        print(f"Creating {n_envs} parallel environments with SubprocVecEnv...")
-        # Platform-specific start method: Windows requires 'spawn'
-        import platform
-        start_method = 'spawn' if platform.system() == 'Windows' else 'forkserver'
+        start_method = get_subprocess_start_method()
+        print(f"Creating {n_envs} parallel environments with SubprocVecEnv (start_method={start_method})...")
         return SubprocVecEnv([make(i) for i in range(n_envs)], start_method=start_method)
     else:
         print(f"Creating {n_envs} environments with DummyVecEnv (sequential)...")
@@ -321,6 +317,12 @@ class SaveWithModelManagerCallback(BaseCallback):
 
 
 def main():
+    import platform
+    import stable_baselines3
+    print(f"Python {sys.version} on {platform.system()}")
+    print(f"torch={torch.__version__} sb3={stable_baselines3.__version__} "
+          f"cuda={torch.cuda.is_available()}")
+
     parser = argparse.ArgumentParser(description="Train humanoid walking controller")
     parser.add_argument('--model', type=str, default=None, 
                         help='Path to load model from (for resuming or transfer from standing)')
