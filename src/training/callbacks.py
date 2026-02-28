@@ -10,7 +10,7 @@ Provides comprehensive logging of:
 """
 
 import numpy as np
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 from collections import deque
 
 try:

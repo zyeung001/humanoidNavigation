@@ -14,7 +14,6 @@ import sys
 import argparse
 import numpy as np
 import torch
-from pathlib import Path
 
 # Setup paths
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
@@ -55,7 +54,7 @@ def diagnose_observation_spaces():
     standing_obs, _ = standing_env.reset()
     walking_obs, _ = walking_env.reset()
     
-    print(f"\nSample observation shapes:")
+    print("\nSample observation shapes:")
     print(f"  Standing: {standing_obs.shape}")
     print(f"  Walking: {walking_obs.shape}")
     
@@ -63,19 +62,19 @@ def diagnose_observation_spaces():
     per_frame_standing = 371  # 365 + 6
     per_frame_walking = 374   # 365 + 6 + 3
     
-    print(f"\nPer-frame breakdown:")
+    print("\nPer-frame breakdown:")
     print(f"  Standing: {per_frame_standing} (base=365, COM=6)")
     print(f"  Walking: {per_frame_walking} (base=365, COM=6, cmd=3)")
     print(f"  × 4 frames = {per_frame_standing * 4} vs {per_frame_walking * 4}")
     
     # Show command feature values in walking observation
-    print(f"\nCommand features in walking observation (first frame):")
+    print("\nCommand features in walking observation (first frame):")
     cmd_start = 371  # After base + COM
     cmd_end = 374
     print(f"  Indices {cmd_start}:{cmd_end}: {walking_obs[cmd_start:cmd_end]}")
     
     # Show what those values represent
-    print(f"\nExpected command values:")
+    print("\nExpected command values:")
     print(f"  commanded_vx: {walking_env.commanded_vx_world:.3f}")
     print(f"  commanded_vy: {walking_env.commanded_vy_world:.3f}")
     print(f"  commanded_yaw: {walking_env.commanded_yaw_rate:.3f}")
@@ -100,13 +99,13 @@ def diagnose_policy_weights(
         return
     
     standing_model = PPO.load(standing_model_path, device='cpu')
-    print(f"\n✓ Loaded standing model")
+    print("\n✓ Loaded standing model")
     
     if walking_model_path and os.path.exists(walking_model_path):
         walking_model = PPO.load(walking_model_path, device='cpu')
-        print(f"✓ Loaded walking model")
+        print("✓ Loaded walking model")
     else:
-        print(f"⚠ Walking model not provided - creating fresh for comparison")
+        print("⚠ Walking model not provided - creating fresh for comparison")
         # Create fresh walking model for comparison
         config = {
             'obs_history': 4,
@@ -122,7 +121,7 @@ def diagnose_policy_weights(
     standing_state = standing_model.policy.state_dict()
     walking_state = walking_model.policy.state_dict()
     
-    print(f"\nLayer comparison:")
+    print("\nLayer comparison:")
     print("-" * 80)
     
     for key in walking_state.keys():
@@ -255,7 +254,7 @@ def diagnose_vecnormalize(
         standing_var = standing_data['obs_rms']['var']
         standing_count = standing_data['obs_rms']['count']
         
-        print(f"\nStanding VecNormalize:")
+        print("\nStanding VecNormalize:")
         print(f"  Dimension: {len(standing_mean)}")
         print(f"  Sample count: {standing_count:,.0f}")
         print(f"  Mean range: [{standing_mean.min():.3f}, {standing_mean.max():.3f}]")
@@ -275,7 +274,7 @@ def diagnose_vecnormalize(
         walking_var = walking_data['obs_rms']['var']
         walking_count = walking_data['obs_rms']['count']
         
-        print(f"\nWalking VecNormalize:")
+        print("\nWalking VecNormalize:")
         print(f"  Dimension: {len(walking_mean)}")
         print(f"  Sample count: {walking_count:,.0f}")
         print(f"  Mean range: [{walking_mean.min():.3f}, {walking_mean.max():.3f}]")
@@ -402,7 +401,7 @@ def run_inference_comparison(
             print(f"  Episode terminated at step {step}")
             break
     
-    print(f"\nSummary:")
+    print("\nSummary:")
     print(f"  Mean reward: {np.mean(rewards):.2f}")
     print(f"  Mean velocity: {np.mean(velocities):.3f} m/s")
     print(f"  Mean height: {np.mean(heights):.3f} m")

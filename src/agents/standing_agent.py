@@ -413,7 +413,6 @@ class StandingCallback(BaseCallback):
         
         # Calculate metrics
         mean_rew = np.mean(rewards)
-        std_rew = np.std(rewards)
 
         if mean_rew > self.best_mean_reward:
             self.best_mean_reward = mean_rew
@@ -744,7 +743,7 @@ class StandingAgent:
             wandb.save(str(model_path) + ".zip")
             wandb.log({"train/completed": 1})
 
-        print(f"Training completed!")
+        print("Training completed!")
         return self.model
 
     def load_model(self, model_path):
@@ -842,7 +841,7 @@ class StandingAgent:
                 "target_height": float(self.target_height),
             })
 
-        print(f"\nStanding Evaluation Results:")
+        print("\nStanding Evaluation Results:")
         print(f"   Mean Reward: {mean_reward:.2f} ± {std_reward:.2f}")
         print(f"   Mean Length: {mean_length:.2f} ± {std_length:.2f}")
         
@@ -857,7 +856,7 @@ class StandingAgent:
             success_stability = height_stability < self.config.get('height_stability_threshold', 0.2)
             overall_success = success_reward and success_height and success_stability
             
-            print(f"\nStanding Assessment:")
+            print("\nStanding Assessment:")
             print(f"   Reward Success: {'✓' if success_reward else '✗'} "
                   f"({mean_reward:.2f} > {self.success_threshold})")
             print(f"   Height Success: {'✓' if success_height else '✗'} "
@@ -958,7 +957,7 @@ class StandingAgent:
                 "early_termination_rate": len([ep for ep in all_data if ep['terminated_early']]) / n_episodes,
             }
             
-            print(f"\nOverall Standing Analysis:")
+            print("\nOverall Standing Analysis:")
             print(f"   Mean Height: {analysis['mean_height']:.3f} ± {analysis['height_stability']:.3f}")
             print(f"   Height Error: {analysis['height_error']:.3f}")
             print(f"   Mean Reward: {analysis['mean_reward']:.3f}")

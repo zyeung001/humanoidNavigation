@@ -1,0 +1,9 @@
+target-version = "py310"
+line-length = 120
+
+[lint]
+select = ["E", "F"]
+ignore = [
+    "E402",  # sys.path manipulation before imports is intentional
+    "E501",  # line length — research code has long print/log statements
+]

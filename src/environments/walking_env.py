@@ -10,11 +10,11 @@ Integrates VelocityCommandGenerator for proper command sampling
 
 import gymnasium as gym
 import numpy as np
-from typing import Dict, Any, Tuple, Optional
+from typing import Optional
 from gymnasium.spaces import Box
 
 # Import modular reward calculator
-from src.core.rewards import RewardCalculator, RewardWeights, RewardMetrics
+from src.core.rewards import RewardCalculator, RewardWeights
 # Import velocity command generator 
 from src.core.command_generator import VelocityCommandGenerator
 
@@ -208,7 +208,7 @@ class WalkingEnv(gym.Wrapper):
             dtype=np.float32
         )
 
-        print(f"Walking environment observation space configuration (NEW):")
+        print("Walking environment observation space configuration (NEW):")
         print(f"  Base from env.observation_space: {base_obs_from_space}")
         print(f"  + Position inclusion adjustment: +15 → {base_obs_dim}")
         print(f"  + COM features: {extra_dim}")
@@ -1040,5 +1040,5 @@ if __name__ == "__main__":
             break
     
     env.close()
-    print(f"\n Test completed!")
+    print("\n Test completed!")
 

@@ -12,7 +12,7 @@ Implements the refined reward function with:
 
 import numpy as np
 from typing import Dict, Tuple, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -352,7 +352,7 @@ if __name__ == "__main__":
         action=np.zeros(17),
         prev_action=np.zeros(17)
     )
-    print(f"\nPerfect tracking:")
+    print("\nPerfect tracking:")
     print(f"  Total reward: {metrics.total:.2f}")
     print(f"  Velocity error: {metrics.velocity_error:.4f}")
     
@@ -365,7 +365,7 @@ if __name__ == "__main__":
         action=np.ones(17) * 0.5,
         prev_action=np.zeros(17)
     )
-    print(f"\nPoor tracking:")
+    print("\nPoor tracking:")
     print(f"  Total reward: {metrics.total:.2f}")
     print(f"  Velocity error: {metrics.velocity_error:.4f}")
     print(f"  Direction error: {np.degrees(metrics.direction_error):.1f}°")

@@ -9,7 +9,7 @@ for velocity tracking training.
 
 import gymnasium as gym
 import numpy as np
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Tuple, Optional
 from gymnasium.spaces import Box
 
 # Import the velocity command generator from core
@@ -108,7 +108,7 @@ class HumanoidVelocityEnv(gym.Wrapper):
             'effort': []
         }
         
-        print(f"HumanoidVelocityEnv initialized:")
+        print("HumanoidVelocityEnv initialized:")
         print(f"  Observation dim: {total_obs_dim}")
         print(f"  Beta (tracking strictness): {self.beta}")
         print(f"  Upright reward: {self.upright_reward_value}")
@@ -415,7 +415,7 @@ def example_step_function():
     
     # Command generator statistics
     gen_stats = env.command_generator.get_statistics()
-    print(f"\nCommand Generator Stats:")
+    print("\nCommand Generator Stats:")
     print(f"  Total commands: {gen_stats['total_commands']}")
     print(f"  Stop commands: {gen_stats['stop_commands']} ({gen_stats['stop_ratio']:.1%})")
     

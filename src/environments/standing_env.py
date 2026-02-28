@@ -3,7 +3,7 @@
 
 import gymnasium as gym
 import numpy as np
-from typing import Dict, Any, Tuple, Optional
+from typing import Optional
 from gymnasium.spaces import Box
 
 
@@ -92,7 +92,7 @@ class StandingEnv(gym.Wrapper):
             dtype=np.float32
         )
         
-        print(f"Observation space configuration:")
+        print("Observation space configuration:")
         print(f"  Base from env.observation_space: {base_obs_from_space}")
         print(f"  + Position inclusion adjustment: +15 → {base_obs_dim}")
         print(f"  + COM features: {extra_dim} → {feature_dim}")
@@ -122,14 +122,12 @@ class StandingEnv(gym.Wrapper):
         
         if self.domain_rand:
             # Randomize body masses
-            original_masses = self.env.unwrapped.model.body_mass.copy()
             self.env.unwrapped.model.body_mass *= np.random.uniform(
                 self.rand_mass_range[0], self.rand_mass_range[1],
                 size=self.env.unwrapped.model.body_mass.shape
             )
-            
+
             # Randomize geom friction
-            original_friction = self.env.unwrapped.model.geom_friction.copy()
             self.env.unwrapped.model.geom_friction[:, 0] *= np.random.uniform(
                 self.rand_friction_range[0], self.rand_friction_range[1],
                 size=self.env.unwrapped.model.geom_friction.shape[0]
@@ -494,5 +492,5 @@ if __name__ == "__main__":
             break
     
     env.close()
-    print(f"\n Test completed!")
+    print("\n Test completed!")
 

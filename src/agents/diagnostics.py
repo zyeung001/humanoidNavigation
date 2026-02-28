@@ -7,7 +7,7 @@ tracks height distribution bins, action magnitudes, and velocity tracking for wa
 
 from __future__ import annotations
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, List
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 
