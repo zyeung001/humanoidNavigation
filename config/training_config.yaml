@@ -245,7 +245,7 @@ walking:
   # ========== PPO HYPERPARAMETERS ==========
 
   # Training schedule
-  total_timesteps: 10_000_000
+  total_timesteps: 30_000_000
   learning_rate: 0.00005         # FIX: Reduced from 0.0002 - smaller steps for stability
   final_learning_rate: 0.00002
 
@@ -260,12 +260,12 @@ walking:
 
   # Policy optimization
   clip_range: 0.2
-  final_clip_range: 0.1
+  final_clip_range: 0.15             # Don't go below 0.15 - was causing 47% clip fraction
 
   # Entropy regularization - MUST be high for exploration
   # Without exploration, agent stays stuck at standing-still local optimum
   # Action explosion was caused by VecNormalize/reward issues, NOT entropy
-  ent_coef: 0.05                 # REQUIRED: High entropy for walking discovery
+  ent_coef: 0.03                 # Reset: allow re-exploration after getting stuck
   final_ent_coef: 0.015          # REQUIRED: Minimum for continued exploration
   
   # Value function
@@ -337,7 +337,7 @@ walking:
   # Penalties (keep small)
   reward_action_penalty: 0.0003   # FIX: Reduced from 0.003 (10x)
   reward_jerk_penalty: 0.0008     # FIX: Reduced from 0.008 (10x)
-  reward_arm_posture_weight: 8.0  # Must dominate: zeroes out all reward (~7.5/step) if arms raised
+  reward_arm_posture_weight: 1.5  # Continuous penalty (no deadzone) - always pushes arms to neutral
 
   # Consistency reward
   reward_consistency_weight: 0.8  # FIX: Reduced from 8.0 (10x)

@@ -502,14 +502,13 @@ class WalkingEnv(gym.Wrapper):
         control_cost = -0.0003 * np.sum(np.square(action))  # FIX: was -0.003
 
         # ========== ARM POSTURE PENALTY (keep arms at sides for sim-to-real) ==========
-        # Tight dead zone (0.1 rad ≈ 6°) — agent must learn to balance with legs only
+        # No deadzone: continuous gradient always pushes arms toward neutral
+        # Prevents "parking" at deadzone boundary (arms stuck at 15° forward)
         arm_posture_penalty = 0.0
         if self.arm_posture_weight > 0:
             arm_qpos = self.env.unwrapped.data.qpos[self.arm_joint_indices]
             arm_deviations = np.abs(arm_qpos - self.arm_ref_angles)
-            # Tiny dead zone: only allows ~6° of natural sway
-            extreme_deviations = np.maximum(arm_deviations - 0.1, 0.0)
-            arm_posture_penalty = -self.arm_posture_weight * np.sum(extreme_deviations**2)
+            arm_posture_penalty = -self.arm_posture_weight * np.sum(arm_deviations**2)
 
         # ========== HEIGHT MAINTENANCE ==========
         height_velocity = height - self.prev_height if hasattr(self, 'prev_height') else 0.0
