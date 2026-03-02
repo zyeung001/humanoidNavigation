@@ -14,6 +14,8 @@ from .maze_generator import (
 )
 from .maze_mjcf import MazeMJCFGenerator
 from .maze_renderer import MazeRenderer
+from .solver import solve as solve_maze
+from .navigation_controller import NavigationController
 from .maze_maps import (
     CORRIDOR,
     L_MAZE,
@@ -34,4 +36,6 @@ __all__ = [
     "U_MAZE",
     "OPEN",
     "MEDIUM_MAZE",
+    "solve_maze",
+    "NavigationController",
 ]
