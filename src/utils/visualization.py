@@ -4,16 +4,15 @@ Visualization utilities for humanoid training
 import os
 import numpy as np
 
+from src.utils import configure_mujoco_gl
+
+
 def setup_display():
-    """Setup headless display for Colab/server environments"""
-    try:
-        os.environ.setdefault("MUJOCO_GL", "egl")
-        print(f"[visualization] MUJOCO_GL={os.environ['MUJOCO_GL']}")
-        return True
-    except Exception as e:
-        print(f"EGL failed: {e}. Falling back to osmesa.")
-        os.environ["MUJOCO_GL"] = "osmesa"
-        return True
+    """Setup display for Colab/server/local environments (platform-aware)."""
+    configure_mujoco_gl()
+    gl = os.environ.get("MUJOCO_GL", "(unset — using default)")
+    print(f"[visualization] MUJOCO_GL={gl}")
+    return True
 
 def test_environment(env) -> bool:
     """Test if environment can render properly"""
