@@ -73,7 +73,7 @@ class WalkingEnv(gym.Wrapper):
         self.arm_joint_indices = slice(18, 24)  # qpos indices for 6 arm joints
         # FIX: np.zeros was WRONG — at qpos=0 arms point forward (0.18m ahead of shoulder)
         # These angles place arms hanging straight down at sides (verified via FK)
-        self.arm_ref_angles = np.array([0.608, -0.518, 0.0, -0.608, 0.518, 0.0], dtype=np.float32)
+        self.arm_ref_angles = np.array([0.81, -0.97, -0.85, -0.81, 0.97, -0.85], dtype=np.float32)
 
         # FIX 5: Consistency reward for reducing velocity error variance
         self.recent_vel_errors = []
