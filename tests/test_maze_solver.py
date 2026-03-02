@@ -1,8 +1,6 @@
 # test_maze_solver.py
 """Tests for A* solver and navigation controller."""
 
-import math
-
 import numpy as np
 
 from src.maze.solver import solve, _astar, _rdp_simplify
