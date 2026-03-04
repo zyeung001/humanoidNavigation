@@ -606,20 +606,18 @@ def main():
         try:
             print(f"Loading walking model from: {args.model}")
 
-            # Build fresh schedule functions for the REMAINING steps.
-            # We use reset_num_timesteps=True so SB3's progress_remaining
-            # goes 1→0 over exactly learn_timesteps, giving correct LR/clip decay.
-            # Pass fresh functions via custom_objects to avoid segfault from
+            # Load model first to read num_timesteps, then build schedules.
+            # Pass dummy schedule via custom_objects to avoid segfault from
             # cloudpickle-deserialized np.clip (numpy version mismatch).
-            remaining_lr_fn = lr_schedule(initial_lr, final_lr, total_timesteps)
-            remaining_clip_fn = clip_schedule(initial_clip, final_clip, total_timesteps)
+            dummy_lr_fn = lr_schedule(initial_lr, final_lr, total_timesteps)
+            dummy_clip_fn = clip_schedule(initial_clip, final_clip, total_timesteps)
 
             model = PPO.load(
                 args.model, env=env, device=device,
                 custom_objects={
-                    'learning_rate': remaining_lr_fn,
-                    'lr_schedule': remaining_lr_fn,
-                    'clip_range': remaining_clip_fn,
+                    'learning_rate': dummy_lr_fn,
+                    'lr_schedule': dummy_lr_fn,
+                    'clip_range': dummy_clip_fn,
                 },
             )
 
@@ -631,16 +629,28 @@ def main():
                 print(f"  Use --timesteps {loaded_timesteps + 5_000_000} to train more")
                 return
 
+            # Compute where LR/clip SHOULD be at this point in the global schedule,
+            # then decay from there to final over the remaining steps.
+            progress_done = loaded_timesteps / total_timesteps
+            resume_lr = initial_lr * (1.0 - progress_done) + final_lr * progress_done
+            resume_clip = initial_clip * (1.0 - progress_done) + final_clip * progress_done
+
+            # Build schedules from resume point → final over remaining steps.
+            # reset_num_timesteps=True so SB3's progress_remaining goes 1→0
+            # over exactly learn_timesteps.
+            remaining_lr_fn = lr_schedule(resume_lr, final_lr, remaining_timesteps)
+            remaining_clip_fn = clip_schedule(resume_clip, final_clip, remaining_timesteps)
+            model.learning_rate = remaining_lr_fn
+            model.lr_schedule = remaining_lr_fn
+            model.clip_range = remaining_clip_fn
+
             learn_timesteps = remaining_timesteps
-            # CRITICAL: reset_num_timesteps=True so schedule progress goes 1→0
-            # over exactly learn_timesteps. With False, SB3 adds loaded num_timesteps
-            # to the denominator, causing the schedule to think training is almost done.
             reset_num_timesteps = True
 
             print(f"✓ Loaded model at {loaded_timesteps:,} timesteps")
             print(f"  Training {remaining_timesteps:,} more steps (target: {total_timesteps:,})")
-            print(f"  LR schedule: {initial_lr} → {final_lr} over remaining steps")
-            print(f"  Clip schedule: {initial_clip} → {final_clip} over remaining steps")
+            print(f"  LR schedule: {resume_lr:.6f} → {final_lr} over remaining steps")
+            print(f"  Clip schedule: {resume_clip:.4f} → {final_clip} over remaining steps")
 
         except Exception as e:
             print(f"✗ Failed to load model: {e}")
