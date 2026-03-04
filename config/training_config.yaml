@@ -246,8 +246,8 @@ walking:
 
   # Training schedule
   total_timesteps: 30_000_000
-  learning_rate: 0.00005         # FIX: Reduced from 0.0002 - smaller steps for stability
-  final_learning_rate: 0.00002
+  learning_rate: 0.0002          # Restored: agent is stable post-transfer, needs LR to learn walking
+  final_learning_rate: 0.00005
 
   # PPO algorithm parameters
   n_steps: 2048

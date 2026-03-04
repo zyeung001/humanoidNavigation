@@ -56,19 +56,17 @@ def load_yaml(path: str):
         return yaml.safe_load(f)
 
 
-def lr_schedule(initial_lr: float, final_lr: float, total_steps: int):
+def lr_schedule(initial_lr: float, final_lr: float, total_steps: int = 0):
+    """Linear decay from initial_lr to final_lr. Uses SB3's progress_remaining (1→0)."""
     def schedule(progress_remaining: float):
-        step = (1.0 - progress_remaining) * total_steps
-        ratio = float(np.clip(step / max(total_steps, 1), 0.0, 1.0))
-        return initial_lr * (1.0 - ratio) + final_lr * ratio
+        return initial_lr * progress_remaining + final_lr * (1.0 - progress_remaining)
     return schedule
 
 
-def clip_schedule(initial: float, final: float, total_steps: int):
+def clip_schedule(initial: float, final: float, total_steps: int = 0):
+    """Linear decay from initial to final. Uses SB3's progress_remaining (1→0)."""
     def schedule(progress_remaining: float):
-        step = (1.0 - progress_remaining) * total_steps
-        ratio = float(np.clip(step / max(total_steps, 1), 0.0, 1.0))
-        return initial * (1.0 - ratio) + final * ratio
+        return initial * progress_remaining + final * (1.0 - progress_remaining)
     return schedule
 
 
@@ -607,24 +605,45 @@ def main():
         # Resume from walking model
         try:
             print(f"Loading walking model from: {args.model}")
-            model = PPO.load(args.model, env=env, device=device)
-            
-            model.learning_rate = lr_fn
-            model.clip_range = clip_fn
-            
-            current_timesteps = model.num_timesteps
-            remaining_timesteps = total_timesteps - current_timesteps
-            
+
+            current_timesteps = args.timesteps_completed if hasattr(args, 'timesteps_completed') else None
+
+            # Build fresh schedule functions for the REMAINING steps.
+            # We use reset_num_timesteps=True so SB3's progress_remaining
+            # goes 1→0 over exactly learn_timesteps, giving correct LR/clip decay.
+            # Pass fresh functions via custom_objects to avoid segfault from
+            # cloudpickle-deserialized np.clip (numpy version mismatch).
+            remaining_lr_fn = lr_schedule(initial_lr, final_lr, total_timesteps)
+            remaining_clip_fn = clip_schedule(initial_clip, final_clip, total_timesteps)
+
+            model = PPO.load(
+                args.model, env=env, device=device,
+                custom_objects={
+                    'learning_rate': remaining_lr_fn,
+                    'lr_schedule': remaining_lr_fn,
+                    'clip_range': remaining_clip_fn,
+                },
+            )
+
+            loaded_timesteps = model.num_timesteps
+            remaining_timesteps = total_timesteps - loaded_timesteps
+
             if remaining_timesteps <= 0:
-                print(f"✗ Model already trained for {current_timesteps:,} steps")
+                print(f"Model already trained for {loaded_timesteps:,} steps (target: {total_timesteps:,})")
+                print(f"  Use --timesteps {loaded_timesteps + 5_000_000} to train more")
                 return
-            
+
             learn_timesteps = remaining_timesteps
-            reset_num_timesteps = False
-            
-            print(f"✓ Resuming from {current_timesteps:,} timesteps")
-            print(f"  Training {remaining_timesteps:,} more steps")
-            
+            # CRITICAL: reset_num_timesteps=True so schedule progress goes 1→0
+            # over exactly learn_timesteps. With False, SB3 adds loaded num_timesteps
+            # to the denominator, causing the schedule to think training is almost done.
+            reset_num_timesteps = True
+
+            print(f"✓ Loaded model at {loaded_timesteps:,} timesteps")
+            print(f"  Training {remaining_timesteps:,} more steps (target: {total_timesteps:,})")
+            print(f"  LR schedule: {initial_lr} → {final_lr} over remaining steps")
+            print(f"  Clip schedule: {initial_clip} → {final_clip} over remaining steps")
+
         except Exception as e:
             print(f"✗ Failed to load model: {e}")
             print("  Starting fresh training instead...")
