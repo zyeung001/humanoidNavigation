@@ -606,8 +606,6 @@ def main():
         try:
             print(f"Loading walking model from: {args.model}")
 
-            current_timesteps = args.timesteps_completed if hasattr(args, 'timesteps_completed') else None
-
             # Build fresh schedule functions for the REMAINING steps.
             # We use reset_num_timesteps=True so SB3's progress_remaining
             # goes 1→0 over exactly learn_timesteps, giving correct LR/clip decay.
