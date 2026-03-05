@@ -463,7 +463,7 @@ class WalkingEnv(gym.Wrapper):
             base_height_reward = 1.0  # FIX: was 10.0
         else:
             base_height_reward = 0.8 - 0.5 * np.clip((height - 1.5) / 0.2, 0.0, 1.0)  # FIX: was 8/-5
-        
+
         # Height reward is ALWAYS fully applied (not conditioned on velocity tracking)
         # Conditioning on tracking quality during early training (when tracking is poor)
         # scaled height reward to 30%, telling the robot "don't bother standing either",

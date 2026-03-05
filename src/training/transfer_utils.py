@@ -349,12 +349,13 @@ class PolicyTransfer:
                 old_log_std = self.walking_model.policy.log_std.mean().item()
                 old_std = np.exp(old_log_std)
 
-                # Reset to -0.5 (std = 0.6) - reasonable for exploration
-                target_log_std = -0.5
-                self.walking_model.policy.log_std.fill_(target_log_std)
+                # Clamp to [-1.0, 0.5] range instead of hard reset
+                # Preserves standing model's learned std if it's reasonable
+                target_log_std = float(np.clip(old_log_std, -1.0, 0.5))
+                self.walking_model.policy.log_std.clamp_(-1.0, 0.5)
 
                 new_std = np.exp(target_log_std)
-                print(f"  log_std RESET: {old_log_std:.3f} (std={old_std:.1f}) → {target_log_std:.3f} (std={new_std:.2f})")
+                print(f"  log_std CLAMP: {old_log_std:.3f} (std={old_std:.2f}) → {target_log_std:.3f} (std={new_std:.2f})")
 
                 if old_log_std > 2.0:
                     print(f"  WARNING: Standing model had corrupted log_std={old_log_std:.1f}!")
