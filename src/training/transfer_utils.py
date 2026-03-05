@@ -349,10 +349,10 @@ class PolicyTransfer:
                 old_log_std = self.walking_model.policy.log_std.mean().item()
                 old_std = np.exp(old_log_std)
 
-                # Clamp to [-1.0, 0.5] range instead of hard reset
-                # Preserves standing model's learned std if it's reasonable
-                target_log_std = float(np.clip(old_log_std, -1.0, 0.5))
-                self.walking_model.policy.log_std.clamp_(-1.0, 0.5)
+                # Clamp to [-1.0, 0.0] range — std=1.0 max
+                # 0.5 (std=1.65) causes KL explosion with 17 action dims
+                target_log_std = float(np.clip(old_log_std, -1.0, 0.0))
+                self.walking_model.policy.log_std.clamp_(-1.0, 0.0)
 
                 new_std = np.exp(target_log_std)
                 print(f"  log_std CLAMP: {old_log_std:.3f} (std={old_std:.2f}) → {target_log_std:.3f} (std={new_std:.2f})")

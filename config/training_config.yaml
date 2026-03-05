@@ -263,8 +263,8 @@ walking:
   final_clip_range: 0.15             # Don't go below 0.15 - was causing 47% clip fraction
 
   # Entropy regularization
-  ent_coef: 0.01                 # Lower: 0.03 was pushing log_std up too aggressively post-transfer
-  final_ent_coef: 0.005          # Standard final entropy
+  ent_coef: 0.005                # Low: let policy converge before encouraging exploration
+  final_ent_coef: 0.003          # Minimal final entropy
   
   # Value function
   vf_coef: 0.5
