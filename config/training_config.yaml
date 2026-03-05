@@ -246,8 +246,8 @@ walking:
 
   # Training schedule
   total_timesteps: 30_000_000
-  learning_rate: 0.0001          # Halved: freshly transferred policy needs conservative updates
-  final_learning_rate: 0.00005
+  learning_rate: 0.00005         # Very conservative: value fn is re-initialized, needs slow ramp
+  final_learning_rate: 0.00003
 
   # PPO algorithm parameters
   n_steps: 2048
