@@ -114,38 +114,76 @@ def make_env_fns(n_envs: int, seed: int, cfg: dict, use_subproc: bool = True):
 
 class ValueFunctionWarmupCallback(BaseCallback):
     """
-    Freeze policy network for the first N steps after transfer from standing.
+    Two-phase warmup for standing -> walking transfer.
 
-    The re-initialized value function produces garbage advantage estimates,
-    causing KL divergence explosion (KL > 100) on every PPO update. Fix: freeze
-    policy weights so only the value function trains. Once it has learned
-    reasonable predictions, unfreeze and train normally.
+    Phase 1 (0 to warmup_steps): Policy frozen (requires_grad=False).
+        Only value function trains. KL=0 since policy doesn't change.
+
+    Phase 2 (warmup_steps to warmup_steps + rampup_steps): Gradual unfreeze.
+        Policy params are unfrozen but updates are scaled by a factor that
+        ramps from 0 to 1. After each train() call, applied update is:
+            theta = theta_old + scale * (theta_optimizer - theta_old)
+        This effectively gives the policy a separate, ramping learning rate
+        while the value function continues training at full speed.
+
+    log_std is excluded from interpolation (managed by LogStdClampCallback).
     """
-    def __init__(self, warmup_steps: int = 250_000, verbose: int = 0):
+    def __init__(self, warmup_steps: int = 250_000, rampup_steps: int = 500_000,
+                 verbose: int = 0):
         super().__init__(verbose)
         self.warmup_steps = warmup_steps
-        self._frozen = False
-        self._policy_param_names = []
+        self.rampup_steps = rampup_steps
+        self._phase = 'init'  # init -> frozen -> ramping -> done
+        self._policy_param_names = set()
+        self._saved_state = None
 
     def _on_training_start(self) -> None:
         for name, param in self.model.policy.named_parameters():
             is_value = 'vf' in name or 'value' in name
             if not is_value:
-                self._policy_param_names.append(name)
+                self._policy_param_names.add(name)
                 param.requires_grad = False
-        self._frozen = True
+        self._phase = 'frozen'
         n_total = sum(1 for _ in self.model.policy.parameters())
         print(f"  [VFWarmup] Frozen {len(self._policy_param_names)}/{n_total} params (policy network)")
-        print(f"  [VFWarmup] Value function training alone for {self.warmup_steps:,} steps")
+        print(f"  [VFWarmup] Phase 1: Value-only training for {self.warmup_steps:,} steps")
+        print(f"  [VFWarmup] Phase 2: Policy ramp-up over {self.rampup_steps:,} steps")
+
+    def _on_rollout_start(self) -> None:
+        # Called AFTER train() of previous cycle — scale back policy updates
+        if self._phase != 'ramping' or self._saved_state is None:
+            return
+
+        elapsed = self.num_timesteps - self.warmup_steps
+        scale = min(elapsed / max(self.rampup_steps, 1), 1.0)
+
+        if scale >= 1.0:
+            self._phase = 'done'
+            self._saved_state = None
+            print(f"\n  [VFWarmup] Phase 2 complete — policy fully ramped up at step {self.num_timesteps:,}")
+            return
+
+        with torch.no_grad():
+            for name, param in self.model.policy.named_parameters():
+                if name in self._saved_state:
+                    old = self._saved_state[name]
+                    param.data.copy_(old + scale * (param.data - old))
+                    self._saved_state[name] = param.data.clone()
+
+        if self.verbose and elapsed % 100_000 < 25_000:
+            print(f"  [VFWarmup] Policy scale: {scale:.3f} at step {self.num_timesteps:,}")
 
     def _on_step(self) -> bool:
-        if self._frozen and self.num_timesteps >= self.warmup_steps:
+        if self._phase == 'frozen' and self.num_timesteps >= self.warmup_steps:
+            # Transition: frozen -> ramping
+            self._saved_state = {}
             for name, param in self.model.policy.named_parameters():
                 if name in self._policy_param_names:
                     param.requires_grad = True
-            self._frozen = False
-            self._policy_param_names = []
-            print(f"\n  [VFWarmup] UNFREEZING policy at step {self.num_timesteps:,}")
+                    if 'log_std' not in name:
+                        self._saved_state[name] = param.data.clone()
+            self._phase = 'ramping'
+            print(f"\n  [VFWarmup] Phase 2: Starting policy ramp-up at step {self.num_timesteps:,}")
         return True
 
 
@@ -735,11 +773,12 @@ def main():
     ]
 
     # Value function warmup: freeze policy during transfer so the re-initialized
-    # value function can learn before policy updates begin
+    # value function can learn before policy updates begin, then gradually ramp up
     if args.from_standing and args.model:
         warmup_steps = int(walking.get('vf_warmup_steps', 250_000))
+        rampup_steps = int(walking.get('vf_rampup_steps', 500_000))
         callback_list.insert(0, ValueFunctionWarmupCallback(
-            warmup_steps=warmup_steps, verbose=1
+            warmup_steps=warmup_steps, rampup_steps=rampup_steps, verbose=1
         ))
     
     
