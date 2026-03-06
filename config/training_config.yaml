@@ -253,7 +253,9 @@ walking:
   n_steps: 2048
   batch_size: 2048               # Larger: fewer gradient steps per epoch = less KL accumulation
   n_epochs: 3                    # Low: limit total gradient steps while value fn is unstable
-  target_kl: 0.03                # Safety net: stops epoch if KL exceeds 1.5x this value
+  # target_kl not used: VFWarmup callback provides stability during transfer.
+  # target_kl=0.03 was too restrictive — even 1 gradient step produces KL>1
+  # during transfer, limiting policy to 12 updates per 25k steps of data.
 
   gamma: 0.995
   gae_lambda: 0.95
