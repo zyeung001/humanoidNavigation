@@ -253,7 +253,7 @@ walking:
   n_steps: 2048
   batch_size: 2048               # Larger: fewer gradient steps per epoch = less KL accumulation
   n_epochs: 3                    # Low: limit total gradient steps while value fn is unstable
-  # target_kl removed: was deadlocking training (stops value fn from learning → KL stays high)
+  target_kl: 0.03                # Safety net: stops epoch if KL exceeds 1.5x this value
 
   gamma: 0.995
   gae_lambda: 0.95
