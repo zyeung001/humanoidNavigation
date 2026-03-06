@@ -112,6 +112,43 @@ def make_env_fns(n_envs: int, seed: int, cfg: dict, use_subproc: bool = True):
         return DummyVecEnv([make(i) for i in range(n_envs)])
 
 
+class ValueFunctionWarmupCallback(BaseCallback):
+    """
+    Freeze policy network for the first N steps after transfer from standing.
+
+    The re-initialized value function produces garbage advantage estimates,
+    causing KL divergence explosion (KL > 100) on every PPO update. Fix: freeze
+    policy weights so only the value function trains. Once it has learned
+    reasonable predictions, unfreeze and train normally.
+    """
+    def __init__(self, warmup_steps: int = 250_000, verbose: int = 0):
+        super().__init__(verbose)
+        self.warmup_steps = warmup_steps
+        self._frozen = False
+        self._policy_param_names = []
+
+    def _on_training_start(self) -> None:
+        for name, param in self.model.policy.named_parameters():
+            is_value = 'vf' in name or 'value' in name
+            if not is_value:
+                self._policy_param_names.append(name)
+                param.requires_grad = False
+        self._frozen = True
+        n_total = sum(1 for _ in self.model.policy.parameters())
+        print(f"  [VFWarmup] Frozen {len(self._policy_param_names)}/{n_total} params (policy network)")
+        print(f"  [VFWarmup] Value function training alone for {self.warmup_steps:,} steps")
+
+    def _on_step(self) -> bool:
+        if self._frozen and self.num_timesteps >= self.warmup_steps:
+            for name, param in self.model.policy.named_parameters():
+                if name in self._policy_param_names:
+                    param.requires_grad = True
+            self._frozen = False
+            self._policy_param_names = []
+            print(f"\n  [VFWarmup] UNFREEZING policy at step {self.num_timesteps:,}")
+        return True
+
+
 class CommandStatsProtectorCallback(BaseCallback):
     """
     Periodically re-pin VecNormalize stats for command dims to identity.
@@ -696,6 +733,14 @@ def main():
             freq=int(walking.get('save_freq', 250_000))
         )
     ]
+
+    # Value function warmup: freeze policy during transfer so the re-initialized
+    # value function can learn before policy updates begin
+    if args.from_standing and args.model:
+        warmup_steps = int(walking.get('vf_warmup_steps', 250_000))
+        callback_list.insert(0, ValueFunctionWarmupCallback(
+            warmup_steps=warmup_steps, verbose=1
+        ))
     
     
     # Add WandB callbacks if enabled
