@@ -246,14 +246,14 @@ walking:
 
   # Training schedule
   total_timesteps: 30_000_000
-  learning_rate: 0.00005         # Very conservative: value fn is re-initialized, needs slow ramp
-  final_learning_rate: 0.00003
+  learning_rate: 0.00003         # Very conservative: value fn is re-initialized, needs slow ramp
+  final_learning_rate: 0.00002
 
   # PPO algorithm parameters
   n_steps: 2048
-  batch_size: 512                # REQUIRED: Small batches for exploration (2048 kills it)
-  n_epochs: 5                    # Halved from 10: prevents compounding updates on unstable value fn
-  target_kl: 0.05                # CRITICAL: early-stop epochs when KL gets too high
+  batch_size: 2048               # Larger: fewer gradient steps per epoch = less KL accumulation
+  n_epochs: 3                    # Low: limit total gradient steps while value fn is unstable
+  # target_kl removed: was deadlocking training (stops value fn from learning → KL stays high)
 
   gamma: 0.995
   gae_lambda: 0.95
