@@ -252,10 +252,9 @@ walking:
   # PPO algorithm parameters
   n_steps: 2048
   batch_size: 2048               # Larger: fewer gradient steps per epoch = less KL accumulation
-  n_epochs: 3                    # Low: limit total gradient steps while value fn is unstable
+  n_epochs: 2                    # FIX: 3 epochs × 12 minibatches = 36 gradient steps caused KL=32k. 2 epochs = 24 steps.
   # target_kl not used: VFWarmup callback provides stability during transfer.
-  # target_kl=0.03 was too restrictive — even 1 gradient step produces KL>1
-  # during transfer, limiting policy to 12 updates per 25k steps of data.
+  # target_kl stops ALL learning (policy AND value) — VFWarmup is the real mechanism.
 
   gamma: 0.995
   gae_lambda: 0.95
@@ -273,7 +272,11 @@ walking:
   
   # Gradient clipping
   max_grad_norm: 0.5
-  
+
+  # Value function warmup (standing → walking transfer)
+  vf_warmup_steps: 250000        # Phase 1: policy frozen, VF trains
+  vf_rampup_steps: 2000000       # FIX: Extended from 500k. Policy scale ramps 0→1 over 2M steps.
+
   # ========== VECNORMALIZE CONFIGURATION ==========
 
   normalize: true
@@ -324,7 +327,7 @@ walking:
 
   # Velocity tracking (Gaussian kernel)
   reward_tracking_weight: 2.5     # Primary walking signal
-  reward_tracking_bandwidth: 20.0  # Sharp Gaussian so standing loses most reward
+  reward_tracking_bandwidth: 10.0  # FIX: 20.0 created near-binary reward (zero for error>0.15), causing high advantage variance and KL=32k. 10.0 gives smoother gradient.
 
   # Direction/progress bonus
   reward_direction_weight: 0.8    # FIX: Reduced from 8.0 (10x)

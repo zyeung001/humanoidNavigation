@@ -43,6 +43,7 @@ from src.training.callbacks import (
     VelocityTrackingWandBCallback,
     CurriculumWandBCallback,
     RewardBreakdownWandBCallback,
+    PPOMetricsWandBCallback,
     init_wandb_run,
     finish_wandb_run
 )
@@ -785,6 +786,7 @@ def main():
     # Add WandB callbacks if enabled
     if use_wandb:
         callback_list.extend([
+            PPOMetricsWandBCallback(verbose=1),
             VelocityTrackingWandBCallback(
                 log_freq=int(walking.get('wandb_log_freq', 5000)),
                 project_name=walking.get('wandb_project', 'humanoid_walking'),

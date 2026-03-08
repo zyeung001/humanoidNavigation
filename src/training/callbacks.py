@@ -483,6 +483,60 @@ class RewardBreakdownWandBCallback(BaseCallback):
         wandb.log(log_dict)
 
 
+class WandBOutputFormat:
+    """
+    SB3 logger output format that forwards PPO training metrics to WandB.
+
+    Attaches to SB3's Logger.output_formats so that train/ metrics
+    (approx_kl, clip_fraction, explained_variance, std, etc.) are
+    automatically logged to WandB each time SB3 calls logger.dump().
+    """
+
+    def write(self, key_values, key_excluded, step):
+        if not WANDB_AVAILABLE or wandb.run is None:
+            return
+        log_dict = {}
+        for key, value in key_values.items():
+            if key in key_excluded and "wandb" in key_excluded[key]:
+                continue
+            if not isinstance(value, (int, float)):
+                continue
+            if key.startswith("train/"):
+                log_dict[f"ppo/{key[6:]}"] = value
+            elif key.startswith("rollout/"):
+                log_dict[key] = value
+        if log_dict:
+            wandb.log(log_dict)
+
+    def close(self):
+        pass
+
+
+class PPOMetricsWandBCallback(BaseCallback):
+    """
+    Callback that attaches WandBOutputFormat to SB3's logger on training start.
+
+    This ensures PPO internals (approx_kl, clip_fraction, explained_variance,
+    policy_gradient_loss, entropy_loss, std, etc.) are logged to WandB alongside
+    the environment metrics from the other callbacks.
+    """
+
+    def __init__(self, verbose=0):
+        super().__init__(verbose)
+        self._attached = False
+
+    def _on_training_start(self):
+        if not self._attached and WANDB_AVAILABLE and wandb.run is not None:
+            if hasattr(self.model.logger, 'output_formats'):
+                self.model.logger.output_formats.append(WandBOutputFormat())
+                self._attached = True
+                if self.verbose:
+                    print("  [PPOMetrics] Attached WandB logger for PPO training metrics")
+
+    def _on_step(self):
+        return True
+
+
 def init_wandb_run(
     project: str = "humanoid_walking",
     name: Optional[str] = None,
