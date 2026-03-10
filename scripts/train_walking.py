@@ -688,12 +688,22 @@ def main():
             dummy_lr_fn = lr_schedule(initial_lr, final_lr, total_timesteps)
             dummy_clip_fn = clip_schedule(initial_clip, final_clip, total_timesteps)
 
+            # Override ALL PPO hyperparameters from config, not just LR/clip.
+            # PPO.load() restores saved hyperparameters — if resuming from a
+            # checkpoint saved with old values (e.g. batch_size=512, n_epochs=10),
+            # those would silently produce 480 gradient steps instead of 24,
+            # causing KL explosion.
+            config_batch_size = int(walking.get('batch_size', 2048))
+            config_n_epochs = int(walking.get('n_epochs', 2))
+
             model = PPO.load(
                 args.model, env=env, device=device,
                 custom_objects={
                     'learning_rate': dummy_lr_fn,
                     'lr_schedule': dummy_lr_fn,
                     'clip_range': dummy_clip_fn,
+                    'batch_size': config_batch_size,
+                    'n_epochs': config_n_epochs,
                 },
             )
 
@@ -723,10 +733,19 @@ def main():
             learn_timesteps = remaining_timesteps
             reset_num_timesteps = True
 
+            # Verify PPO hyperparameters match config (catch stale saved values)
+            if model.batch_size != config_batch_size:
+                print(f"  FIX: batch_size {model.batch_size} → {config_batch_size} (from config)")
+                model.batch_size = config_batch_size
+            if model.n_epochs != config_n_epochs:
+                print(f"  FIX: n_epochs {model.n_epochs} → {config_n_epochs} (from config)")
+                model.n_epochs = config_n_epochs
+
             print(f"✓ Loaded model at {loaded_timesteps:,} timesteps")
             print(f"  Training {remaining_timesteps:,} more steps (target: {total_timesteps:,})")
             print(f"  LR schedule: {resume_lr:.6f} → {final_lr} over remaining steps")
             print(f"  Clip schedule: {resume_clip:.4f} → {final_clip} over remaining steps")
+            print(f"  batch_size: {model.batch_size}, n_epochs: {model.n_epochs}")
 
         except Exception as e:
             print(f"✗ Failed to load model: {e}")
