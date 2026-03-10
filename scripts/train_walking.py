@@ -428,9 +428,9 @@ def main():
     walking = cfg.get('walking', {}).copy()
 
     # Overrides / defaults
-    n_envs = args.n_envs if args.n_envs is not None else int(walking.get('n_envs', 8))
+    n_envs = args.n_envs if args.n_envs is not None else int(walking.get('n_envs', 12))
     seed = int(walking.get('seed', 42))
-    total_timesteps = int(walking.get('total_timesteps', 15_000_000)) if args.timesteps is None else args.timesteps
+    total_timesteps = int(walking.get('total_timesteps', 30_000_000)) if args.timesteps is None else args.timesteps
     
     learn_timesteps = total_timesteps
     reset_num_timesteps = True
@@ -537,17 +537,17 @@ def main():
         vecnorm_loaded = False
 
     # Schedules
-    initial_lr = float(walking.get('learning_rate', 3e-4))
-    final_lr = float(walking.get('final_learning_rate', 5e-5))
+    initial_lr = float(walking.get('learning_rate', 3e-5))
+    final_lr = float(walking.get('final_learning_rate', 2e-5))
     lr_fn = lr_schedule(initial_lr, final_lr, total_timesteps)
 
     initial_clip = float(walking.get('clip_range', 0.2))
-    final_clip = float(walking.get('final_clip_range', 0.1))
+    final_clip = float(walking.get('final_clip_range', 0.15))
     clip_fn = clip_schedule(initial_clip, final_clip, total_timesteps)
 
     # Entropy coefficient
-    initial_ent = float(walking.get('ent_coef', 0.02))
-    final_ent = float(walking.get('final_ent_coef', 0.005))
+    initial_ent = float(walking.get('ent_coef', 0.005))
+    final_ent = float(walking.get('final_ent_coef', 0.003))
     if final_ent <= 0:
         print(f"  WARNING: final_ent_coef={final_ent} is non-positive, forcing to 0.005")
         final_ent = 0.005
@@ -624,8 +624,8 @@ def main():
                 'policy': 'MlpPolicy',
                 'learning_rate': lr_fn,
                 'n_steps': int(walking.get('n_steps', 2048)),
-                'batch_size': int(walking.get('batch_size', 256)),
-                'n_epochs': int(walking.get('n_epochs', 10)),
+                'batch_size': int(walking.get('batch_size', 2048)),
+                'n_epochs': int(walking.get('n_epochs', 2)),
                 'gamma': float(walking.get('gamma', 0.995)),
                 'gae_lambda': float(walking.get('gae_lambda', 0.95)),
                 'clip_range': clip_fn,
@@ -763,8 +763,8 @@ def main():
             env=env,
             learning_rate=lr_fn,
             n_steps=int(walking.get('n_steps', 2048)),
-            batch_size=int(walking.get('batch_size', 256)),
-            n_epochs=int(walking.get('n_epochs', 10)),
+            batch_size=int(walking.get('batch_size', 2048)),
+            n_epochs=int(walking.get('n_epochs', 2)),
             gamma=float(walking.get('gamma', 0.995)),
             gae_lambda=float(walking.get('gae_lambda', 0.95)),
             clip_range=clip_fn,
@@ -796,7 +796,7 @@ def main():
     # value function can learn before policy updates begin, then gradually ramp up
     if args.from_standing and args.model:
         warmup_steps = int(walking.get('vf_warmup_steps', 250_000))
-        rampup_steps = int(walking.get('vf_rampup_steps', 500_000))
+        rampup_steps = int(walking.get('vf_rampup_steps', 2_000_000))
         callback_list.insert(0, ValueFunctionWarmupCallback(
             warmup_steps=warmup_steps, rampup_steps=rampup_steps, verbose=1
         ))
