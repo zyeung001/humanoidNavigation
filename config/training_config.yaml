@@ -252,7 +252,7 @@ walking:
   # PPO algorithm parameters
   n_steps: 2048
   batch_size: 2048               # Larger: fewer gradient steps per epoch = less KL accumulation
-  n_epochs: 6                    # FIX: With 6× lower LR, more epochs compensate. Each step is small enough to stay in clip range.
+  n_epochs: 3                    # FIX: Fewer gradient steps per cycle (36 instead of 72) reduces internal divergence before scaling
   # target_kl not used: VFWarmup callback provides stability during transfer.
   # target_kl stops ALL learning (policy AND value) — VFWarmup is the real mechanism.
 
@@ -260,8 +260,8 @@ walking:
   gae_lambda: 0.95
 
   # Policy optimization
-  clip_range: 0.2
-  final_clip_range: 0.2              # FIX: No decay. 0.15 caused 95.8% clip fraction. Keep at 0.2 throughout.
+  clip_range: 0.3                    # FIX: 0.2 too tight for 17-dim action space — 98.5% clip fraction. 0.3 lets more gradient through.
+  final_clip_range: 0.3              # No decay.
 
   # Entropy regularization
   ent_coef: 0.005                # Low: let policy converge before encouraging exploration
@@ -275,7 +275,10 @@ walking:
 
   # Value function warmup (standing → walking transfer)
   vf_warmup_steps: 250000        # Phase 1: policy frozen, VF trains
-  vf_rampup_steps: 2000000       # FIX: Extended from 500k. Policy scale ramps 0→1 over 2M steps.
+  vf_rampup_steps: 500000        # Phase 2: policy scale ramps 0→max_scale over 500k steps
+  policy_max_scale: 0.3          # Phase 3: permanent policy scaling. With 17 action dims, full-speed
+                                 # updates overshoot clip boundary at ANY LR. 0.3 = only 30% of each
+                                 # optimizer step is applied. VF always gets full updates.
 
   # ========== VECNORMALIZE CONFIGURATION ==========
 
