@@ -537,12 +537,12 @@ def main():
         vecnorm_loaded = False
 
     # Schedules
-    initial_lr = float(walking.get('learning_rate', 3e-5))
-    final_lr = float(walking.get('final_learning_rate', 2e-5))
+    initial_lr = float(walking.get('learning_rate', 5e-6))
+    final_lr = float(walking.get('final_learning_rate', 3e-6))
     lr_fn = lr_schedule(initial_lr, final_lr, total_timesteps)
 
     initial_clip = float(walking.get('clip_range', 0.2))
-    final_clip = float(walking.get('final_clip_range', 0.15))
+    final_clip = float(walking.get('final_clip_range', 0.2))
     clip_fn = clip_schedule(initial_clip, final_clip, total_timesteps)
 
     # Entropy coefficient
@@ -625,7 +625,7 @@ def main():
                 'learning_rate': lr_fn,
                 'n_steps': int(walking.get('n_steps', 2048)),
                 'batch_size': int(walking.get('batch_size', 2048)),
-                'n_epochs': int(walking.get('n_epochs', 2)),
+                'n_epochs': int(walking.get('n_epochs', 6)),
                 'gamma': float(walking.get('gamma', 0.995)),
                 'gae_lambda': float(walking.get('gae_lambda', 0.95)),
                 'clip_range': clip_fn,
@@ -694,7 +694,7 @@ def main():
             # those would silently produce 480 gradient steps instead of 24,
             # causing KL explosion.
             config_batch_size = int(walking.get('batch_size', 2048))
-            config_n_epochs = int(walking.get('n_epochs', 2))
+            config_n_epochs = int(walking.get('n_epochs', 6))
 
             model = PPO.load(
                 args.model, env=env, device=device,
@@ -764,7 +764,7 @@ def main():
             learning_rate=lr_fn,
             n_steps=int(walking.get('n_steps', 2048)),
             batch_size=int(walking.get('batch_size', 2048)),
-            n_epochs=int(walking.get('n_epochs', 2)),
+            n_epochs=int(walking.get('n_epochs', 6)),
             gamma=float(walking.get('gamma', 0.995)),
             gae_lambda=float(walking.get('gae_lambda', 0.95)),
             clip_range=clip_fn,
