@@ -115,26 +115,32 @@ def make_env_fns(n_envs: int, seed: int, cfg: dict, use_subproc: bool = True):
 
 class ValueFunctionWarmupCallback(BaseCallback):
     """
-    Two-phase warmup for standing -> walking transfer.
+    Three-phase warmup for standing -> walking transfer.
 
     Phase 1 (0 to warmup_steps): Policy frozen (requires_grad=False).
         Only value function trains. KL=0 since policy doesn't change.
 
     Phase 2 (warmup_steps to warmup_steps + rampup_steps): Gradual unfreeze.
         Policy params are unfrozen but updates are scaled by a factor that
-        ramps from 0 to 1. After each train() call, applied update is:
-            theta = theta_old + scale * (theta_optimizer - theta_old)
-        This effectively gives the policy a separate, ramping learning rate
-        while the value function continues training at full speed.
+        ramps from 0 to max_scale.
 
+    Phase 3 (warmup_steps + rampup_steps onward): Permanent scaling.
+        Policy updates are permanently scaled by max_scale. With 17 action
+        dims, full-speed PPO updates overshoot the clip boundary at ANY
+        learning rate (tested 3e-4 to 5e-6, all produce >95% clip fraction).
+        Permanent scaling keeps applied updates conservative while letting
+        Adam compute correct gradients and momentum.
+
+    The value function always trains at full speed (unaffected by scaling).
     log_std is excluded from interpolation (managed by LogStdClampCallback).
     """
     def __init__(self, warmup_steps: int = 250_000, rampup_steps: int = 500_000,
-                 verbose: int = 0):
+                 max_scale: float = 0.3, verbose: int = 0):
         super().__init__(verbose)
         self.warmup_steps = warmup_steps
         self.rampup_steps = rampup_steps
-        self._phase = 'init'  # init -> frozen -> ramping -> done
+        self.max_scale = max_scale
+        self._phase = 'init'  # init -> frozen -> ramping -> steady
         self._policy_param_names = set()
         self._saved_state = None
 
@@ -148,21 +154,31 @@ class ValueFunctionWarmupCallback(BaseCallback):
         n_total = sum(1 for _ in self.model.policy.parameters())
         print(f"  [VFWarmup] Frozen {len(self._policy_param_names)}/{n_total} params (policy network)")
         print(f"  [VFWarmup] Phase 1: Value-only training for {self.warmup_steps:,} steps")
-        print(f"  [VFWarmup] Phase 2: Policy ramp-up over {self.rampup_steps:,} steps")
+        print(f"  [VFWarmup] Phase 2: Policy ramp 0->{self.max_scale:.1f} over {self.rampup_steps:,} steps")
+        print(f"  [VFWarmup] Phase 3: Permanent scaling at {self.max_scale:.1f}")
 
     def _on_rollout_start(self) -> None:
         # Called AFTER train() of previous cycle — scale back policy updates
-        if self._phase != 'ramping' or self._saved_state is None:
+        if self._phase not in ('ramping', 'steady') or self._saved_state is None:
             return
 
-        elapsed = self.num_timesteps - self.warmup_steps
-        scale = min(elapsed / max(self.rampup_steps, 1), 1.0)
+        if self._phase == 'ramping':
+            elapsed = self.num_timesteps - self.warmup_steps
+            progress = min(elapsed / max(self.rampup_steps, 1), 1.0)
+            scale = progress * self.max_scale  # 0 -> max_scale
 
-        if scale >= 1.0:
-            self._phase = 'done'
-            self._saved_state = None
-            print(f"\n  [VFWarmup] Phase 2 complete — policy fully ramped up at step {self.num_timesteps:,}")
-            return
+            if progress >= 1.0:
+                self._phase = 'steady'
+                scale = self.max_scale
+                print(f"\n  [VFWarmup] Phase 3: Steady scale={self.max_scale:.2f} "
+                      f"at step {self.num_timesteps:,}")
+                # Reset Adam state for policy params to clear ramp-era momentum.
+                # During the ramp, Adam built momentum against scaled-back updates.
+                # Without reset, that momentum causes overshoot at steady state.
+                self._reset_policy_optimizer()
+        else:
+            # Phase 'steady' — fixed scale forever
+            scale = self.max_scale
 
         with torch.no_grad():
             for name, param in self.model.policy.named_parameters():
@@ -171,8 +187,18 @@ class ValueFunctionWarmupCallback(BaseCallback):
                     param.data.copy_(old + scale * (param.data - old))
                     self._saved_state[name] = param.data.clone()
 
-        if self.verbose and elapsed % 100_000 < 25_000:
-            print(f"  [VFWarmup] Policy scale: {scale:.3f} at step {self.num_timesteps:,}")
+        if self.verbose and self.num_timesteps % 100_000 < 25_000:
+            print(f"  [VFWarmup] scale={scale:.3f} step={self.num_timesteps:,} ({self._phase})")
+
+    def _reset_policy_optimizer(self):
+        """Reset Adam state for policy params to prevent momentum artifacts from ramp."""
+        optimizer = self.model.policy.optimizer
+        reset_count = 0
+        for name, param in self.model.policy.named_parameters():
+            if name in self._saved_state and param in optimizer.state:
+                del optimizer.state[param]
+                reset_count += 1
+        print(f"  [VFWarmup] Reset optimizer state for {reset_count} policy params")
 
     def _on_step(self) -> bool:
         if self._phase == 'frozen' and self.num_timesteps >= self.warmup_steps:
@@ -184,8 +210,45 @@ class ValueFunctionWarmupCallback(BaseCallback):
                     if 'log_std' not in name:
                         self._saved_state[name] = param.data.clone()
             self._phase = 'ramping'
-            print(f"\n  [VFWarmup] Phase 2: Starting policy ramp-up at step {self.num_timesteps:,}")
+            print(f"\n  [VFWarmup] Phase 2: Ramp starting at step {self.num_timesteps:,}")
         return True
+
+
+class PermanentPolicyScalingCallback(BaseCallback):
+    """
+    Permanently scales policy updates by max_scale after each optimizer step.
+
+    Use when RESUMING a walking training run (not from-standing transfer).
+    This is the Phase 3 behavior of VFWarmup, extracted as a standalone callback
+    so it can be applied during resume without re-running VF warmup/ramp.
+
+    The value function always gets full updates. log_std is excluded.
+    """
+    def __init__(self, max_scale: float = 0.3, verbose: int = 0):
+        super().__init__(verbose)
+        self.max_scale = max_scale
+        self._policy_param_names = set()
+        self._saved_state = None
+
+    def _on_training_start(self) -> None:
+        self._saved_state = {}
+        for name, param in self.model.policy.named_parameters():
+            is_value = 'vf' in name or 'value' in name
+            if not is_value and 'log_std' not in name:
+                self._policy_param_names.add(name)
+                self._saved_state[name] = param.data.clone()
+        print(f"  [PolicyScaling] Tracking {len(self._saved_state)} policy params, "
+              f"scale={self.max_scale:.2f}")
+
+    def _on_rollout_start(self) -> None:
+        if self._saved_state is None:
+            return
+        with torch.no_grad():
+            for name, param in self.model.policy.named_parameters():
+                if name in self._saved_state:
+                    old = self._saved_state[name]
+                    param.data.copy_(old + self.max_scale * (param.data - old))
+                    self._saved_state[name] = param.data.clone()
 
 
 class CommandStatsProtectorCallback(BaseCallback):
@@ -792,13 +855,23 @@ def main():
         )
     ]
 
-    # Value function warmup: freeze policy during transfer so the re-initialized
-    # value function can learn before policy updates begin, then gradually ramp up
+    # Policy scaling: with 17 action dims, full-speed PPO updates overshoot the
+    # clip boundary at ANY learning rate. Permanent scaling keeps applied updates
+    # conservative while letting Adam compute correct gradients.
+    max_scale = float(walking.get('policy_max_scale', 1.0))
+
     if args.from_standing and args.model:
+        # Transfer from standing: VF warmup + ramp + permanent scaling
         warmup_steps = int(walking.get('vf_warmup_steps', 250_000))
-        rampup_steps = int(walking.get('vf_rampup_steps', 2_000_000))
+        rampup_steps = int(walking.get('vf_rampup_steps', 500_000))
         callback_list.insert(0, ValueFunctionWarmupCallback(
-            warmup_steps=warmup_steps, rampup_steps=rampup_steps, verbose=1
+            warmup_steps=warmup_steps, rampup_steps=rampup_steps,
+            max_scale=max_scale, verbose=1
+        ))
+    elif resume and max_scale < 1.0:
+        # Resume: standalone permanent scaling (no warmup/ramp needed)
+        callback_list.insert(0, PermanentPolicyScalingCallback(
+            max_scale=max_scale, verbose=1
         ))
     
     
