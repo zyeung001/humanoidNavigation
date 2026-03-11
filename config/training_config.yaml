@@ -246,13 +246,13 @@ walking:
 
   # Training schedule
   total_timesteps: 30_000_000
-  learning_rate: 0.00003         # Very conservative: value fn is re-initialized, needs slow ramp
-  final_learning_rate: 0.00002
+  learning_rate: 0.000005        # FIX: 3e-5 caused 95.8% clip fraction for 5M steps. 5e-6 keeps steps within clip boundary.
+  final_learning_rate: 0.000003
 
   # PPO algorithm parameters
   n_steps: 2048
   batch_size: 2048               # Larger: fewer gradient steps per epoch = less KL accumulation
-  n_epochs: 2                    # FIX: 3 epochs × 12 minibatches = 36 gradient steps caused KL=32k. 2 epochs = 24 steps.
+  n_epochs: 6                    # FIX: With 6× lower LR, more epochs compensate. Each step is small enough to stay in clip range.
   # target_kl not used: VFWarmup callback provides stability during transfer.
   # target_kl stops ALL learning (policy AND value) — VFWarmup is the real mechanism.
 
@@ -261,7 +261,7 @@ walking:
 
   # Policy optimization
   clip_range: 0.2
-  final_clip_range: 0.15             # Don't go below 0.15 - was causing 47% clip fraction
+  final_clip_range: 0.2              # FIX: No decay. 0.15 caused 95.8% clip fraction. Keep at 0.2 throughout.
 
   # Entropy regularization
   ent_coef: 0.005                # Low: let policy converge before encouraging exploration
