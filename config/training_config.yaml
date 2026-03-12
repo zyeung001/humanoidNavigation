@@ -282,6 +282,12 @@ walking:
                                  # updates overshoot clip boundary at ANY LR. 0.5 = 50% of each
                                  # optimizer step is applied. VF always gets full updates.
                                  # 0.3 was too conservative with full-batch — optimizer gets real signal now.
+  extra_vf_epochs: 7             # Extra VF-only gradient steps after each PPO train() call.
+                                 # Full-batch (batch_size=24576) gives only 3 gradient steps per cycle.
+                                 # Clipping only affects policy loss — VF loss is plain MSE. But with
+                                 # only 3 steps, the VF can't keep up (EV declined 0.50 → 0.36 over 2M
+                                 # steps). 7 extra epochs → 10 total VF steps per cycle. Previous
+                                 # successful run had 36 VF steps (batch_size=2048, 12 minibatches × 3).
 
   # ========== VECNORMALIZE CONFIGURATION ==========
 

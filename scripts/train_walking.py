@@ -32,6 +32,7 @@ configure_mujoco_gl()
 import yaml
 import numpy as np
 import torch
+import torch.nn.functional as F
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 from stable_baselines3.common.callbacks import CallbackList, BaseCallback
@@ -115,7 +116,7 @@ def make_env_fns(n_envs: int, seed: int, cfg: dict, use_subproc: bool = True):
 
 class ValueFunctionWarmupCallback(BaseCallback):
     """
-    Three-phase warmup for standing -> walking transfer.
+    Three-phase warmup for standing -> walking transfer, with extra VF training.
 
     Phase 1 (0 to warmup_steps): Policy frozen (requires_grad=False).
         Only value function trains. KL=0 since policy doesn't change.
@@ -131,15 +132,25 @@ class ValueFunctionWarmupCallback(BaseCallback):
         Permanent scaling keeps applied updates conservative while letting
         Adam compute correct gradients and momentum.
 
+    Extra VF Training (all phases):
+        Full-batch PPO (batch_size=24576) gives clean policy gradients but
+        only 3 gradient steps per cycle. Clipping only affects policy loss,
+        NOT value loss (VF uses plain MSE). But with only 3 steps, the VF
+        can't keep up with the changing policy — explained_variance declines.
+        After each model.train(), we run extra_vf_epochs additional VF-only
+        gradient steps using the same rollout buffer. This gives the VF
+        3 + extra_vf_epochs steps per cycle while the policy stays at 3.
+
     The value function always trains at full speed (unaffected by scaling).
     log_std is excluded from interpolation (managed by LogStdClampCallback).
     """
     def __init__(self, warmup_steps: int = 250_000, rampup_steps: int = 500_000,
-                 max_scale: float = 0.3, verbose: int = 0):
+                 max_scale: float = 0.3, extra_vf_epochs: int = 7, verbose: int = 0):
         super().__init__(verbose)
         self.warmup_steps = warmup_steps
         self.rampup_steps = rampup_steps
         self.max_scale = max_scale
+        self.extra_vf_epochs = extra_vf_epochs
         self._phase = 'init'  # init -> frozen -> ramping -> steady
         self._policy_param_names = set()
         self._saved_state = None
@@ -156,6 +167,76 @@ class ValueFunctionWarmupCallback(BaseCallback):
         print(f"  [VFWarmup] Phase 1: Value-only training for {self.warmup_steps:,} steps")
         print(f"  [VFWarmup] Phase 2: Policy ramp 0->{self.max_scale:.1f} over {self.rampup_steps:,} steps")
         print(f"  [VFWarmup] Phase 3: Permanent scaling at {self.max_scale:.1f}")
+
+        # Monkey-patch model.train() to add extra VF training after each PPO update.
+        # After model.train() returns, the rollout buffer is still full (buffer.reset()
+        # only happens at the START of the next collect_rollouts()). So we can call
+        # buffer.get() again for additional VF-only gradient steps.
+        if self.extra_vf_epochs > 0:
+            _original_train = self.model.train
+            _callback = self
+            def _train_with_extra_vf():
+                _original_train()
+                _callback._extra_vf_training()
+            self.model.train = _train_with_extra_vf
+            print(f"  [VFWarmup] Extra VF training: {self.extra_vf_epochs} epochs after each train()")
+
+    def _extra_vf_training(self):
+        """Run additional VF-only gradient steps using the current rollout buffer.
+
+        Called after model.train() via monkey-patch. At this point:
+        - The rollout buffer is still full (reset() hasn't been called yet)
+        - PPO's train() has already done n_epochs gradient steps on both
+          policy and VF
+        - We do extra_vf_epochs more steps for the VF only, compensating
+          for the reduced gradient steps from full-batch training
+
+        SB3's PPO clipping only affects policy loss, not VF loss. So the VF
+        would benefit from more gradient steps even when clip_fraction is high.
+        But full-batch (batch_size=24576) limits both to 3 steps. This method
+        gives the VF the extra updates it needs.
+        """
+        model = self.model
+        buffer = model.rollout_buffer
+
+        if not buffer.full:
+            return
+
+        # Save requires_grad state for all params, then freeze non-VF params.
+        # This is safe across all phases:
+        #   Phase 1: policy already frozen — we restore the frozen state after
+        #   Phase 2/3: policy unfrozen — we freeze temporarily, then restore
+        grad_state = {}
+        for name, param in model.policy.named_parameters():
+            grad_state[name] = param.requires_grad
+            is_value = 'vf' in name or 'value' in name
+            param.requires_grad = is_value
+
+        model.policy.set_training_mode(True)
+
+        total_loss = 0.0
+        for _epoch in range(self.extra_vf_epochs):
+            for data in buffer.get(batch_size=None):
+                values = model.policy.predict_values(data.observations)
+                vf_loss = F.mse_loss(data.returns, values.flatten())
+
+                model.policy.optimizer.zero_grad()
+                (model.vf_coef * vf_loss).backward()
+                torch.nn.utils.clip_grad_norm_(model.policy.parameters(), model.max_grad_norm)
+                model.policy.optimizer.step()
+
+                total_loss += vf_loss.item()
+
+        # Restore original requires_grad state
+        for name, param in model.policy.named_parameters():
+            param.requires_grad = grad_state[name]
+
+        model.policy.set_training_mode(False)
+
+        avg_loss = total_loss / max(self.extra_vf_epochs, 1)
+        if self.verbose and self.num_timesteps % 100_000 < 25_000:
+            print(f"  [VFWarmup] Extra VF: {self.extra_vf_epochs} epochs, "
+                  f"avg_loss={avg_loss:.6f}")
 
     def _on_rollout_start(self) -> None:
         # Called AFTER train() of previous cycle — scale back policy updates
@@ -222,11 +303,15 @@ class PermanentPolicyScalingCallback(BaseCallback):
     This is the Phase 3 behavior of VFWarmup, extracted as a standalone callback
     so it can be applied during resume without re-running VF warmup/ramp.
 
+    Includes extra VF training (same as VFWarmup) to compensate for reduced
+    gradient steps from full-batch training.
+
     The value function always gets full updates. log_std is excluded.
     """
-    def __init__(self, max_scale: float = 0.3, verbose: int = 0):
+    def __init__(self, max_scale: float = 0.3, extra_vf_epochs: int = 7, verbose: int = 0):
         super().__init__(verbose)
         self.max_scale = max_scale
+        self.extra_vf_epochs = extra_vf_epochs
         self._policy_param_names = set()
         self._saved_state = None
 
@@ -239,6 +324,50 @@ class PermanentPolicyScalingCallback(BaseCallback):
                 self._saved_state[name] = param.data.clone()
         print(f"  [PolicyScaling] Tracking {len(self._saved_state)} policy params, "
               f"scale={self.max_scale:.2f}")
+
+        # Monkey-patch model.train() for extra VF training (same as VFWarmup)
+        if self.extra_vf_epochs > 0:
+            _original_train = self.model.train
+            _callback = self
+            def _train_with_extra_vf():
+                _original_train()
+                _callback._extra_vf_training()
+            self.model.train = _train_with_extra_vf
+            print(f"  [PolicyScaling] Extra VF training: {self.extra_vf_epochs} epochs after each train()")
+
+    def _extra_vf_training(self):
+        """Run additional VF-only gradient steps. See VFWarmupCallback for details."""
+        model = self.model
+        buffer = model.rollout_buffer
+
+        if not buffer.full:
+            return
+
+        grad_state = {}
+        for name, param in model.policy.named_parameters():
+            grad_state[name] = param.requires_grad
+            is_value = 'vf' in name or 'value' in name
+            param.requires_grad = is_value
+
+        model.policy.set_training_mode(True)
+
+        total_loss = 0.0
+        for _epoch in range(self.extra_vf_epochs):
+            for data in buffer.get(batch_size=None):
+                values = model.policy.predict_values(data.observations)
+                vf_loss = F.mse_loss(data.returns, values.flatten())
+
+                model.policy.optimizer.zero_grad()
+                (model.vf_coef * vf_loss).backward()
+                torch.nn.utils.clip_grad_norm_(model.policy.parameters(), model.max_grad_norm)
+                model.policy.optimizer.step()
+
+                total_loss += vf_loss.item()
+
+        for name, param in model.policy.named_parameters():
+            param.requires_grad = grad_state[name]
+
+        model.policy.set_training_mode(False)
 
     def _on_rollout_start(self) -> None:
         if self._saved_state is None:
@@ -859,6 +988,7 @@ def main():
     # clip boundary at ANY learning rate. Permanent scaling keeps applied updates
     # conservative while letting Adam compute correct gradients.
     max_scale = float(walking.get('policy_max_scale', 1.0))
+    extra_vf_epochs = int(walking.get('extra_vf_epochs', 7))
 
     if args.from_standing and args.model:
         # Transfer from standing: VF warmup + ramp + permanent scaling
@@ -866,12 +996,12 @@ def main():
         rampup_steps = int(walking.get('vf_rampup_steps', 500_000))
         callback_list.insert(0, ValueFunctionWarmupCallback(
             warmup_steps=warmup_steps, rampup_steps=rampup_steps,
-            max_scale=max_scale, verbose=1
+            max_scale=max_scale, extra_vf_epochs=extra_vf_epochs, verbose=1
         ))
     elif resume and max_scale < 1.0:
         # Resume: standalone permanent scaling (no warmup/ramp needed)
         callback_list.insert(0, PermanentPolicyScalingCallback(
-            max_scale=max_scale, verbose=1
+            max_scale=max_scale, extra_vf_epochs=extra_vf_epochs, verbose=1
         ))
     
     
