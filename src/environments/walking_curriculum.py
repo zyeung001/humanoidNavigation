@@ -44,24 +44,39 @@ class WalkingCurriculumEnv(WalkingEnv):
         self.velocity_tolerances = [0.15, 0.20, 0.30, 0.40]
         self.min_episode_lengths = [200, 300, 400, 500]
         self.height_tolerances = [0.45, 0.40, 0.35, 0.30]
-        
+
         # Direction diversity - DISABLED by default for Stage 0
         # Stage 0 should be boring: forward only, fixed speed
         self.direction_diversity = cfg.get('direction_diversity', False)
-        
+
         # Episode velocity error tracking
         self.episode_velocity_errors = []
         self.stabilization_steps = 50  # Skip first N steps when computing average
-        
+
         # Warmup tracking
         self.total_episodes = 0
         self.warmup_episodes = int(cfg.get('warmup_episodes', 50))
-        
+
         # Fall tracking for alternative advancement
         self.fall_buffer = []  # Track terminated episodes (falls)
-        
+
+        # ========== CURRICULUM-GATED ARM PENALTY ==========
+        # Stage 0: no arm penalty (learn to walk freely, chicken wings OK)
+        # Later stages: gradually introduce arm posture penalty
+        self._arm_penalty_stage_weights = cfg.get('arm_penalty_stage_weights', [0.0, 0.4, 0.6, 0.8])
+        self._arm_penalty_ramp_rate = float(cfg.get('arm_penalty_ramp_rate', 0.000003))
+        self._arm_penalty_current = 0.0
+        self._arm_penalty_target = self._arm_penalty_stage_weights[min(self.stage, len(self._arm_penalty_stage_weights) - 1)]
+        # Force arm weight to 0.0 BEFORE super().__init__() so WalkingEnv reads 0.0
+        cfg['reward_arm_posture_weight'] = 0.0
+
         self._apply_stage_settings(cfg, self.stage)
         super().__init__(render_mode=render_mode, config=cfg)
+
+        # Set initial arm penalty target (after super().__init__ so self.arm_posture_weight exists)
+        self._arm_penalty_current = 0.0
+        self.arm_posture_weight = 0.0
+        print(f"  Arm penalty: current={self._arm_penalty_current:.3f}, target={self._arm_penalty_target:.3f}, ramp_rate={self._arm_penalty_ramp_rate}")
         
         # Override max_commanded_speed from curriculum
         self.max_commanded_speed = self.speed_stages[self.stage]
@@ -233,6 +248,20 @@ class WalkingCurriculumEnv(WalkingEnv):
         return obs, info
 
     def step(self, action):
+        # Ramp arm penalty toward target BEFORE super().step() so reward uses updated weight
+        if self._arm_penalty_current < self._arm_penalty_target:
+            self._arm_penalty_current = min(
+                self._arm_penalty_current + self._arm_penalty_ramp_rate,
+                self._arm_penalty_target
+            )
+        elif self._arm_penalty_current > self._arm_penalty_target:
+            # Allow downward ramp too (e.g., if resuming at wrong stage)
+            self._arm_penalty_current = max(
+                self._arm_penalty_current - self._arm_penalty_ramp_rate,
+                self._arm_penalty_target
+            )
+        self.arm_posture_weight = self._arm_penalty_current
+
         obs, reward, terminated, truncated, info = super().step(action)
         
         # Track velocity error every step for episode average
@@ -395,11 +424,16 @@ class WalkingCurriculumEnv(WalkingEnv):
                     self.push_interval = cfg.get('push_interval', self.push_interval)
                     self.cfg = cfg
                     
+                    # Update arm penalty target for new stage
+                    self._arm_penalty_target = self._arm_penalty_stage_weights[
+                        min(self.stage, len(self._arm_penalty_stage_weights) - 1)
+                    ]
+
                     # Reset success buffers for new stage
                     self.success_buffer = []
                     self.velocity_error_buffer = []
                     self.fall_buffer = []
-                    
+
                     # Identify which path led to advancement
                     advancement_path = []
                     if standard_advance:
@@ -417,6 +451,7 @@ class WalkingCurriculumEnv(WalkingEnv):
                     print(f"  New max speed: {self.max_commanded_speed:.2f} m/s")
                     print(f"  Push enabled: {self.push_enabled}")
                     print(f"  Velocity tolerance: ±{self.velocity_tolerances[self.stage]:.2f} m/s")
+                    print(f"  Arm penalty target: {self._arm_penalty_target:.2f} (current: {self._arm_penalty_current:.3f})")
                     print(f"  Success rate was: {success_rate:.1%}")
                     print(f"  Avg velocity error was: {avg_recent_vel_error:.3f} m/s")
                     print(f"  Fall rate was: {fall_rate:.1%}")
@@ -439,6 +474,8 @@ class WalkingCurriculumEnv(WalkingEnv):
             info['curriculum_episode_success'] = success
             info['curriculum_fall_rate'] = float(np.mean(self.fall_buffer)) if self.fall_buffer else 0.0
             info['curriculum_avg_ep_length'] = float(np.mean(self.episode_length_buffer[-self.advance_after:])) if self.episode_length_buffer else 0.0
+            info['arm_penalty_current'] = self._arm_penalty_current
+            info['arm_penalty_target'] = self._arm_penalty_target
 
         return obs, reward, terminated, truncated, info
     
@@ -538,6 +575,8 @@ class WalkingCurriculumEnv(WalkingEnv):
             'fall_rate': np.mean(self.fall_buffer) if self.fall_buffer else 0.0,
             'total_episodes': self.total_episodes,
             'push_enabled': self.push_enabled,
+            'arm_penalty_current': self._arm_penalty_current,
+            'arm_penalty_target': self._arm_penalty_target,
         }
 
 
