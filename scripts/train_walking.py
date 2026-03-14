@@ -1003,8 +1003,10 @@ def main():
         ))
     elif resume and max_scale < 1.0:
         # Resume: standalone permanent scaling (no warmup/ramp needed)
+        # Use separate resume_policy_scale if available (walking models need less damping)
+        resume_scale = float(walking.get('resume_policy_scale', max_scale))
         callback_list.insert(0, PermanentPolicyScalingCallback(
-            max_scale=max_scale, extra_vf_epochs=extra_vf_epochs, verbose=1
+            max_scale=resume_scale, extra_vf_epochs=extra_vf_epochs, verbose=1
         ))
     
     
