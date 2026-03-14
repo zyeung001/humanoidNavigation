@@ -369,6 +369,9 @@ class PermanentPolicyScalingCallback(BaseCallback):
 
         model.policy.set_training_mode(False)
 
+    def _on_step(self) -> bool:
+        return True
+
     def _on_rollout_start(self) -> None:
         if self._saved_state is None:
             return
