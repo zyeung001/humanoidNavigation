@@ -179,11 +179,11 @@ walking:
 
   # Speed curriculum stages (m/s) - sized for ~2ft (0.6m) humanoid sim-to-real
   # Froude scaling: sim 1.5 m/s ≈ real 1.0 m/s for 0.6m robot
-  curriculum_max_speed_stages: [0.15, 0.3, 0.6, 1.0]
+  curriculum_max_speed_stages: [0.15, 0.3, 0.45, 0.6]
 
   # Arm penalty gating: weight per curriculum stage (ramps smoothly between stages)
-  arm_penalty_stage_weights: [0.0, 0.4, 0.6, 0.8]
-  arm_penalty_ramp_rate: 0.000003  # Per-step ramp toward stage target
+  arm_penalty_stage_weights: [0.0, 0.15, 0.3, 0.5]
+  arm_penalty_ramp_rate: 0.000002  # Per-step ramp toward stage target (slower)
   
   # ========== VELOCITY COMMAND GENERATOR  ==========
   use_command_generator: true        # Use VelocityCommandGenerator
@@ -198,9 +198,9 @@ walking:
   # ========== CURRICULUM LEARNING ==========
   curriculum_start_stage: 0
   curriculum_max_stage: 3
-  curriculum_advance_after: 15    # Episodes before considering advancement
+  curriculum_advance_after: 30    # Episodes before considering advancement
   warmup_episodes: 0              # NO warmup leniency - enforce strict criteria
-  curriculum_success_rate: 0.35   # Success rate needed to advance
+  curriculum_success_rate: 0.50   # Success rate needed to advance
 
   # Direction diversity - DISABLED for Stage 0 (forward only)
   direction_diversity: false
@@ -282,10 +282,13 @@ walking:
   # Value function warmup (standing → walking transfer)
   vf_warmup_steps: 250000        # Phase 1: policy frozen, VF trains
   vf_rampup_steps: 500000        # Phase 2: policy scale ramps 0→max_scale over 500k steps
-  policy_max_scale: 0.5          # Phase 3: permanent policy scaling. With 17 action dims, full-speed
+  policy_max_scale: 0.5          # For --from-standing transfer. With 17 action dims, full-speed
                                  # updates overshoot clip boundary at ANY LR. 0.5 = 50% of each
                                  # optimizer step is applied. VF always gets full updates.
                                  # 0.3 was too conservative with full-batch — optimizer gets real signal now.
+  resume_policy_scale: 0.8       # For resuming from a walking model (not standing transfer).
+                                 # Walking model already has correct policy — needs less damping.
+                                 # 0.5 was too conservative (clip_fraction=0, policy frozen).
   extra_vf_epochs: 7             # Extra VF-only gradient steps after each PPO train() call.
                                  # Full-batch (batch_size=24576) gives only 3 gradient steps per cycle.
                                  # Clipping only affects policy loss — VF loss is plain MSE. But with
@@ -356,7 +359,7 @@ walking:
   # Penalties (keep small)
   reward_action_penalty: 0.0003   # FIX: Reduced from 0.003 (10x)
   reward_jerk_penalty: 0.0        # Zeroed: penalizes gait changes, conflicts with walking
-  reward_arm_posture_weight: 0.8  # Reduced from 1.5 — new FK-optimized ref angles have larger deviations from zero-pose
+  reward_arm_posture_weight: 0.5  # Reduced from 0.8 — arm penalty was -2.0/step at full weight, competing with tracking (3-5/step)
 
   # Consistency reward
   reward_consistency_weight: 0.0  # Zeroed: noisy, creates conflicting advantages
