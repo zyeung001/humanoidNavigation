@@ -22,87 +22,78 @@ import numpy as np
 import cv2
 
 
-def render_minimap(grid, cell_size, agent_xy, goal_xy, waypoints, map_size=300):
-    """Render a top-down minimap with agent position, goal, and path.
+def render_topdown_map(mj_model, mj_data, grid, cell_size, goal_xy, waypoints, size=480):
+    """Render a MuJoCo top-down camera view with overlaid path and goal markers.
 
-    Args:
-        grid: 2D numpy array (1=wall, 0=open).
-        cell_size: World-space cell size.
-        agent_xy: (x, y) world position of agent.
-        goal_xy: (x, y) world position of goal.
-        waypoints: List of (x, y) world-coordinate waypoints.
-        map_size: Pixel size of the square minimap.
+    Uses the maze_topdown camera for a true physics-engine render, then overlays
+    the planned path, goal marker, and agent marker using OpenCV.
 
     Returns:
-        RGB numpy array of shape (map_size, map_size, 3).
+        RGB numpy array of shape (size, size, 3).
     """
+    import mujoco
+
+    renderer = mujoco.Renderer(mj_model, height=size, width=size)
+    renderer.update_scene(mj_data, camera="maze_topdown")
+    img = renderer.render().copy()
+    renderer.close()
+
+    # Compute world-to-pixel mapping for the top-down camera
     rows, cols = grid.shape
-    # Pixel size per cell
-    px_per_cell = map_size / max(rows, cols)
-
-    # Draw walls
-    img = np.ones((map_size, map_size, 3), dtype=np.uint8) * 240  # light gray bg
-    for r in range(rows):
-        for c in range(cols):
-            if grid[r, c] == 1:
-                y1 = int(r * px_per_cell)
-                y2 = int((r + 1) * px_per_cell)
-                x1 = int(c * px_per_cell)
-                x2 = int((c + 1) * px_per_cell)
-                cv2.rectangle(img, (x1, y1), (x2, y2), (60, 60, 60), -1)
-
-    # Helper: world coords to pixel coords on minimap
-    offset_x = -(cols * cell_size) / 2.0
-    offset_y = -(rows * cell_size) / 2.0
+    world_w = cols * cell_size
+    world_h = rows * cell_size
+    offset_x = -world_w / 2.0
+    offset_y = -world_h / 2.0
 
     def world_to_px(wx, wy):
-        gc = (wx - offset_x) / cell_size
-        gr = rows - 1 - (wy - offset_y) / cell_size
-        px = int(gc * px_per_cell)
-        py = int(gr * px_per_cell)
-        return px, py
+        # Top-down camera is centered at origin, looking down
+        # x maps to pixel x, y maps to pixel y (inverted)
+        u = (wx - offset_x) / world_w * size
+        v = (1.0 - (wy - offset_y) / world_h) * size
+        return int(np.clip(u, 0, size - 1)), int(np.clip(v, 0, size - 1))
 
     # Draw path
     if waypoints and len(waypoints) >= 2:
         for i in range(len(waypoints) - 1):
             p1 = world_to_px(waypoints[i][0], waypoints[i][1])
             p2 = world_to_px(waypoints[i + 1][0], waypoints[i + 1][1])
-            cv2.line(img, p1, p2, (200, 150, 50), 2)
+            cv2.line(img, p1, p2, (50, 200, 255), 2, cv2.LINE_AA)
 
     # Draw goal
     gx, gy = world_to_px(goal_xy[0], goal_xy[1])
-    cv2.circle(img, (gx, gy), 8, (0, 0, 255), -1)
-    cv2.putText(img, "G", (gx - 5, gy + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+    cv2.circle(img, (gx, gy), 10, (0, 0, 255), -1, cv2.LINE_AA)
+    cv2.circle(img, (gx, gy), 10, (255, 255, 255), 2, cv2.LINE_AA)
 
-    # Draw agent
-    ax, ay = world_to_px(agent_xy[0], agent_xy[1])
-    cv2.circle(img, (ax, ay), 6, (0, 200, 0), -1)
+    # Draw agent position
+    agent_x = float(mj_data.qpos[0])
+    agent_y = float(mj_data.qpos[1])
+    ax, ay = world_to_px(agent_x, agent_y)
+    cv2.circle(img, (ax, ay), 8, (0, 255, 0), -1, cv2.LINE_AA)
+    cv2.circle(img, (ax, ay), 8, (255, 255, 255), 2, cv2.LINE_AA)
 
-    # Border
-    cv2.rectangle(img, (0, 0), (map_size - 1, map_size - 1), (100, 100, 100), 2)
-
-    # Label
-    cv2.putText(img, "MAP", (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (80, 80, 80), 2)
+    # Labels
+    cv2.putText(img, "TOP-DOWN", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
 
     return img
 
 
-def composite_frame(mujoco_frame, minimap):
-    """Place minimap on the right side of the MuJoCo frame.
+def render_third_person(mj_model, mj_data, width=640, height=480):
+    """Render the third-person tracking camera view."""
+    import mujoco
 
-    Returns:
-        Composite RGB numpy array.
-    """
-    h, w = mujoco_frame.shape[:2]
-    map_h = minimap.shape[0]
+    renderer = mujoco.Renderer(mj_model, height=height, width=width)
+    renderer.update_scene(mj_data, camera="track")
+    img = renderer.render().copy()
+    renderer.close()
+    return img
 
-    # Resize minimap to match mujoco frame height
-    scale = h / map_h
-    new_map_w = int(minimap.shape[1] * scale)
-    minimap_resized = cv2.resize(minimap, (new_map_w, h), interpolation=cv2.INTER_NEAREST)
 
-    # Concatenate side by side
-    return np.concatenate([mujoco_frame, minimap_resized], axis=1)
+def composite_frame(third_person, topdown_map):
+    """Place third-person view on left, top-down map on right."""
+    h = third_person.shape[0]
+    # Resize map to match height
+    map_resized = cv2.resize(topdown_map, (h, h), interpolation=cv2.INTER_LINEAR)
+    return np.concatenate([third_person, map_resized], axis=1)
 
 
 def get_maze_grid(maze_type, seed=42):
@@ -201,7 +192,8 @@ def main():
     print(f"  Start world: ({start_x:.2f}, {start_y:.2f})")
     print(f"  Goal world:  ({goal_x:.2f}, {goal_y:.2f})")
 
-    render_mode = "rgb_array" if args.record else ("human" if args.render else None)
+    # Always use rgb_array when recording (we render manually via mujoco.Renderer)
+    render_mode = "rgb_array" if (args.record or args.render) else None
     env = make_walking_env(render_mode=render_mode, config={
         "max_episode_steps": args.max_steps,
         "obs_history": 4,
@@ -259,15 +251,12 @@ def main():
         obs, reward, done, info = vec_env.step(action)
 
         if args.record:
-            frame = vec_env.render()
-            if frame is not None:
-                minimap = render_minimap(
-                    grid, mjcf_gen.cell_size,
-                    agent_xy=(pos_x, pos_y),
-                    goal_xy=goal_world,
-                    waypoints=waypoints,
-                )
-                frames.append(composite_frame(frame, minimap))
+            mj_model = base_env.model
+            mj_data = base_env.data
+            tp = render_third_person(mj_model, mj_data)
+            td = render_topdown_map(mj_model, mj_data, grid, mjcf_gen.cell_size,
+                                    goal_world, waypoints)
+            frames.append(composite_frame(tp, td))
 
         if done[0]:
             print(f"  Episode terminated at step {step}")

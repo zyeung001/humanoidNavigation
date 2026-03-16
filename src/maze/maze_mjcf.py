@@ -24,7 +24,7 @@ except ImportError:
 class MazeMJCFGenerator:
     """Generate MuJoCo MJCF XML files with maze wall geometry."""
 
-    def __init__(self, cell_size=2.0, wall_height=1.0, wall_rgba=(0.6, 0.6, 0.6, 1.0)):
+    def __init__(self, cell_size=2.0, wall_height=0.5, wall_rgba=(0.6, 0.6, 0.6, 1.0)):
         """
         Args:
             cell_size: World-space size of each grid cell in meters.
@@ -106,12 +106,12 @@ class MazeMJCFGenerator:
             # Remove existing track camera
             for existing_cam in torso.findall("camera[@name='track']"):
                 torso.remove(existing_cam)
-            # Third-person: behind, above, looking down at ~30 degrees
+            # Third-person: to the side and above, looking down ~45 deg
             track_cam = ET.SubElement(torso, "camera")
             track_cam.set("name", "track")
             track_cam.set("mode", "trackcom")
-            track_cam.set("pos", "0 -2.5 3.5")
-            track_cam.set("xyaxes", "1 0 0 0 0.35 1")
+            track_cam.set("pos", "-3 -3 4")
+            track_cam.set("xyaxes", "1 -1 0 0.3 0.3 1")
 
         # Write to temp file
         tmp = tempfile.NamedTemporaryFile(suffix=".xml", delete=False, mode="w")
