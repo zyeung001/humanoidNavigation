@@ -19,6 +19,90 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import numpy as np
+import cv2
+
+
+def render_minimap(grid, cell_size, agent_xy, goal_xy, waypoints, map_size=300):
+    """Render a top-down minimap with agent position, goal, and path.
+
+    Args:
+        grid: 2D numpy array (1=wall, 0=open).
+        cell_size: World-space cell size.
+        agent_xy: (x, y) world position of agent.
+        goal_xy: (x, y) world position of goal.
+        waypoints: List of (x, y) world-coordinate waypoints.
+        map_size: Pixel size of the square minimap.
+
+    Returns:
+        RGB numpy array of shape (map_size, map_size, 3).
+    """
+    rows, cols = grid.shape
+    # Pixel size per cell
+    px_per_cell = map_size / max(rows, cols)
+
+    # Draw walls
+    img = np.ones((map_size, map_size, 3), dtype=np.uint8) * 240  # light gray bg
+    for r in range(rows):
+        for c in range(cols):
+            if grid[r, c] == 1:
+                y1 = int(r * px_per_cell)
+                y2 = int((r + 1) * px_per_cell)
+                x1 = int(c * px_per_cell)
+                x2 = int((c + 1) * px_per_cell)
+                cv2.rectangle(img, (x1, y1), (x2, y2), (60, 60, 60), -1)
+
+    # Helper: world coords to pixel coords on minimap
+    offset_x = -(cols * cell_size) / 2.0
+    offset_y = -(rows * cell_size) / 2.0
+
+    def world_to_px(wx, wy):
+        gc = (wx - offset_x) / cell_size
+        gr = rows - 1 - (wy - offset_y) / cell_size
+        px = int(gc * px_per_cell)
+        py = int(gr * px_per_cell)
+        return px, py
+
+    # Draw path
+    if waypoints and len(waypoints) >= 2:
+        for i in range(len(waypoints) - 1):
+            p1 = world_to_px(waypoints[i][0], waypoints[i][1])
+            p2 = world_to_px(waypoints[i + 1][0], waypoints[i + 1][1])
+            cv2.line(img, p1, p2, (200, 150, 50), 2)
+
+    # Draw goal
+    gx, gy = world_to_px(goal_xy[0], goal_xy[1])
+    cv2.circle(img, (gx, gy), 8, (0, 0, 255), -1)
+    cv2.putText(img, "G", (gx - 5, gy + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+
+    # Draw agent
+    ax, ay = world_to_px(agent_xy[0], agent_xy[1])
+    cv2.circle(img, (ax, ay), 6, (0, 200, 0), -1)
+
+    # Border
+    cv2.rectangle(img, (0, 0), (map_size - 1, map_size - 1), (100, 100, 100), 2)
+
+    # Label
+    cv2.putText(img, "MAP", (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (80, 80, 80), 2)
+
+    return img
+
+
+def composite_frame(mujoco_frame, minimap):
+    """Place minimap on the right side of the MuJoCo frame.
+
+    Returns:
+        Composite RGB numpy array.
+    """
+    h, w = mujoco_frame.shape[:2]
+    map_h = minimap.shape[0]
+
+    # Resize minimap to match mujoco frame height
+    scale = h / map_h
+    new_map_w = int(minimap.shape[1] * scale)
+    minimap_resized = cv2.resize(minimap, (new_map_w, h), interpolation=cv2.INTER_NEAREST)
+
+    # Concatenate side by side
+    return np.concatenate([mujoco_frame, minimap_resized], axis=1)
 
 
 def get_maze_grid(maze_type, seed=42):
@@ -149,6 +233,8 @@ def main():
 
     frames = []
 
+    goal_world = (goal_x, goal_y)
+
     for step in range(args.max_steps):
         # Get humanoid position and heading from underlying env
         base_env = env.unwrapped
@@ -175,7 +261,13 @@ def main():
         if args.record:
             frame = vec_env.render()
             if frame is not None:
-                frames.append(frame)
+                minimap = render_minimap(
+                    grid, mjcf_gen.cell_size,
+                    agent_xy=(pos_x, pos_y),
+                    goal_xy=goal_world,
+                    waypoints=waypoints,
+                )
+                frames.append(composite_frame(frame, minimap))
 
         if done[0]:
             print(f"  Episode terminated at step {step}")
@@ -186,18 +278,14 @@ def main():
 
     # Save video if recording
     if args.record and frames:
-        try:
-            import cv2
-            output = "data/videos/maze_nav.mp4"
-            Path(output).parent.mkdir(parents=True, exist_ok=True)
-            h, w = frames[0].shape[:2]
-            writer = cv2.VideoWriter(output, cv2.VideoWriter_fourcc(*"mp4v"), 30, (w, h))
-            for f in frames:
-                writer.write(cv2.cvtColor(f, cv2.COLOR_RGB2BGR))
-            writer.release()
-            print(f"  Video saved: {output}")
-        except ImportError:
-            print("  OpenCV not available, skipping video save")
+        output = "data/videos/maze_nav.mp4"
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        h, w = frames[0].shape[:2]
+        writer = cv2.VideoWriter(output, cv2.VideoWriter_fourcc(*"mp4v"), 30, (w, h))
+        for f in frames:
+            writer.write(cv2.cvtColor(f, cv2.COLOR_RGB2BGR))
+        writer.release()
+        print(f"  Video saved: {output}")
 
     vec_env.close()
     print("Done.")
