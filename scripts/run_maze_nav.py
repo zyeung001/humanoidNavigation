@@ -220,16 +220,34 @@ def main():
     model = PPO.load(args.model, env=vec_env)
     nav = NavigationController(waypoints, target_speed=args.speed)
 
-    obs = vec_env.reset()
-
-    # Teleport humanoid to maze start position
+    # Get the unwrapped MuJoCo env
     base_env = env
     while hasattr(base_env, 'env'):
         base_env = base_env.env
     base_env = base_env.unwrapped
+
+    # Reset, teleport to maze start, then re-settle physics
+    obs = vec_env.reset()
+
+    import mujoco
     base_env.data.qpos[0] = start_x
     base_env.data.qpos[1] = start_y
-    print(f"  Humanoid teleported to ({start_x:.2f}, {start_y:.2f})")
+    base_env.data.qvel[:] = 0  # Zero out all velocities
+    mujoco.mj_forward(base_env.model, base_env.data)  # Recompute physics state
+
+    # Let the humanoid settle for a few steps with zero command
+    env.fixed_command = (0.0, 0.0, 0.0)
+    for _ in range(20):
+        action = np.zeros(env.action_space.shape)
+        obs, _, done, _ = vec_env.step(action)
+        if done[0]:
+            obs = vec_env.reset()
+            base_env.data.qpos[0] = start_x
+            base_env.data.qpos[1] = start_y
+            base_env.data.qvel[:] = 0
+            mujoco.mj_forward(base_env.model, base_env.data)
+
+    print(f"  Humanoid teleported to ({start_x:.2f}, {start_y:.2f}), height: {base_env.data.qpos[2]:.3f}")
 
     frames = []
 
