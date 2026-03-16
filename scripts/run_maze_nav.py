@@ -106,12 +106,25 @@ def main():
     from src.environments import make_walking_env
     from src.maze.navigation_controller import NavigationController
 
+    # Generate maze MJCF with physical walls
+    print("  Generating maze MJCF with walls...")
+    maze_xml_path = mjcf_gen.generate(grid)
+    print(f"  Maze XML: {maze_xml_path}")
+
+    # Convert start/goal from grid to world coordinates
+    start_x, start_y = mjcf_gen.grid_to_world(start_cell[0], start_cell[1], grid.shape)
+    goal_x, goal_y = mjcf_gen.grid_to_world(goal_cell[0], goal_cell[1], grid.shape)
+    print(f"  Start world: ({start_x:.2f}, {start_y:.2f})")
+    print(f"  Goal world:  ({goal_x:.2f}, {goal_y:.2f})")
+
     render_mode = "rgb_array" if args.record else ("human" if args.render else None)
     env = make_walking_env(render_mode=render_mode, config={
         "max_episode_steps": args.max_steps,
         "obs_history": 4,
         "obs_include_com": True,
         "obs_feature_norm": True,
+        "xml_file": maze_xml_path,
+        "random_height_init": False,
     })
     vec_env = DummyVecEnv([lambda: env])
 
@@ -124,6 +137,16 @@ def main():
     nav = NavigationController(waypoints, target_speed=args.speed)
 
     obs = vec_env.reset()
+
+    # Teleport humanoid to maze start position
+    base_env = env
+    while hasattr(base_env, 'env'):
+        base_env = base_env.env
+    base_env = base_env.unwrapped
+    base_env.data.qpos[0] = start_x
+    base_env.data.qpos[1] = start_y
+    print(f"  Humanoid teleported to ({start_x:.2f}, {start_y:.2f})")
+
     frames = []
 
     for step in range(args.max_steps):

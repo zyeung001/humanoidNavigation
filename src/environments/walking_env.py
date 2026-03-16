@@ -37,11 +37,14 @@ class WalkingEnv(gym.Wrapper):
         print(f"Using {env_id} for walking task")
         
         # Create base environment
-        env = gym.make(
-            env_id, 
+        xml_file = (config or {}).get('xml_file', None)
+        make_kwargs = dict(
             render_mode=render_mode,
-            exclude_current_positions_from_observation=False  # Adds +2 dims (x,y)
+            exclude_current_positions_from_observation=False,  # Adds +2 dims (x,y)
         )
+        if xml_file is not None:
+            make_kwargs['xml_file'] = xml_file
+        env = gym.make(env_id, **make_kwargs)
         super().__init__(env)
         
         # Configuration
