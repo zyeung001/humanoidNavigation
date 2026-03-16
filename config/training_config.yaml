@@ -196,8 +196,8 @@ walking:
   yaw_rate_weight: 0.5               # Reward weight for yaw tracking (was 3.0 - too much free reward for standing)
   
   # ========== CURRICULUM LEARNING ==========
-  curriculum_start_stage: 0
-  curriculum_max_stage: 1            # Lock to Stage 0-1 while fixing arm posture. Raise after arms are fixed.
+  curriculum_start_stage: 1          # Skip Stage 0 when resuming — model already walks, needs arm penalty active
+  curriculum_max_stage: 1            # Lock to Stage 1 while fixing arm posture. Raise after arms are fixed.
   curriculum_advance_after: 30    # Episodes before considering advancement
   warmup_episodes: 0              # NO warmup leniency - enforce strict criteria
   curriculum_success_rate: 0.50   # Success rate needed to advance
