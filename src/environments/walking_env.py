@@ -342,7 +342,15 @@ class WalkingEnv(gym.Wrapper):
         proc_action = self._process_action(np.asarray(action, dtype=np.float32))
         
         # ========== UPDATE COMMAND  ==========
-        if self.use_command_generator and self.command_generator is not None and self.fixed_command is None:
+        if self.fixed_command is not None:
+            # Read fixed command every step (e.g. navigation controller updates it)
+            self.commanded_vx_world = float(self.fixed_command[0])
+            self.commanded_vy_world = float(self.fixed_command[1])
+            self.commanded_yaw_rate = float(self.fixed_command[2]) if len(self.fixed_command) > 2 else 0.0
+            self.commanded_speed = np.sqrt(self.commanded_vx_world**2 + self.commanded_vy_world**2)
+            if self.commanded_speed > 0:
+                self.commanded_angle = np.arctan2(self.commanded_vy_world, self.commanded_vx_world)
+        elif self.use_command_generator and self.command_generator is not None:
             command = self.command_generator.get_command(self.dt)
             self.commanded_vx_world = float(command[0])
             self.commanded_vy_world = float(command[1])

@@ -200,6 +200,31 @@ def main():
     print(f"  Start world: ({start_x:.2f}, {start_y:.2f})")
     print(f"  Goal world:  ({goal_x:.2f}, {goal_y:.2f})")
 
+    # Auto-detect VecNormalize .pkl file next to model if not specified
+    vecnorm_path = args.vecnorm
+    if vecnorm_path is None:
+        model_dir = Path(args.model).parent
+        candidates = [
+            model_dir / "vecnorm.pkl",
+            model_dir / "vecnorm_walking.pkl",
+            model_dir / (Path(args.model).stem + "_vecnorm.pkl"),
+        ]
+        # Also check for any .pkl file in the same directory
+        for c in candidates:
+            if c.exists():
+                vecnorm_path = str(c)
+                print(f"  Auto-detected VecNormalize: {vecnorm_path}")
+                break
+        if vecnorm_path is None:
+            pkl_files = list(model_dir.glob("*.pkl"))
+            if len(pkl_files) == 1:
+                vecnorm_path = str(pkl_files[0])
+                print(f"  Auto-detected VecNormalize: {vecnorm_path}")
+            elif len(pkl_files) > 1:
+                print(f"  WARNING: Multiple .pkl files found, specify --vecnorm: {pkl_files}")
+        if vecnorm_path is None:
+            print("  WARNING: No VecNormalize .pkl found — policy may receive unnormalized observations!")
+
     # Always use rgb_array when recording (we render manually via mujoco.Renderer)
     render_mode = "rgb_array" if (args.record or args.render) else None
     env = make_walking_env(render_mode=render_mode, config={
@@ -209,11 +234,17 @@ def main():
         "obs_feature_norm": True,
         "xml_file": maze_xml_path,
         "random_height_init": False,
+        "use_command_generator": False,
+        "max_commanded_speed": 1.0,  # Allow full speed range for nav commands
+        "push_enabled": False,
+        "domain_rand": False,
+        "action_smoothing": True,
+        "action_smoothing_tau": 0.08,
     })
     vec_env = DummyVecEnv([lambda: env])
 
-    if args.vecnorm:
-        vec_env = VecNormalize.load(args.vecnorm, vec_env)
+    if vecnorm_path:
+        vec_env = VecNormalize.load(vecnorm_path, vec_env)
         vec_env.training = False
         vec_env.norm_reward = False
 
@@ -247,10 +278,14 @@ def main():
 
     goal_world = (goal_x, goal_y)
 
+    print(f"\n  {'Step':>5s}  {'Pos':>14s}  {'Hdg':>5s}  {'Cmd(vx,vy,yaw)':>20s}  {'ActVel(vx,vy)':>16s}  {'Height':>6s}  {'WP':>3s}")
+    print(f"  {'-'*5}  {'-'*14}  {'-'*5}  {'-'*20}  {'-'*16}  {'-'*6}  {'-'*3}")
+
     for step in range(args.max_steps):
         # Get humanoid position and heading from underlying env
         base_env = env.unwrapped
         pos_x, pos_y = base_env.data.qpos[0], base_env.data.qpos[1]
+        height = base_env.data.qpos[2]
         # Approximate heading from quaternion
         quat = base_env.data.qpos[3:7]
         heading = np.arctan2(2 * (quat[0] * quat[3] + quat[1] * quat[2]),
@@ -266,6 +301,15 @@ def main():
         # Inject command into walking env
         env.fixed_command = (float(cmd[0]), float(cmd[1]), float(cmd[2]))
 
+        # Display command values periodically
+        if step % 50 == 0:
+            actual_vx = float(base_env.data.qvel[0])
+            actual_vy = float(base_env.data.qvel[1])
+            print(f"  {step:5d}  ({pos_x:6.2f},{pos_y:6.2f})  {np.degrees(heading):5.1f}  "
+                  f"({cmd[0]:+5.2f},{cmd[1]:+5.2f},{cmd[2]:+5.2f})  "
+                  f"({actual_vx:+6.3f},{actual_vy:+6.3f})  {height:6.3f}  "
+                  f"{nav.current_waypoint_idx:3d}/{len(nav.waypoints)}")
+
         # Step the policy
         action, _ = model.predict(obs, deterministic=True)
         obs, reward, done, info = vec_env.step(action)
@@ -279,6 +323,12 @@ def main():
             frames.append(composite_frame(tp, td))
 
         if done[0]:
+            actual_vx = float(base_env.data.qvel[0])
+            actual_vy = float(base_env.data.qvel[1])
+            print(f"  {step:5d}  ({pos_x:6.2f},{pos_y:6.2f})  {np.degrees(heading):5.1f}  "
+                  f"({cmd[0]:+5.2f},{cmd[1]:+5.2f},{cmd[2]:+5.2f})  "
+                  f"({actual_vx:+6.3f},{actual_vy:+6.3f})  {height:6.3f}  "
+                  f"TERMINATED")
             print(f"  Episode terminated at step {step}")
             break
 
