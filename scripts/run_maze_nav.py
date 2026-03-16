@@ -107,7 +107,12 @@ def main():
     from src.maze.navigation_controller import NavigationController
 
     render_mode = "rgb_array" if args.record else ("human" if args.render else None)
-    env = make_walking_env(render_mode=render_mode, config={"max_episode_steps": args.max_steps})
+    env = make_walking_env(render_mode=render_mode, config={
+        "max_episode_steps": args.max_steps,
+        "obs_history": 4,
+        "obs_include_com": True,
+        "obs_feature_norm": True,
+    })
     vec_env = DummyVecEnv([lambda: env])
 
     if args.vecnorm:
