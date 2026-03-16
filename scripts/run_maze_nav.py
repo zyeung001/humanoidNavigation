@@ -48,17 +48,15 @@ def render_topdown_map(mj_model, mj_data, grid, cell_size, goal_xy, waypoints, s
     renderer.close()
 
     # Compute world-to-pixel mapping for the top-down camera
+    # Camera is at height cam_z with fovy=90, so visible half-extent = cam_z * tan(45°) = cam_z
     rows, cols = grid.shape
-    world_w = cols * cell_size
-    world_h = rows * cell_size
-    offset_x = -world_w / 2.0
-    offset_y = -world_h / 2.0
+    cam_z = max(rows, cols) * cell_size * 1.2
+    visible_half = cam_z  # fovy=90 → tan(45°) = 1.0
 
     def world_to_px(wx, wy):
-        # Top-down camera is centered at origin, looking down
-        # x maps to pixel x, y maps to pixel y (inverted)
-        u = (wx - offset_x) / world_w * size
-        v = (1.0 - (wy - offset_y) / world_h) * size
+        # Camera is centered at origin, looking straight down
+        u = (wx + visible_half) / (2.0 * visible_half) * size
+        v = (-wy + visible_half) / (2.0 * visible_half) * size
         return int(np.clip(u, 0, size - 1)), int(np.clip(v, 0, size - 1))
 
     # Draw path
