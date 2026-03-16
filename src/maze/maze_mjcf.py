@@ -53,6 +53,16 @@ class MazeMJCFGenerator:
         tree = ET.parse(str(base_xml_path))
         root = tree.getroot()
 
+        # Set offscreen framebuffer size for mujoco.Renderer
+        visual = root.find("visual")
+        if visual is None:
+            visual = ET.SubElement(root, "visual")
+        gl = visual.find("global")
+        if gl is None:
+            gl = ET.SubElement(visual, "global")
+        gl.set("offwidth", "1280")
+        gl.set("offheight", "960")
+
         rows, cols = grid.shape
         half_size = self.cell_size / 2.0
 

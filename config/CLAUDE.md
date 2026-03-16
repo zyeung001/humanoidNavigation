@@ -56,7 +56,7 @@ Single YAML file with two top-level keys: `standing` and `walking`. Both tasks s
 **Adjust with care:**
 - `learning_rate` — too high causes instability, too low stalls
 - `ent_coef` — too low kills exploration (agent gets stuck standing)
-- `batch_size` — 512 works for walking; 2048 kills exploration
+- `batch_size` / `n_epochs` — controls gradient steps per update (n_epochs × data/batch_size). 2048 batch + 2 epochs = 24 steps (stable). 512 batch + 10 epochs = 480 steps (KL explosion)
 - `reward_caps` — affect termination/recovery behavior
 
 **Do not change without understanding implications:**
