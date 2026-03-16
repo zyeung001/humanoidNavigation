@@ -265,11 +265,25 @@ def main():
     env.low_height_steps = 0
     env.current_step = 0
 
-    # Re-get observation from the correct position
-    raw_obs = base_env._get_obs()
-    obs = np.array([env._process_observation(raw_obs)])
+    # Warm-up: run the policy with zero command to let humanoid settle into
+    # walking stance and fill observation history with correct normalized data.
+    env.fixed_command = (0.0, 0.0, 0.0)
+    for _ in range(50):
+        action, _ = model.predict(obs, deterministic=True)
+        obs, _, done, _ = vec_env.step(action)
+        if done[0]:
+            # If it falls during warmup, re-teleport and retry
+            obs = vec_env.reset()
+            base_env.data.qpos[0] = start_x
+            base_env.data.qpos[1] = start_y
+            base_env.data.qpos[3:7] = spawn_quat
+            base_env.data.qvel[:] = 0
+            mujoco.mj_forward(base_env.model, base_env.data)
+            env.prev_height = float(base_env.data.qpos[2])
+            env.low_height_steps = 0
+            env.current_step = 0
 
-    print(f"  Humanoid teleported to ({start_x:.2f}, {start_y:.2f}), heading: {np.degrees(desired_heading):.1f} deg, height: {base_env.data.qpos[2]:.3f}")
+    print(f"  Humanoid settled at ({base_env.data.qpos[0]:.2f}, {base_env.data.qpos[1]:.2f}), heading: {np.degrees(desired_heading):.1f} deg, height: {base_env.data.qpos[2]:.3f}")
 
     frames = []
 
