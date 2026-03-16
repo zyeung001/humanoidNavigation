@@ -68,12 +68,16 @@ class WalkingEnv(gym.Wrapper):
         self.push_countdown = 0  # Counter for push duration
         self.current_push_force = np.zeros(3)  # Current push force being applied
         
-        # Arm posture penalty (prevent chicken-wing arms)
+        # Arm posture penalty (prevent chicken-wing arms, allow natural swing)
         self.arm_posture_weight = float(self.cfg.get('reward_arm_posture_weight', 0.0))
         self.arm_joint_indices = slice(18, 24)  # qpos indices for 6 arm joints
         # FIX: np.zeros was WRONG — at qpos=0 arms point forward (0.18m ahead of shoulder)
         # These angles place arms hanging straight down at sides (verified via FK)
         self.arm_ref_angles = np.array([0.81, -0.97, -0.85, -0.81, 0.97, -0.85], dtype=np.float32)
+        # Deadzone: deviations within this range are NOT penalized (allows natural arm swing)
+        self.arm_deadzone = float(self.cfg.get('arm_posture_deadzone', 0.3))
+        # Cap: maximum per-step penalty magnitude (prevents arm penalty from dominating tracking)
+        self.arm_penalty_cap = float(self.cfg.get('arm_penalty_cap', 1.0))
 
         # FIX 5: Consistency reward for reducing velocity error variance
         self.recent_vel_errors = []
@@ -467,13 +471,16 @@ class WalkingEnv(gym.Wrapper):
         control_cost = -0.0003 * np.sum(np.square(action))
 
         # ========== ARM POSTURE PENALTY (keep arms at sides for sim-to-real) ==========
-        # No deadzone: continuous gradient always pushes arms toward neutral
-        # Prevents "parking" at deadzone boundary (arms stuck at 15° forward)
+        # Deadzone allows natural arm swing without penalty.
+        # Cap prevents arm penalty from ever dominating the tracking signal.
         arm_posture_penalty = 0.0
         if self.arm_posture_weight > 0:
             arm_qpos = self.env.unwrapped.data.qpos[self.arm_joint_indices]
             arm_deviations = np.abs(arm_qpos - self.arm_ref_angles)
-            arm_posture_penalty = -self.arm_posture_weight * np.sum(arm_deviations**2)
+            # Only penalize deviation beyond the deadzone
+            penalized = np.maximum(arm_deviations - self.arm_deadzone, 0.0)
+            raw_penalty = -self.arm_posture_weight * np.sum(penalized**2)
+            arm_posture_penalty = max(raw_penalty, -self.arm_penalty_cap)
 
         # ========== ZEROED COMPONENTS (kept for WandB logging compatibility) ==========
         height_maintenance = 0.0   # Zeroed — redundant with height reward

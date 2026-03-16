@@ -616,6 +616,8 @@ def main():
                         help='Warmup steps for VecNormalize before learning (0 to skip)')
     parser.add_argument('--no-warmup', action='store_true',
                         help='Skip warmup collection (faster but may degrade transfer)')
+    parser.add_argument('--fresh-lr', action='store_true',
+                        help='Reset LR schedule on resume (start from initial_lr instead of where model left off)')
     args = parser.parse_args()
 
     # Load config
@@ -912,9 +914,16 @@ def main():
 
             # Compute where LR/clip SHOULD be at this point in the global schedule,
             # then decay from there to final over the remaining steps.
-            progress_done = loaded_timesteps / total_timesteps
-            resume_lr = initial_lr * (1.0 - progress_done) + final_lr * progress_done
-            resume_clip = initial_clip * (1.0 - progress_done) + final_clip * progress_done
+            if getattr(args, 'fresh_lr', False):
+                # --fresh-lr: reset schedule to initial values (use when resuming
+                # a model whose num_timesteps exhausted the original schedule)
+                resume_lr = initial_lr
+                resume_clip = initial_clip
+                print(f"  --fresh-lr: LR schedule reset to {initial_lr} → {final_lr} over {remaining_timesteps:,} steps")
+            else:
+                progress_done = loaded_timesteps / total_timesteps
+                resume_lr = initial_lr * (1.0 - progress_done) + final_lr * progress_done
+                resume_clip = initial_clip * (1.0 - progress_done) + final_clip * progress_done
 
             # Build schedules from resume point → final over remaining steps.
             # reset_num_timesteps=True so SB3's progress_remaining goes 1→0
