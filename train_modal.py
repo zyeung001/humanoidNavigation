@@ -35,7 +35,6 @@ Usage:
 import modal
 import os
 import subprocess
-from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Modal app & infrastructure
@@ -241,14 +240,14 @@ def train(
 
     print("=" * 60)
     print(f"MODAL TRAINING: {task.upper()}")
-    print(f"=" * 60)
+    print("=" * 60)
     print(f"  Cores: {cores}")
     print(f"  n_envs: {n_envs}")
     print(f"  Timesteps: {timesteps:,}")
-    print(f"  Device: cpu")
+    print("  Device: cpu")
     print(f"  Command: {' '.join(cmd)}")
     print(f"  Results: {results_dir}")
-    print(f"=" * 60)
+    print("=" * 60)
 
     # Force CPU device (no GPU on this container)
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
@@ -356,8 +355,8 @@ def main(
 
     if exit_code == 0:
         print("\nTraining complete!")
-        print(f"Download results with:")
+        print("Download results with:")
         print(f"  modal volume get humanoid-training /results/{task}/ ./modal_results/{task}/")
     else:
         print(f"\nTraining failed with exit code {exit_code}")
-        print(f"Check logs in the Modal dashboard.")
+        print("Check logs in the Modal dashboard.")
