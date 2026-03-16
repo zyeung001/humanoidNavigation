@@ -30,22 +30,43 @@ def ensure_framebuffer(mj_model, width, height):
         mj_model.vis.global_.offheight = height
 
 
-def render_topdown_map(mj_model, mj_data, grid, cell_size, goal_xy, waypoints, size=480):
+class CachedRenderers:
+    """Cache MuJoCo renderers to avoid creating/destroying per frame."""
+
+    def __init__(self, mj_model, tp_width=640, tp_height=480, td_size=480):
+        import mujoco
+        ensure_framebuffer(mj_model, max(tp_width, td_size), max(tp_height, td_size))
+        self.tp_renderer = mujoco.Renderer(mj_model, height=tp_height, width=tp_width)
+        self.td_renderer = mujoco.Renderer(mj_model, height=td_size, width=td_size)
+
+    def render_third_person(self, mj_data):
+        self.tp_renderer.update_scene(mj_data, camera="track")
+        return self.tp_renderer.render().copy()
+
+    def render_topdown(self, mj_data):
+        self.td_renderer.update_scene(mj_data, camera="maze_topdown")
+        return self.td_renderer.render().copy()
+
+    def close(self):
+        self.tp_renderer.close()
+        self.td_renderer.close()
+
+
+def render_topdown_map(renderer_or_model, mj_data, grid, cell_size, goal_xy, waypoints, size=480):
     """Render a MuJoCo top-down camera view with overlaid path and goal markers.
 
-    Uses the maze_topdown camera for a true physics-engine render, then overlays
-    the planned path, goal marker, and agent marker using OpenCV.
-
-    Returns:
-        RGB numpy array of shape (size, size, 3).
+    Args:
+        renderer_or_model: CachedRenderers instance, or mj_model for legacy use.
     """
-    import mujoco
-
-    ensure_framebuffer(mj_model, size, size)
-    renderer = mujoco.Renderer(mj_model, height=size, width=size)
-    renderer.update_scene(mj_data, camera="maze_topdown")
-    img = renderer.render().copy()
-    renderer.close()
+    if isinstance(renderer_or_model, CachedRenderers):
+        img = renderer_or_model.render_topdown(mj_data)
+    else:
+        import mujoco
+        ensure_framebuffer(renderer_or_model, size, size)
+        renderer = mujoco.Renderer(renderer_or_model, height=size, width=size)
+        renderer.update_scene(mj_data, camera="maze_topdown")
+        img = renderer.render().copy()
+        renderer.close()
 
     # Compute world-to-pixel mapping for the top-down camera
     # Camera is at height cam_z with fovy=90, so visible half-extent = cam_z * tan(45°) = cam_z
@@ -84,12 +105,13 @@ def render_topdown_map(mj_model, mj_data, grid, cell_size, goal_xy, waypoints, s
     return img
 
 
-def render_third_person(mj_model, mj_data, width=640, height=480):
+def render_third_person(renderer_or_model, mj_data, width=640, height=480):
     """Render the third-person tracking camera view."""
+    if isinstance(renderer_or_model, CachedRenderers):
+        return renderer_or_model.render_third_person(mj_data)
     import mujoco
-
-    ensure_framebuffer(mj_model, width, height)
-    renderer = mujoco.Renderer(mj_model, height=height, width=width)
+    ensure_framebuffer(renderer_or_model, width, height)
+    renderer = mujoco.Renderer(renderer_or_model, height=height, width=width)
     renderer.update_scene(mj_data, camera="track")
     img = renderer.render().copy()
     renderer.close()
@@ -275,6 +297,9 @@ def main():
     print(f"  Humanoid teleported to ({start_x:.2f}, {start_y:.2f}), height: {base_env.data.qpos[2]:.3f}")
 
     frames = []
+    cached_renderers = None
+    if args.record:
+        cached_renderers = CachedRenderers(base_env.model)
 
     goal_world = (goal_x, goal_y)
 
@@ -315,10 +340,9 @@ def main():
         obs, reward, done, info = vec_env.step(action)
 
         if args.record:
-            mj_model = base_env.model
             mj_data = base_env.data
-            tp = render_third_person(mj_model, mj_data)
-            td = render_topdown_map(mj_model, mj_data, grid, mjcf_gen.cell_size,
+            tp = render_third_person(cached_renderers, mj_data)
+            td = render_topdown_map(cached_renderers, mj_data, grid, mjcf_gen.cell_size,
                                     goal_world, waypoints)
             frames.append(composite_frame(tp, td))
 
@@ -346,6 +370,8 @@ def main():
         writer.release()
         print(f"  Video saved: {output}")
 
+    if cached_renderers:
+        cached_renderers.close()
     vec_env.close()
     print("Done.")
 

@@ -46,6 +46,7 @@ class NavigationController:
 
         self.current_waypoint_idx = 0
         self._goal_reached = False
+        self._committed_turn_dir = None  # Hysteresis for large heading errors
 
     @property
     def goal_reached(self):
@@ -55,12 +56,17 @@ class NavigationController:
     def get_command(self, position, heading):
         """Compute velocity command for the current state.
 
+        The walking policy was trained facing +x with forward-only commands,
+        so it only understands velocity commands aligned with its body frame.
+        We decompose speed along the humanoid's CURRENT heading (body-forward)
+        and use yaw rate to steer toward the goal.
+
         Args:
             position: (x, y) current position in world frame.
             heading: Current heading angle in radians (0 = +x axis).
 
         Returns:
-            (vx, vy, yaw_rate) velocity command tuple.
+            (vx, vy, yaw_rate) velocity command tuple in world frame.
         """
         if self._goal_reached or len(self.waypoints) == 0:
             return (0.0, 0.0, 0.0)
@@ -90,17 +96,36 @@ class NavigationController:
         # Compute heading error
         desired_heading = math.atan2(ty - py, tx - px)
         heading_error = self._normalize_angle(desired_heading - heading)
+        abs_error = abs(heading_error)
 
-        # Proportional yaw rate control
-        yaw_rate = self.kp_yaw * heading_error
-        yaw_rate = max(-self.max_yaw_rate, min(self.max_yaw_rate, yaw_rate))
+        # Yaw rate control with hysteresis for near-180° turns.
+        # Without this, heading error oscillates between +π and -π when the
+        # humanoid faces away from the goal, causing the yaw command to flip
+        # every step and producing zero net rotation.
+        if abs_error > math.pi * 0.75:
+            # Large error — commit to one turn direction until error drops
+            if self._committed_turn_dir is None:
+                self._committed_turn_dir = 1.0 if heading_error > 0 else -1.0
+            yaw_rate = self._committed_turn_dir * self.max_yaw_rate
+        else:
+            # Normal proportional control
+            self._committed_turn_dir = None
+            yaw_rate = self.kp_yaw * heading_error
+            yaw_rate = max(-self.max_yaw_rate, min(self.max_yaw_rate, yaw_rate))
 
-        # Speed modulation — slow down for sharp turns
-        speed = self.target_speed * max(0.3, math.cos(heading_error))
+        # Speed modulation — slow down for turns, crawl when facing away
+        if abs_error > math.pi / 2:
+            speed = self.target_speed * 0.15
+        else:
+            speed = self.target_speed * max(0.3, math.cos(heading_error))
 
-        # Velocity in world frame — decompose along desired heading direction
-        vx = speed * math.cos(desired_heading)
-        vy = speed * math.sin(desired_heading)
+        # Velocity along CURRENT heading (body-forward in world frame).
+        # The policy was trained facing +x with positive vx commands — it
+        # interprets the command relative to its body orientation. Decomposing
+        # along the current heading keeps the command aligned with what the
+        # policy expects ("walk forward").
+        vx = speed * math.cos(heading)
+        vy = speed * math.sin(heading)
 
         return (vx, vy, yaw_rate)
 
@@ -156,3 +181,4 @@ class NavigationController:
             self.waypoints = list(waypoints)
         self.current_waypoint_idx = 0
         self._goal_reached = False
+        self._committed_turn_dir = None
