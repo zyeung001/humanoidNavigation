@@ -197,7 +197,7 @@ walking:
   
   # ========== CURRICULUM LEARNING ==========
   curriculum_start_stage: 0
-  curriculum_max_stage: 3
+  curriculum_max_stage: 1            # Lock to Stage 0-1 while fixing arm posture. Raise after arms are fixed.
   curriculum_advance_after: 30    # Episodes before considering advancement
   warmup_episodes: 0              # NO warmup leniency - enforce strict criteria
   curriculum_success_rate: 0.50   # Success rate needed to advance
@@ -286,9 +286,9 @@ walking:
                                  # updates overshoot clip boundary at ANY LR. 0.5 = 50% of each
                                  # optimizer step is applied. VF always gets full updates.
                                  # 0.3 was too conservative with full-batch — optimizer gets real signal now.
-  resume_policy_scale: 0.8       # For resuming from a walking model (not standing transfer).
-                                 # Walking model already has correct policy — needs less damping.
-                                 # 0.5 was too conservative (clip_fraction=0, policy frozen).
+  resume_policy_scale: 1.0       # For resuming from a walking model (not standing transfer).
+                                 # No scaling needed — clip_fraction=0 at 0.8 means massive headroom.
+                                 # 0.8 and 0.5 both produced frozen policy (zero clipping).
   extra_vf_epochs: 7             # Extra VF-only gradient steps after each PPO train() call.
                                  # Full-batch (batch_size=24576) gives only 3 gradient steps per cycle.
                                  # Clipping only affects policy loss — VF loss is plain MSE. But with
