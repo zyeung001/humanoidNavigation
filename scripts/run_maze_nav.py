@@ -230,8 +230,17 @@ def main():
     obs = vec_env.reset()
 
     import mujoco
+
+    # Compute heading toward first waypoint
+    target_wp = waypoints[1] if len(waypoints) > 1 else waypoints[0]
+    desired_heading = np.arctan2(target_wp[1] - start_y, target_wp[0] - start_x)
+    # Set quaternion [w, x, y, z] for rotation about z-axis
+    half_angle = desired_heading / 2.0
+    spawn_quat = [np.cos(half_angle), 0.0, 0.0, np.sin(half_angle)]
+
     base_env.data.qpos[0] = start_x
     base_env.data.qpos[1] = start_y
+    base_env.data.qpos[3:7] = spawn_quat  # Face toward first waypoint
     base_env.data.qvel[:] = 0  # Zero out all velocities
     mujoco.mj_forward(base_env.model, base_env.data)  # Recompute physics state
 
@@ -244,10 +253,11 @@ def main():
             obs = vec_env.reset()
             base_env.data.qpos[0] = start_x
             base_env.data.qpos[1] = start_y
+            base_env.data.qpos[3:7] = spawn_quat
             base_env.data.qvel[:] = 0
             mujoco.mj_forward(base_env.model, base_env.data)
 
-    print(f"  Humanoid teleported to ({start_x:.2f}, {start_y:.2f}), height: {base_env.data.qpos[2]:.3f}")
+    print(f"  Humanoid teleported to ({start_x:.2f}, {start_y:.2f}), heading: {np.degrees(desired_heading):.1f} deg, height: {base_env.data.qpos[2]:.3f}")
 
     frames = []
 
