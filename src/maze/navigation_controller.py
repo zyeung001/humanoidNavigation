@@ -96,11 +96,11 @@ class NavigationController:
         yaw_rate = max(-self.max_yaw_rate, min(self.max_yaw_rate, yaw_rate))
 
         # Speed modulation — slow down for sharp turns
-        speed = self.target_speed * max(0.0, math.cos(heading_error))
+        speed = self.target_speed * max(0.3, math.cos(heading_error))
 
-        # Velocity in world frame, decomposed into forward/lateral
-        vx = speed * math.cos(heading_error)
-        vy = speed * math.sin(heading_error)
+        # Velocity in world frame — decompose along desired heading direction
+        vx = speed * math.cos(desired_heading)
+        vy = speed * math.sin(desired_heading)
 
         return (vx, vy, yaw_rate)
 

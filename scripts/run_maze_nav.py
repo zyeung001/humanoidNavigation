@@ -228,35 +228,11 @@ def main():
 
     import mujoco
 
-    # Compute heading toward first waypoint
-    target_wp = waypoints[1] if len(waypoints) > 1 else waypoints[0]
-    desired_heading = np.arctan2(target_wp[1] - start_y, target_wp[0] - start_x)
-    # Set quaternion [w, x, y, z] for rotation about z-axis
-    half_angle = desired_heading / 2.0
-    spawn_quat = [np.cos(half_angle), 0.0, 0.0, np.sin(half_angle)]
-
-    # Override tilt termination to allow arbitrary yaw
-    # The training env uses abs(quat[0]) < 0.5 which conflates yaw with tilt.
-    # For maze nav, check actual pitch/roll instead.
-    _original_compute = env._compute_task_reward
-    def _patched_compute(observation, base_reward, info, action):
-        reward, terminate = _original_compute(observation, base_reward, info, action)
-        if terminate and hasattr(env, '_termination_cause') and env._termination_cause == 'severely_tilted':
-            # Recheck: compute pitch/roll from quaternion
-            q = base_env.data.qpos[3:7]  # [w, x, y, z]
-            # pitch = rotation about x, roll = rotation about y
-            pitch = np.arcsin(np.clip(2 * (q[0]*q[2] - q[3]*q[1]), -1, 1))
-            roll = np.arctan2(2 * (q[0]*q[1] + q[2]*q[3]), 1 - 2*(q[1]**2 + q[2]**2))
-            if abs(pitch) < 1.0 and abs(roll) < 1.0:  # ~57 deg threshold
-                terminate = False  # It's just yaw, not actually tilted
-        return reward, terminate
-    env._compute_task_reward = _patched_compute
-
-    # Reset env, then teleport to maze start facing the right direction
+    # Reset env, then teleport to maze start (keep default heading — policy
+    # was trained facing +x and can't generalize to rotated quaternions).
     obs = vec_env.reset()
     base_env.data.qpos[0] = start_x
     base_env.data.qpos[1] = start_y
-    base_env.data.qpos[3:7] = spawn_quat
     base_env.data.qvel[:] = 0
     mujoco.mj_forward(base_env.model, base_env.data)
 
@@ -265,25 +241,7 @@ def main():
     env.low_height_steps = 0
     env.current_step = 0
 
-    # Warm-up: run the policy with zero command to let humanoid settle into
-    # walking stance and fill observation history with correct normalized data.
-    env.fixed_command = (0.0, 0.0, 0.0)
-    for _ in range(50):
-        action, _ = model.predict(obs, deterministic=True)
-        obs, _, done, _ = vec_env.step(action)
-        if done[0]:
-            # If it falls during warmup, re-teleport and retry
-            obs = vec_env.reset()
-            base_env.data.qpos[0] = start_x
-            base_env.data.qpos[1] = start_y
-            base_env.data.qpos[3:7] = spawn_quat
-            base_env.data.qvel[:] = 0
-            mujoco.mj_forward(base_env.model, base_env.data)
-            env.prev_height = float(base_env.data.qpos[2])
-            env.low_height_steps = 0
-            env.current_step = 0
-
-    print(f"  Humanoid settled at ({base_env.data.qpos[0]:.2f}, {base_env.data.qpos[1]:.2f}), heading: {np.degrees(desired_heading):.1f} deg, height: {base_env.data.qpos[2]:.3f}")
+    print(f"  Humanoid teleported to ({start_x:.2f}, {start_y:.2f}), height: {base_env.data.qpos[2]:.3f}")
 
     frames = []
 
