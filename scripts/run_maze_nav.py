@@ -235,6 +235,23 @@ def main():
     half_angle = desired_heading / 2.0
     spawn_quat = [np.cos(half_angle), 0.0, 0.0, np.sin(half_angle)]
 
+    # Override tilt termination to allow arbitrary yaw
+    # The training env uses abs(quat[0]) < 0.5 which conflates yaw with tilt.
+    # For maze nav, check actual pitch/roll instead.
+    _original_compute = env._compute_task_reward
+    def _patched_compute(observation, base_reward, info, action):
+        reward, terminate = _original_compute(observation, base_reward, info, action)
+        if terminate and hasattr(env, '_termination_cause') and env._termination_cause == 'severely_tilted':
+            # Recheck: compute pitch/roll from quaternion
+            q = base_env.data.qpos[3:7]  # [w, x, y, z]
+            # pitch = rotation about x, roll = rotation about y
+            pitch = np.arcsin(np.clip(2 * (q[0]*q[2] - q[3]*q[1]), -1, 1))
+            roll = np.arctan2(2 * (q[0]*q[1] + q[2]*q[3]), 1 - 2*(q[1]**2 + q[2]**2))
+            if abs(pitch) < 1.0 and abs(roll) < 1.0:  # ~57 deg threshold
+                terminate = False  # It's just yaw, not actually tilted
+        return reward, terminate
+    env._compute_task_reward = _patched_compute
+
     # Reset env, then teleport to maze start facing the right direction
     obs = vec_env.reset()
     base_env.data.qpos[0] = start_x
