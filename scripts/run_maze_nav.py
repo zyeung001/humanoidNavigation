@@ -226,9 +226,6 @@ def main():
         base_env = base_env.env
     base_env = base_env.unwrapped
 
-    # Reset, teleport to maze start, then re-settle physics
-    obs = vec_env.reset()
-
     import mujoco
 
     # Compute heading toward first waypoint
@@ -238,24 +235,22 @@ def main():
     half_angle = desired_heading / 2.0
     spawn_quat = [np.cos(half_angle), 0.0, 0.0, np.sin(half_angle)]
 
+    # Reset env, then teleport to maze start facing the right direction
+    obs = vec_env.reset()
     base_env.data.qpos[0] = start_x
     base_env.data.qpos[1] = start_y
-    base_env.data.qpos[3:7] = spawn_quat  # Face toward first waypoint
-    base_env.data.qvel[:] = 0  # Zero out all velocities
-    mujoco.mj_forward(base_env.model, base_env.data)  # Recompute physics state
+    base_env.data.qpos[3:7] = spawn_quat
+    base_env.data.qvel[:] = 0
+    mujoco.mj_forward(base_env.model, base_env.data)
 
-    # Let the humanoid settle for a few steps with zero command
-    env.fixed_command = (0.0, 0.0, 0.0)
-    for _ in range(20):
-        action = np.zeros(env.action_space.shape)
-        obs, _, done, _ = vec_env.step(action)
-        if done[0]:
-            obs = vec_env.reset()
-            base_env.data.qpos[0] = start_x
-            base_env.data.qpos[1] = start_y
-            base_env.data.qpos[3:7] = spawn_quat
-            base_env.data.qvel[:] = 0
-            mujoco.mj_forward(base_env.model, base_env.data)
+    # Update the walking env's internal state to match teleported position
+    env.prev_height = float(base_env.data.qpos[2])
+    env.low_height_steps = 0
+    env.current_step = 0
+
+    # Re-get observation from the correct position
+    raw_obs = base_env._get_obs()
+    obs = np.array([env._process_observation(raw_obs)])
 
     print(f"  Humanoid teleported to ({start_x:.2f}, {start_y:.2f}), heading: {np.degrees(desired_heading):.1f} deg, height: {base_env.data.qpos[2]:.3f}")
 
