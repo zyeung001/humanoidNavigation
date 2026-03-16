@@ -91,7 +91,7 @@ class MazeMJCFGenerator:
                     wall.set("friction", "1.0 0.005 0.0001")
                     wall.set("name", f"maze_wall_{r}_{c}")
 
-        # Add top-down camera
+        # Add top-down fixed camera
         cam_z = max(rows, cols) * self.cell_size * 1.2
         cam = ET.SubElement(worldbody, "camera")
         cam.set("name", "maze_topdown")
@@ -99,6 +99,19 @@ class MazeMJCFGenerator:
         cam.set("pos", f"0 0 {cam_z:.1f}")
         cam.set("euler", "0 0 0")
         cam.set("fovy", "90")
+
+        # Override the default tracking camera to follow from above/behind
+        torso = worldbody.find(".//body[@name='torso']")
+        if torso is not None:
+            # Remove existing track camera
+            for existing_cam in torso.findall("camera[@name='track']"):
+                torso.remove(existing_cam)
+            # Add overhead tracking camera
+            track_cam = ET.SubElement(torso, "camera")
+            track_cam.set("name", "track")
+            track_cam.set("mode", "trackcom")
+            track_cam.set("pos", f"0 -3 5")
+            track_cam.set("xyaxes", "1 0 0 0 0.5 1")
 
         # Write to temp file
         tmp = tempfile.NamedTemporaryFile(suffix=".xml", delete=False, mode="w")
