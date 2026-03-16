@@ -161,6 +161,8 @@ def main():
     parser.add_argument("--record", action="store_true", help="Record video")
     parser.add_argument("--max-steps", type=int, default=5000, help="Max simulation steps")
     parser.add_argument("--speed", type=float, default=0.3, help="Target walking speed (m/s)")
+    parser.add_argument("--record-interval", type=int, default=3,
+                        help="Record every Nth frame (higher = faster, default 3 → 10fps video)")
     args = parser.parse_args()
 
     # Generate maze
@@ -280,13 +282,25 @@ def main():
     base_env = base_env.unwrapped
 
     import mujoco
+    import math
 
-    # Reset env, then teleport to maze start (keep default heading — policy
-    # was trained facing +x and can't generalize to rotated quaternions).
+    # Reset env, then teleport to maze start facing the first path segment.
     obs = vec_env.reset()
     base_env.data.qpos[0] = start_x
     base_env.data.qpos[1] = start_y
     base_env.data.qvel[:] = 0
+
+    # Set heading toward first waypoint (or goal if only 2 waypoints)
+    target_wp = waypoints[min(1, len(waypoints) - 1)]
+    spawn_heading = math.atan2(target_wp[1] - start_y, target_wp[0] - start_x)
+    # Quaternion for rotation around z-axis: [cos(θ/2), 0, 0, sin(θ/2)]
+    half = spawn_heading / 2.0
+    base_env.data.qpos[3] = math.cos(half)  # w
+    base_env.data.qpos[4] = 0.0             # x
+    base_env.data.qpos[5] = 0.0             # y
+    base_env.data.qpos[6] = math.sin(half)  # z
+    print(f"  Spawn heading: {math.degrees(spawn_heading):.1f}° (toward first waypoint)")
+
     mujoco.mj_forward(base_env.model, base_env.data)
 
     # Update the walking env's internal state to match teleported position
@@ -339,7 +353,7 @@ def main():
         action, _ = model.predict(obs, deterministic=True)
         obs, reward, done, info = vec_env.step(action)
 
-        if args.record:
+        if args.record and step % args.record_interval == 0:
             mj_data = base_env.data
             tp = render_third_person(cached_renderers, mj_data)
             td = render_topdown_map(cached_renderers, mj_data, grid, mjcf_gen.cell_size,
@@ -364,7 +378,9 @@ def main():
         output = "data/videos/maze_nav.mp4"
         Path(output).parent.mkdir(parents=True, exist_ok=True)
         h, w = frames[0].shape[:2]
-        writer = cv2.VideoWriter(output, cv2.VideoWriter_fourcc(*"mp4v"), 30, (w, h))
+        # Sim runs at ~33fps (dt=0.003×5=0.015s → 66Hz). Record interval thins this.
+        video_fps = max(1, 30 // args.record_interval)
+        writer = cv2.VideoWriter(output, cv2.VideoWriter_fourcc(*"mp4v"), video_fps, (w, h))
         for f in frames:
             writer.write(cv2.cvtColor(f, cv2.COLOR_RGB2BGR))
         writer.release()
