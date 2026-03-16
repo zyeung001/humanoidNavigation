@@ -446,7 +446,7 @@ class WalkingCurriculumEnv(WalkingEnv):
                         advancement_path.append("movement-based")
                     
                     print(f"\n{'='*60}")
-                    print(f" CURRICULUM ADVANCED: Stage {old_stage} → {self.stage}")
+                    print(f" CURRICULUM ADVANCED: Stage {old_stage} -> {self.stage}")
                     print(f"  Path: {', '.join(advancement_path)}")
                     print(f"  New max speed: {self.max_commanded_speed:.2f} m/s")
                     print(f"  Push enabled: {self.push_enabled}")

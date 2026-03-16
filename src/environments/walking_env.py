@@ -27,9 +27,9 @@ class WalkingEnv(gym.Wrapper):
     - Base humanoid observations (365 dims)
     - COM features if enabled (+6 dims)  
     - Commanded velocity (vx_world, vy_world) (+2 dims)
-    - History stacking (×4)
+    - History stacking (x4)
     
-    Total: (365 + 6 + 2) × 4 = 1492 dims
+    Total: (365 + 6 + 2) x 4 = 1492 dims
     """
     
     def __init__(self, render_mode: Optional[str] = None, config=None):
@@ -217,10 +217,10 @@ class WalkingEnv(gym.Wrapper):
 
         print("Walking environment observation space configuration (NEW):")
         print(f"  Base from env.observation_space: {base_obs_from_space}")
-        print(f"  + Position inclusion adjustment: +15 → {base_obs_dim}")
+        print(f"  + Position inclusion adjustment: +15 -> {base_obs_dim}")
         print(f"  + COM features: {extra_dim}")
         print(f"  = Body dim per frame: {self.body_dim_per_frame}")
-        print(f"  × History stack: {self.history_len if self.enable_history else 1}")
+        print(f"  x History stack: {self.history_len if self.enable_history else 1}")
         print(f"  = Stacked body dim: {self.body_dim_per_frame * self.history_len if self.enable_history else self.body_dim_per_frame}")
         print(f"  + Command block (ONCE): {self.command_block_dim}")
         print(f"  = FROZEN dimension: {self.frozen_obs_dim}")

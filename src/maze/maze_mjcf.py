@@ -116,12 +116,12 @@ class MazeMJCFGenerator:
             # Remove existing track camera
             for existing_cam in torso.findall("camera[@name='track']"):
                 torso.remove(existing_cam)
-            # GTA-style: directly behind, slightly above head height, looking forward
+            # GTA-style: directly behind and above, looking down over shoulder
             track_cam = ET.SubElement(torso, "camera")
             track_cam.set("name", "track")
-            track_cam.set("mode", "trackcom")
-            track_cam.set("pos", "0 -2.0 1.0")
-            track_cam.set("xyaxes", "1 0 0 0 0.25 1")
+            track_cam.set("mode", "track")
+            track_cam.set("pos", "0 -3.0 2.5")
+            track_cam.set("xyaxes", "1 0 0 0 0.4 1")
 
         # Write to temp file
         tmp = tempfile.NamedTemporaryFile(suffix=".xml", delete=False, mode="w")

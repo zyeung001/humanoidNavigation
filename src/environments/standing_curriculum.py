@@ -135,7 +135,7 @@ class StandingCurriculumEnv(StandingEnv):
                     self.success_buffer = []
                     
                     print(f"\n{'='*60}")
-                    print(f" CURRICULUM ADVANCED: Stage {old_stage} → {self.stage}")
+                    print(f" CURRICULUM ADVANCED: Stage {old_stage} -> {self.stage}")
                     print(f"  New target: {self.base_target_height:.2f}m ± {self.height_tolerances[self.stage]:.2f}m")
                     print(f"  Min episode length: {self.min_episode_lengths[self.stage]} steps")
                     print(f"  Domain randomization: {self.domain_rand}")

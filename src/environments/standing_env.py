@@ -94,9 +94,9 @@ class StandingEnv(gym.Wrapper):
         
         print("Observation space configuration:")
         print(f"  Base from env.observation_space: {base_obs_from_space}")
-        print(f"  + Position inclusion adjustment: +15 → {base_obs_dim}")
-        print(f"  + COM features: {extra_dim} → {feature_dim}")
-        print(f"  × History stack: {self.history_len if self.enable_history else 1}")
+        print(f"  + Position inclusion adjustment: +15 -> {base_obs_dim}")
+        print(f"  + COM features: {extra_dim} -> {feature_dim}")
+        print(f"  x History stack: {self.history_len if self.enable_history else 1}")
         print(f"  = FROZEN dimension: {self.frozen_obs_dim}")
         print(f"  Feature normalization: {self.feature_norm}")
         print(f"  Action smoothing tau: {self.action_smoothing_tau}")

@@ -204,7 +204,7 @@ class MazeCurriculum:
         self.stage_episodes = 0
 
         if self.current_stage != old_stage:
-            print(f"[MazeCurriculum] Advanced: Stage {old_stage} → {self.current_stage} "
+            print(f"[MazeCurriculum] Advanced: Stage {old_stage} -> {self.current_stage} "
                   f"({self.stage_config['name']})")
             return True
         return False
