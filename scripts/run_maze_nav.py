@@ -22,6 +22,14 @@ import numpy as np
 import cv2
 
 
+def ensure_framebuffer(mj_model, width, height):
+    """Ensure the MuJoCo model's offscreen framebuffer is large enough."""
+    if mj_model.vis.global_.offwidth < width:
+        mj_model.vis.global_.offwidth = width
+    if mj_model.vis.global_.offheight < height:
+        mj_model.vis.global_.offheight = height
+
+
 def render_topdown_map(mj_model, mj_data, grid, cell_size, goal_xy, waypoints, size=480):
     """Render a MuJoCo top-down camera view with overlaid path and goal markers.
 
@@ -33,6 +41,7 @@ def render_topdown_map(mj_model, mj_data, grid, cell_size, goal_xy, waypoints, s
     """
     import mujoco
 
+    ensure_framebuffer(mj_model, size, size)
     renderer = mujoco.Renderer(mj_model, height=size, width=size)
     renderer.update_scene(mj_data, camera="maze_topdown")
     img = renderer.render().copy()
@@ -81,6 +90,7 @@ def render_third_person(mj_model, mj_data, width=640, height=480):
     """Render the third-person tracking camera view."""
     import mujoco
 
+    ensure_framebuffer(mj_model, width, height)
     renderer = mujoco.Renderer(mj_model, height=height, width=width)
     renderer.update_scene(mj_data, camera="track")
     img = renderer.render().copy()
