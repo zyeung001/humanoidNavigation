@@ -401,6 +401,13 @@ class WalkingEnv(gym.Wrapper):
 
         com_vel_x, com_vel_y = linear_vel[0], linear_vel[1]
         actual_speed = np.sqrt(com_vel_x**2 + com_vel_y**2)
+
+        # Torso "up" direction: how vertical the humanoid is (1.0 = upright, 0 = horizontal).
+        # This is yaw-invariant — pure z-rotation gives up_z=1.0 regardless of heading.
+        # The old abs(quat[0]) check conflated yaw with tilt, causing false termination
+        # when the humanoid faces any direction other than +x.
+        w, qx, qy, qz = quat[0], quat[1], quat[2], quat[3]
+        up_z = 1.0 - 2.0 * (qx**2 + qy**2)
         
         # ========== MODULAR REWARD CALCULATOR ==========
         v_target = np.array([self.commanded_vx_world, self.commanded_vy_world])
@@ -464,7 +471,7 @@ class WalkingEnv(gym.Wrapper):
         height_reward = base_height_reward
 
         # ========== UPRIGHT REWARD (halved — survival must not compete with tracking) ==========
-        upright_error = 1.0 - abs(quat[0])
+        upright_error = 1.0 - max(up_z, 0.0)  # 0 when upright, 1 when horizontal
         if height >= 1.15:
             base_upright = 0.25 * np.exp(-6.0 * upright_error**2)
         elif height >= 1.0:
@@ -512,7 +519,7 @@ class WalkingEnv(gym.Wrapper):
         if height > 2.0:
             terminate = True
             termination_penalty = -self.termination_penalty_constant * 0.5
-        elif abs(quat[0]) < 0.5:  # Severely tilted (lowered from 0.6)
+        elif up_z < 0.0:  # Severely tilted (torso past horizontal, yaw-invariant)
             terminate = True
             termination_penalty = -self.termination_penalty_constant
         
@@ -538,7 +545,7 @@ class WalkingEnv(gym.Wrapper):
             self.low_height_steps = 0
 
             # Mild orientation penalty (scaled down 10x)
-            if abs(quat[0]) < 0.6:
+            if up_z < 0.5:  # Torso tilted > 60° from vertical
                 termination_penalty = -0.5  # FIX: was -5.0
         
         # ========== TOTAL REWARD ==========
@@ -610,7 +617,7 @@ class WalkingEnv(gym.Wrapper):
         if terminate:
             if height > 2.0:
                 self._termination_cause = 'height_too_high'
-            elif abs(quat[0]) < 0.5:
+            elif up_z < 0.0:
                 self._termination_cause = 'severely_tilted'
             elif height < self.termination_height_threshold:
                 self._termination_cause = 'height_too_low'
