@@ -289,7 +289,7 @@ def main():
     if len(waypoints) >= 2:
         first_dx = waypoints[1][0] - waypoints[0][0]
         if first_dx < -0.1:
-            print(f"  Path initially goes in -x — reversing start/goal so humanoid walks forward")
+            print("  Path initially goes in -x — reversing start/goal so humanoid walks forward")
             start_x, goal_x = goal_x, start_x
             start_y, goal_y = goal_y, start_y
             waypoints = list(reversed(waypoints))
