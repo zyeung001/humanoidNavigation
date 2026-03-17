@@ -24,15 +24,19 @@ except ImportError:
 class MazeMJCFGenerator:
     """Generate MuJoCo MJCF XML files with maze wall geometry."""
 
-    def __init__(self, cell_size=2.0, wall_height=0.5, wall_rgba=(0.6, 0.6, 0.6, 1.0)):
+    def __init__(self, cell_size=2.0, wall_height=0.5, wall_thickness=0.15,
+                 wall_rgba=(0.6, 0.6, 0.6, 1.0)):
         """
         Args:
             cell_size: World-space size of each grid cell in meters.
             wall_height: Height of maze walls in meters.
+            wall_thickness: Half-thickness of wall geoms in meters.
+                Passage width = cell_size - 2*wall_thickness.
             wall_rgba: RGBA color for wall geoms.
         """
         self.cell_size = cell_size
         self.wall_height = wall_height
+        self.wall_thickness = wall_thickness
         self.wall_rgba = wall_rgba
 
     def generate(self, grid, base_xml_path=None):
@@ -93,7 +97,7 @@ class MazeMJCFGenerator:
                     wall = ET.SubElement(worldbody, "geom")
                     wall.set("type", "box")
                     wall.set("pos", f"{x:.3f} {y:.3f} {z:.3f}")
-                    wall.set("size", f"{half_size:.3f} {half_size:.3f} {wall_half_h:.3f}")
+                    wall.set("size", f"{self.wall_thickness:.3f} {self.wall_thickness:.3f} {wall_half_h:.3f}")
                     wall.set("rgba", rgba_str)
                     wall.set("contype", "1")
                     wall.set("conaffinity", "1")
@@ -116,12 +120,12 @@ class MazeMJCFGenerator:
             # Remove existing track camera
             for existing_cam in torso.findall("camera[@name='track']"):
                 torso.remove(existing_cam)
-            # Behind and above, looking down over shoulder
+            # Behind and slightly above, angled down
             track_cam = ET.SubElement(torso, "camera")
             track_cam.set("name", "track")
             track_cam.set("mode", "track")
-            track_cam.set("pos", "-3.0 0 2.5")
-            track_cam.set("xyaxes", "0 -1 0 0.3 0 1")
+            track_cam.set("pos", "-2.5 0 1.8")
+            track_cam.set("xyaxes", "0 -1 0 0.5 0 1")
 
         # Write to temp file
         tmp = tempfile.NamedTemporaryFile(suffix=".xml", delete=False, mode="w")
