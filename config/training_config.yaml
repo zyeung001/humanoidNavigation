@@ -182,7 +182,7 @@ walking:
   curriculum_max_speed_stages: [0.15, 0.3, 0.45, 0.6]
 
   # Arm penalty gating: weight per curriculum stage (ramps smoothly between stages)
-  arm_penalty_stage_weights: [0.0, 0.15, 0.3, 0.5]
+  arm_penalty_stage_weights: [0.0, 0.5, 0.7, 1.0]  # 0.15 at Stage 1 gave effective weight 0.12 — too weak (arm=-1.0 cap never hit). 0.5 gives ~2.0/step raw penalty.
   arm_penalty_ramp_rate: 0.000002  # Per-step ramp toward stage target (slower)
   
   # ========== VELOCITY COMMAND GENERATOR  ==========
@@ -193,7 +193,7 @@ walking:
   # ========== YAW RATE TRACKING  ==========
   include_yaw_rate: true             # Enable yaw rate tracking in observation/reward
   max_yaw_rate: 1.0                  # rad/s maximum commanded yaw rate
-  yaw_rate_weight: 0.5               # Reward weight for yaw tracking (was 3.0 - too much free reward for standing)
+  yaw_rate_weight: 1.5               # Reward weight for yaw tracking. 0.5 was too weak — policy ignored yaw commands. 3.0 gave free reward for standing. 1.5 balances incentive vs tracking signal.
   
   # ========== CURRICULUM LEARNING ==========
   curriculum_start_stage: 1          # Skip Stage 0 when resuming — model already walks, needs arm penalty active
@@ -202,8 +202,8 @@ walking:
   warmup_episodes: 0              # NO warmup leniency - enforce strict criteria
   curriculum_success_rate: 0.50   # Success rate needed to advance
 
-  # Direction diversity - DISABLED for Stage 0 (forward only)
-  direction_diversity: false
+  # Direction diversity - enables varied movement directions + yaw commands
+  direction_diversity: true
   
   # ========== ROBUSTNESS TRAINING (STAGE-CONTROLLED) ==========
   # Push perturbations DISABLED for Stage 0
@@ -363,7 +363,8 @@ walking:
   reward_jerk_penalty: 0.0        # Zeroed: penalizes gait changes, conflicts with walking
   reward_arm_posture_weight: 0.8  # Base weight, effective penalty controlled by deadzone + cap
   arm_posture_deadzone: 0.3       # Radians — deviations within deadzone are FREE (allows natural arm swing)
-  arm_penalty_cap: 1.0            # Max penalty per step — never exceeds this regardless of deviation
+  arm_penalty_cap: 2.5            # Max penalty per step. 1.0 was ~16% of reward — policy ignored it.
+                                 # 2.5 is ~35% with yaw active — meaningful without dominating tracking.
 
   # Consistency reward
   reward_consistency_weight: 0.0  # Zeroed: noisy, creates conflicting advantages
