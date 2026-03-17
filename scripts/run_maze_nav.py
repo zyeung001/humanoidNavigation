@@ -282,25 +282,25 @@ def main():
     base_env = base_env.unwrapped
 
     import mujoco
-    import math
 
-    # Reset env, then teleport to maze start facing the first path segment.
+    # Ensure path goes roughly in +x direction so the humanoid (which always
+    # spawns facing +x) can walk forward. If the goal is behind the start,
+    # swap them and reverse the waypoints.
+    if len(waypoints) >= 2:
+        first_dx = waypoints[1][0] - waypoints[0][0]
+        if first_dx < -0.1:
+            print(f"  Path initially goes in -x — reversing start/goal so humanoid walks forward")
+            start_x, goal_x = goal_x, start_x
+            start_y, goal_y = goal_y, start_y
+            waypoints = list(reversed(waypoints))
+            nav = NavigationController(waypoints, target_speed=args.speed)
+
+    # Reset env, then teleport to maze start (facing +x — the heading the
+    # policy was trained with).
     obs = vec_env.reset()
     base_env.data.qpos[0] = start_x
     base_env.data.qpos[1] = start_y
     base_env.data.qvel[:] = 0
-
-    # Set heading toward first waypoint (or goal if only 2 waypoints)
-    target_wp = waypoints[min(1, len(waypoints) - 1)]
-    spawn_heading = math.atan2(target_wp[1] - start_y, target_wp[0] - start_x)
-    # Quaternion for rotation around z-axis: [cos(θ/2), 0, 0, sin(θ/2)]
-    half = spawn_heading / 2.0
-    base_env.data.qpos[3] = math.cos(half)  # w
-    base_env.data.qpos[4] = 0.0             # x
-    base_env.data.qpos[5] = 0.0             # y
-    base_env.data.qpos[6] = math.sin(half)  # z
-    print(f"  Spawn heading: {math.degrees(spawn_heading):.1f}° (toward first waypoint)")
-
     mujoco.mj_forward(base_env.model, base_env.data)
 
     # Update the walking env's internal state to match teleported position
