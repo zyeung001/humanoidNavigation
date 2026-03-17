@@ -202,8 +202,8 @@ walking:
   warmup_episodes: 0              # NO warmup leniency - enforce strict criteria
   curriculum_success_rate: 0.50   # Success rate needed to advance
 
-  # Direction diversity - enables varied movement directions + yaw commands
-  direction_diversity: true
+  # Direction diversity - DISABLED: policy walks forward only, yaw handles turning
+  direction_diversity: false
   
   # ========== ROBUSTNESS TRAINING (STAGE-CONTROLLED) ==========
   # Push perturbations DISABLED for Stage 0

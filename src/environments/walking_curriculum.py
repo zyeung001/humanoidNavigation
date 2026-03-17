@@ -165,8 +165,19 @@ class WalkingCurriculumEnv(WalkingEnv):
             # Force standing command with yaw_rate = 0
             self.fixed_command = (0.0, 0.0, 0.0)
         elif self.direction_diversity:
-            direction_type = np.random.choice(['forward', 'diagonal', 'lateral', 'backward', 'random'],
-                                             p=[0.5, 0.25, 0.15, 0.02, 0.08])
+            # Stage-dependent direction distribution
+            if current_stage == 0:
+                # Stage 0: Mostly forward, no lateral/backward
+                direction_type = np.random.choice(['forward', 'diagonal'],
+                                                 p=[0.85, 0.15])
+            elif current_stage == 1:
+                # Stage 1: Mostly forward, some diagonal, rare lateral
+                direction_type = np.random.choice(['forward', 'diagonal', 'lateral', 'random'],
+                                                 p=[0.60, 0.25, 0.10, 0.05])
+            else:
+                # Stage 2+: Full variety
+                direction_type = np.random.choice(['forward', 'diagonal', 'lateral', 'backward', 'random'],
+                                                 p=[0.5, 0.25, 0.15, 0.02, 0.08])
 
             # Stage 0-1: Fixed speed at max to avoid variance
             # Later stages: Allow speed variation
@@ -189,9 +200,11 @@ class WalkingCurriculumEnv(WalkingEnv):
             
             vx = speed * np.cos(angle)
             vy = speed * np.sin(angle)
-            # Sample yaw rate with reduced probability for early stages
+            # Sample yaw rate — scale by stage (gentle at Stage 0, full by Stage 2+)
             max_yaw = getattr(self, 'max_yaw_rate', 1.0)
-            yaw_rate = np.random.uniform(-max_yaw, max_yaw) * (0.3 + 0.7 * current_stage / max(self.max_stage, 1))
+            num_stages = max(len(self.speed_stages) - 1, 1)
+            yaw_scale = min(1.0, 0.2 + 0.4 * current_stage / num_stages)  # Stage 0: 0.2, Stage 1: 0.33, Stage 2: 0.47, Stage 3: 0.6
+            yaw_rate = np.random.uniform(-max_yaw, max_yaw) * yaw_scale
             self.fixed_command = (vx, vy, yaw_rate)
         else:
             # No direction diversity
@@ -205,12 +218,17 @@ class WalkingCurriculumEnv(WalkingEnv):
                 yaw_rate = 0.0
                 self.fixed_command = (vx, vy, yaw_rate)
             elif current_stage == 1:
-                # Stage 1: Slightly more variety in direction
+                # Stage 1: Forward walking + yaw commands for turning
                 angle = np.random.uniform(-np.pi/6, np.pi/6)  # ±30 degrees
                 speed = self.max_commanded_speed
                 vx = speed * np.cos(angle)
                 vy = speed * np.sin(angle)
-                yaw_rate = 0.0
+                # Add gentle yaw commands — 70% chance of yaw, ±0.3 rad/s max
+                max_yaw = getattr(self, 'max_yaw_rate', 1.0)
+                if np.random.random() < 0.7:
+                    yaw_rate = np.random.uniform(-max_yaw * 0.3, max_yaw * 0.3)
+                else:
+                    yaw_rate = 0.0
                 self.fixed_command = (vx, vy, yaw_rate)
             elif current_stage == 2:
                 # Stage 2: Full direction range, variable speed
