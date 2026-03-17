@@ -250,8 +250,10 @@ walking:
 
   # Training schedule
   total_timesteps: 30_000_000
-  learning_rate: 0.000005        # FIX: 3e-5 caused 95.8% clip fraction for 5M steps. 5e-6 keeps steps within clip boundary.
-  final_learning_rate: 0.000003
+  learning_rate: 0.00005         # 10x increase for arm posture fine-tuning. 5e-6 produced clip_fraction=0 (frozen policy).
+                                 # Walker is stable (93% success, ep_len=2500) — can absorb larger updates.
+                                 # Original 3e-5 note was for standing→walking transfer, not fine-tuning.
+  final_learning_rate: 0.00005   # No decay — keep flat for arm correction phase.
 
   # PPO algorithm parameters
   n_steps: 2048
