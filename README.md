@@ -7,20 +7,20 @@ Reinforcement learning for training humanoid robots to stand, walk, and navigate
 Two-stage training pipeline with curriculum learning and transfer:
 
 1. **Standing** — Balance at 1.40m target height via 6-stage curriculum (1.29m ±0.04m achieved, 90%+ success)
-2. **Walking** — Command-conditioned velocity tracking via 3-stage speed curriculum (0-1.5 m/s, any direction)
-3. **Navigation** — Goal-directed locomotion with obstacle avoidance (future work)
+2. **Walking** — Command-conditioned velocity tracking via 3-stage speed curriculum (0-0.6 m/s)
+3. **Maze Navigation** — Frozen walking policy + pure pursuit controller navigates procedurally generated mazes
 
 Standing policy weights transfer to walking via `transfer_standing_to_walking()`, which extends the observation space from 1484 to 1493 dims and re-initializes the value function.
 
 ## Architecture
 
 ```
-Standing (5M steps)           Transfer Learning           Walking (30M steps)
-┌─────────────────────┐    ┌──────────────────────┐    ┌──────────────────────┐
-│ StandingCurriculumEnv│    │ VecNormalizeExtender  │    │ WalkingCurriculumEnv │
-│ 6 stages: 0.80→1.40m│ ──→│ PolicyTransfer        │──→ │ 3 stages: 0.15→0.8  │
-│ Height targeting     │    │ WarmupCollector        │    │ Velocity tracking    │
-└─────────────────────┘    └──────────────────────┘    └──────────────────────┘
+Standing (5M steps)       Transfer Learning       Walking (30M steps)        Maze Navigation
+┌────────────────────┐   ┌────────────────────┐   ┌────────────────────┐   ┌────────────────────┐
+│StandingCurriculumEnv│   │VecNormalizeExtender │   │WalkingCurriculumEnv│   │ NavigationController│
+│6 stages: 0.80→1.40m│──→│PolicyTransfer       │──→│3 stages: 0.15→0.6 │──→│ Pure pursuit + A*  │
+│Height targeting     │   │WarmupCollector      │   │Velocity tracking   │   │ Frozen walking PPO │
+└────────────────────┘   └────────────────────┘   └────────────────────┘   └────────────────────┘
 ```
 
 ## Project Structure
@@ -34,12 +34,19 @@ humanoidNavigation/
 │   ├── train_standing.py
 │   ├── train_walking.py
 │   ├── evaluate.py
+│   ├── run_maze_nav.py      # Maze navigation demo
 │   ├── record_video.py
 │   └── debug/               # Diagnostic and analysis tools
 └── src/                     # Source library
     ├── agents/              # High-level agent wrappers + diagnostics
     ├── core/                # Reward calculator + velocity command generator
     ├── environments/        # Gym wrappers + curriculum learning
+    ├── maze/                # Maze generation, solving, and navigation
+    │   ├── maze_generator.py    # DFS and Prim's maze generation
+    │   ├── maze_maps.py         # Predefined maze layouts
+    │   ├── maze_mjcf.py         # MuJoCo XML generation with walls
+    │   ├── solver.py            # A* pathfinding
+    │   └── navigation_controller.py  # Pure pursuit waypoint following
     ├── training/            # Transfer learning, model management, callbacks
     └── utils/               # Visualization + WandB utilities
 ```
@@ -91,6 +98,41 @@ python scripts/evaluate.py --task walking \
     --vx 1.0 --vy 0.0 --record
 ```
 
+### Maze Navigation
+
+```bash
+# Run corridor maze with video recording
+python scripts/run_maze_nav.py --maze-type corridor \
+    --model models/walking/best/model.zip --record
+
+# Smaller maze for faster runs
+python scripts/run_maze_nav.py --maze-type corridor \
+    --model models/walking/best/model.zip --record --cell-size 1.0
+
+# Open arena
+python scripts/run_maze_nav.py --maze-type open \
+    --model models/walking/best/model.zip --record --speed 0.3
+
+# Random 3x3 maze
+python scripts/run_maze_nav.py --maze-type dfs_3x3 \
+    --model models/walking/best/model.zip --record
+```
+
+**Available maze types:** `corridor`, `open`, `l_maze`, `u_maze`, `medium`, `open_arena`, `corridor_gen`, `dfs_3x3`, `dfs_5x5`, `prims_3x3`, `prims_5x5`
+
+**Options:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--maze-type` | `corridor` | Maze layout |
+| `--model` | — | Path to walking model `.zip` |
+| `--vecnorm` | auto-detect | Path to VecNormalize `.pkl` |
+| `--speed` | `0.3` | Target walking speed (m/s) |
+| `--cell-size` | `2.0` | Maze cell size in meters |
+| `--max-steps` | `5000` | Max simulation steps |
+| `--record` | off | Save video to `data/videos/maze_nav.mp4` |
+| `--record-interval` | `3` | Record every Nth frame |
+
 ### Debug / Analysis
 
 ```bash
@@ -115,16 +157,23 @@ python scripts/debug/diagnose_transfer.py
 - Robust to mass/friction perturbations (±5%)
 
 ### Walking Controller
-- Command-conditioned on desired velocity (vx, vy) in world frame
-- Supports speeds from 0.0 to 1.5 m/s
-- Any direction (forward, backward, sideways, diagonal)
-- Stable height during locomotion (1.20-1.35m)
-- Velocity tracking error < 0.4 m/s at max speed
-- Robust to push perturbations (20-80 N)
+- Command-conditioned on desired velocity (vx, vy, yaw_rate) in world frame
+- 4-stage speed curriculum: 0.15 → 0.30 → 0.45 → 0.60 m/s
+- Stable height during locomotion (~1.27m)
+- Three-phase transfer warmup: VF warmup → gradual ramp → permanent policy scaling
+- Arm posture penalty (curriculum-gated) for sim-to-real transfer
+
+### Maze Navigation
+- Frozen walking policy steered by pure pursuit controller
+- A* pathfinding on procedural or predefined maze grids
+- Supports DFS, Prim's, and hand-designed maze layouts
+- Configurable cell size, wall thickness, and walking speed
+- Auto-detects VecNormalize stats and reverses path direction when needed
+- Dual-view video: third-person chase cam + top-down map overlay
 
 ## Configuration
 
-All training hyperparameters live in `config/training_config.yaml`, organized under `standing:` and `walking:` top-level keys. Covers:
+All training hyperparameters live in `config/training_config.yaml`, organized under `standing:`, `walking:`, and `maze:` top-level keys. Covers:
 
 - Network architecture (`[512, 512, 256]` policy and value networks, SiLU activation)
 - Learning rate schedules (linear decay)
