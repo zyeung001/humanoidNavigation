@@ -406,8 +406,7 @@ class WalkingEnv(gym.Wrapper):
         # This is yaw-invariant — pure z-rotation gives up_z=1.0 regardless of heading.
         # The old abs(quat[0]) check conflated yaw with tilt, causing false termination
         # when the humanoid faces any direction other than +x.
-        w, qx, qy, qz = quat[0], quat[1], quat[2], quat[3]
-        up_z = 1.0 - 2.0 * (qx**2 + qy**2)
+        up_z = 1.0 - 2.0 * (quat[1]**2 + quat[2]**2)
         
         # ========== MODULAR REWARD CALCULATOR ==========
         v_target = np.array([self.commanded_vx_world, self.commanded_vy_world])
