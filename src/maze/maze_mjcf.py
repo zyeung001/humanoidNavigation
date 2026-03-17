@@ -83,27 +83,73 @@ class MazeMJCFGenerator:
             floor_extent = max(rows, cols) * self.cell_size
             floor.set("size", f"{floor_extent} {floor_extent} 0.1")
 
-        # Add maze walls
+        # Add maze walls — merge adjacent cells into continuous segments
         wall_half_h = self.wall_height / 2.0
         rgba_str = " ".join(f"{c:.2f}" for c in self.wall_rgba)
+        wall_id = 0
 
+        # Merge horizontal runs first, then vertical, to minimise geom count
+        covered = np.zeros_like(grid, dtype=bool)
+
+        # Horizontal runs
+        for r in range(rows):
+            c = 0
+            while c < cols:
+                if grid[r, c] == 1 and not covered[r, c]:
+                    # Find run length
+                    c_end = c
+                    while c_end < cols and grid[r, c_end] == 1:
+                        c_end += 1
+                    run_len = c_end - c
+                    if run_len >= 2:
+                        # Mark covered
+                        covered[r, c:c_end] = True
+                        # Span center and half-extent in x
+                        x_start = offset_x + c * self.cell_size
+                        x_end = offset_x + c_end * self.cell_size
+                        cx = (x_start + x_end) / 2.0
+                        sx = (x_end - x_start) / 2.0
+                        cy = offset_y + (rows - 1 - r) * self.cell_size + half_size
+                        self._add_wall_geom(worldbody, cx, cy, wall_half_h,
+                                            sx, half_size, wall_half_h, rgba_str, wall_id)
+                        wall_id += 1
+                    c = c_end
+                else:
+                    c += 1
+
+        # Vertical runs
+        for c in range(cols):
+            r = 0
+            while r < rows:
+                if grid[r, c] == 1 and not covered[r, c]:
+                    r_end = r
+                    while r_end < rows and grid[r_end, c] == 1 and not covered[r_end, c]:
+                        r_end += 1
+                    run_len = r_end - r
+                    if run_len >= 2:
+                        covered[r:r_end, c] = True
+                        # Grid rows are flipped in y
+                        y_top = offset_y + (rows - 1 - r) * self.cell_size + half_size
+                        y_bot = offset_y + (rows - 1 - (r_end - 1)) * self.cell_size + half_size
+                        cy = (y_top + y_bot) / 2.0
+                        sy = abs(y_top - y_bot) / 2.0 + half_size
+                        cx = offset_x + c * self.cell_size + half_size
+                        self._add_wall_geom(worldbody, cx, cy, wall_half_h,
+                                            half_size, sy, wall_half_h, rgba_str, wall_id)
+                        wall_id += 1
+                    r = r_end
+                else:
+                    r += 1
+
+        # Remaining isolated wall cells
         for r in range(rows):
             for c in range(cols):
-                if grid[r, c] == 1:
-                    x = offset_x + c * self.cell_size + half_size
-                    y = offset_y + (rows - 1 - r) * self.cell_size + half_size  # flip y
-                    z = wall_half_h
-
-                    wall = ET.SubElement(worldbody, "geom")
-                    wall.set("type", "box")
-                    wall.set("pos", f"{x:.3f} {y:.3f} {z:.3f}")
-                    wall.set("size", f"{self.wall_thickness:.3f} {self.wall_thickness:.3f} {wall_half_h:.3f}")
-                    wall.set("rgba", rgba_str)
-                    wall.set("contype", "1")
-                    wall.set("conaffinity", "1")
-                    wall.set("condim", "3")
-                    wall.set("friction", "1.0 0.005 0.0001")
-                    wall.set("name", f"maze_wall_{r}_{c}")
+                if grid[r, c] == 1 and not covered[r, c]:
+                    cx = offset_x + c * self.cell_size + half_size
+                    cy = offset_y + (rows - 1 - r) * self.cell_size + half_size
+                    self._add_wall_geom(worldbody, cx, cy, wall_half_h,
+                                        half_size, half_size, wall_half_h, rgba_str, wall_id)
+                    wall_id += 1
 
         # Add top-down fixed camera
         cam_z = max(rows, cols) * self.cell_size * 1.2
@@ -131,6 +177,26 @@ class MazeMJCFGenerator:
         tmp = tempfile.NamedTemporaryFile(suffix=".xml", delete=False, mode="w")
         tree.write(tmp.name, xml_declaration=True)
         return tmp.name
+
+    @staticmethod
+    def _add_wall_geom(worldbody, cx, cy, cz, sx, sy, sz, rgba_str, wall_id):
+        """Add a box geom representing a wall segment.
+
+        Args:
+            worldbody: XML element to attach the geom to.
+            cx, cy, cz: Center position of the box.
+            sx, sy, sz: Half-extents of the box.
+            rgba_str: RGBA color string.
+            wall_id: Unique integer ID for naming.
+        """
+        geom = ET.SubElement(worldbody, "geom")
+        geom.set("name", f"maze_wall_{wall_id}")
+        geom.set("type", "box")
+        geom.set("pos", f"{cx:.3f} {cy:.3f} {cz:.3f}")
+        geom.set("size", f"{sx:.3f} {sy:.3f} {sz:.3f}")
+        geom.set("rgba", rgba_str)
+        geom.set("contype", "1")
+        geom.set("conaffinity", "1")
 
     def grid_to_world(self, grid_row, grid_col, grid_shape):
         """Convert grid cell indices to world coordinates.
