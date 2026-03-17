@@ -163,6 +163,8 @@ def main():
     parser.add_argument("--speed", type=float, default=0.3, help="Target walking speed (m/s)")
     parser.add_argument("--record-interval", type=int, default=3,
                         help="Record every Nth frame (higher = faster, default 3 → 10fps video)")
+    parser.add_argument("--cell-size", type=float, default=2.0,
+                        help="Maze cell size in meters (smaller = shorter maze, default 2.0)")
     args = parser.parse_args()
 
     # Generate maze
@@ -174,11 +176,11 @@ def main():
     from src.maze.solver import solve
     from src.maze.maze_mjcf import MazeMJCFGenerator
 
-    mjcf_gen = MazeMJCFGenerator(cell_size=2.0)
+    mjcf_gen = MazeMJCFGenerator(cell_size=args.cell_size)
     start_cell, goal_cell = mjcf_gen.sample_start_goal(grid, seed=args.seed)
     print(f"  Start: {start_cell}, Goal: {goal_cell}")
 
-    waypoints = solve(grid, start_cell, goal_cell, cell_size=2.0)
+    waypoints = solve(grid, start_cell, goal_cell, cell_size=args.cell_size)
     if waypoints is None:
         print("ERROR: No path found!")
         return
@@ -189,7 +191,7 @@ def main():
     if args.model is None:
         print("\nNo model provided — showing maze schematic only.")
         from src.maze.maze_renderer import MazeRenderer
-        renderer = MazeRenderer(grid, cell_size=2.0)
+        renderer = MazeRenderer(grid, cell_size=args.cell_size)
         fig = renderer.render_schematic(
             agent_pos=start_cell,
             goal_pos=goal_cell,
