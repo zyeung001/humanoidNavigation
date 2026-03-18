@@ -361,10 +361,12 @@ walking:
   # Penalties (keep small)
   reward_action_penalty: 0.0003   # FIX: Reduced from 0.003 (10x)
   reward_jerk_penalty: 0.0        # Zeroed: penalizes gait changes, conflicts with walking
-  reward_arm_posture_weight: 0.8  # Base weight, effective penalty controlled by deadzone + cap
+  reward_arm_posture_weight: 1.5  # Increased from 0.8. With stage weight 0.5, effective=0.75.
+                                 # Raw penalty: -0.75 × 6 × 1.2² = -6.5, capped to -5.0.
+                                 # Arms must be the dominant signal — policy ignored 2.5/step for 3M steps.
   arm_posture_deadzone: 0.3       # Radians — deviations within deadzone are FREE (allows natural arm swing)
-  arm_penalty_cap: 2.5            # Max penalty per step. 1.0 was ~16% of reward — policy ignored it.
-                                 # 2.5 is ~35% with yaw active — meaningful without dominating tracking.
+  arm_penalty_cap: 5.0            # Per-step reward is track(4.5)+prog(1.7)+yaw(1.0)-arm(5.0)=2.2.
+                                 # Fixing arms gives +5.0/step upside — larger than any tracking improvement.
 
   # Consistency reward
   reward_consistency_weight: 0.0  # Zeroed: noisy, creates conflicting advantages
