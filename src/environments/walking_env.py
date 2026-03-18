@@ -637,7 +637,7 @@ class WalkingEnv(gym.Wrapper):
         }
 
         # ========== DETAILED DEBUG LOGGING ==========
-        if self.current_step % 500 == 0:
+        if self.current_step % 2500 == 0 and self.current_step > 0:
             yaw_info = f", yaw_err={yaw_error:.3f}" if self.include_yaw_rate else ""
             print(f"Step {self.current_step:4d}: "
                 f"h={height:.3f}, cmd=({self.commanded_vx_world:.2f},{self.commanded_vy_world:.2f}), "
