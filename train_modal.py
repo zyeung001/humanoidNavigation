@@ -85,7 +85,9 @@ image = (
 ENVS_PER_CORE = 3
 
 # Default core count (override with --cores)
-DEFAULT_CORES = 32
+# 4 cores = 12 envs, matching the tuned batch_size=24576 (full buffer = 1 minibatch/epoch)
+# Scaling beyond 12 envs breaks the full-buffer invariant unless batch_size is also scaled.
+DEFAULT_CORES = 4
 
 
 def _upload_local_file(local_path: str, vol_dest: str):
@@ -105,9 +107,12 @@ def _upload_local_file(local_path: str, vol_dest: str):
     volumes={VOLUME_PATH: volume},
     timeout=60,
 )
-def upload_file_to_volume(data: bytes, dest_path: str):
-    """Write bytes to a path on the volume."""
+def upload_file_to_volume(data: bytes, dest_path: str, overwrite: bool = False):
+    """Write bytes to a path on the volume. Skips if file already exists unless overwrite=True."""
     full = os.path.join(VOLUME_PATH, dest_path)
+    if not overwrite and os.path.exists(full):
+        print(f"  Skipped (already on volume) -> {dest_path} ({os.path.getsize(full):,} bytes)")
+        return
     os.makedirs(os.path.dirname(full), exist_ok=True)
     with open(full, "wb") as f:
         f.write(data)
@@ -144,9 +149,9 @@ def list_volume(path: str = ""):
 @app.function(
     image=image,
     cpu=DEFAULT_CORES,
-    memory=32768,  # 32 GiB
+    memory=8192,  # 8 GiB — sufficient for 12 envs; scale with --cores if needed
     timeout=86400,  # 24 hours
-    retries=modal.Retries(max_retries=3, initial_delay=1.0, backoff_coefficient=1.0),
+    retries=modal.Retries(max_retries=0),
     volumes={VOLUME_PATH: volume},
     secrets=[modal.Secret.from_name("wandb-secret")],
 )
@@ -260,6 +265,10 @@ def train(
     if task in cfg:
         cfg[task]["n_envs"] = n_envs
         cfg[task]["device"] = "cpu"
+        # Keep full-buffer invariant: batch_size = n_envs * n_steps → 1 minibatch/epoch
+        # Without this, scaling n_envs increases gradient steps per cycle and breaks PPO tuning.
+        n_steps = cfg[task].get("n_steps", 2048)
+        cfg[task]["batch_size"] = n_envs * n_steps
     with open(config_path, "w") as f:
         yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
     print(f"  Config patched: n_envs={n_envs}, device=cpu")
@@ -334,6 +343,8 @@ def main(
     if files_to_upload:
         print(f"\nUploading {len(files_to_upload)} file(s) to Modal volume...")
         for local_path, vol_dest in files_to_upload:
+            size_mb = os.path.getsize(local_path) / 1024 / 1024
+            print(f"  {local_path} ({size_mb:.1f} MB) -> {vol_dest}")
             with open(local_path, "rb") as f:
                 data = f.read()
             upload_file_to_volume.remote(data, vol_dest)
