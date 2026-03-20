@@ -1090,10 +1090,14 @@ def main():
     print(f"{'='*60}\n")
 
     model.learn(
-        total_timesteps=learn_timesteps, 
-        callback=callbacks, 
+        total_timesteps=learn_timesteps,
+        callback=callbacks,
         reset_num_timesteps=reset_num_timesteps
     )
+
+    # Fix: reset_num_timesteps=True makes num_timesteps equal to learn_timesteps
+    # (the remaining steps), not the true total. Restore before saving.
+    model.num_timesteps = total_timesteps
 
     # Save final model using ModelManager
     model_manager.save_final(model, env)
