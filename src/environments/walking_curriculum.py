@@ -65,17 +65,18 @@ class WalkingCurriculumEnv(WalkingEnv):
         # Later stages: gradually introduce arm posture penalty
         self._arm_penalty_stage_weights = cfg.get('arm_penalty_stage_weights', [0.0, 0.4, 0.6, 0.8])
         self._arm_penalty_ramp_rate = float(cfg.get('arm_penalty_ramp_rate', 0.000003))
-        self._arm_penalty_current = 0.0
         self._arm_penalty_target = self._arm_penalty_stage_weights[min(self.stage, len(self._arm_penalty_stage_weights) - 1)]
-        # Force arm weight to 0.0 BEFORE super().__init__() so WalkingEnv reads 0.0
-        cfg['reward_arm_posture_weight'] = 0.0
+        self._arm_penalty_current = self._arm_penalty_target
+        # Force arm weight to stage target BEFORE super().__init__() so WalkingEnv reads it
+        cfg['reward_arm_posture_weight'] = self._arm_penalty_target
 
         self._apply_stage_settings(cfg, self.stage)
         super().__init__(render_mode=render_mode, config=cfg)
 
-        # Set initial arm penalty target (after super().__init__ so self.arm_posture_weight exists)
-        self._arm_penalty_current = 0.0
-        self.arm_posture_weight = 0.0
+        # Start arm penalty at the stage target immediately (no ramp from 0)
+        # This avoids wasting steps re-ramping on every resume
+        self._arm_penalty_current = self._arm_penalty_target
+        self.arm_posture_weight = self._arm_penalty_target
         print(f"  Arm penalty: current={self._arm_penalty_current:.3f}, target={self._arm_penalty_target:.3f}, ramp_rate={self._arm_penalty_ramp_rate}")
         
         # Override max_commanded_speed from curriculum
