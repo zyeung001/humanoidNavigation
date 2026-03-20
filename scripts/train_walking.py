@@ -901,6 +901,7 @@ def main():
                     'clip_range': dummy_clip_fn,
                     'batch_size': config_batch_size,
                     'n_epochs': config_n_epochs,
+                    'verbose': int(walking.get('verbose', 1)),
                 },
             )
 
