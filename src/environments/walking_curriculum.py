@@ -479,8 +479,10 @@ class WalkingCurriculumEnv(WalkingEnv):
                     info['advancement_path'] = ', '.join(advancement_path)
                     
                 elif self.stage == self.max_stage:
-                    print(f" Stage {self.stage} MASTERED (success rate: {success_rate:.1%}, "
-                          f"avg vel error: {avg_recent_vel_error:.3f} m/s)")
+                    if not getattr(self, '_mastered_logged', False):
+                        print(f" Stage {self.stage} MASTERED (success rate: {success_rate:.1%}, "
+                              f"avg vel error: {avg_recent_vel_error:.3f} m/s)")
+                        self._mastered_logged = True
 
             # always log curriculum progress
             info['curriculum_stage'] = self.stage
