@@ -119,14 +119,16 @@ class WalkingCurriculumEnv(WalkingEnv):
             cfg['random_height_prob'] = 0.0
             cfg['velocity_weight'] = 5.0
         elif stage == 2:
-            # Stage 2 - Brisk walking, moderate perturbations, domain rand
-            cfg['domain_rand'] = True
+            # Stage 2 - Faster walking, same robustness as Stage 1
+            # Only change is speed (0.45 m/s). No domain rand, no random init.
+            # Robustness additions deferred to Stage 3.
+            cfg['domain_rand'] = False
             cfg['max_episode_steps'] = 3000
             cfg['push_enabled'] = True
-            cfg['push_magnitude_range'] = [20.0, 80.0]
-            cfg['push_interval'] = 300
-            cfg['random_height_init'] = True
-            cfg['random_height_prob'] = 0.15
+            cfg['push_magnitude_range'] = [10.0, 40.0]
+            cfg['push_interval'] = 350
+            cfg['random_height_init'] = False
+            cfg['random_height_prob'] = 0.0
             cfg['velocity_weight'] = 5.0
         else:
             # Stage 3 - Fast walk, full perturbations, sim-to-real hardening
