@@ -172,12 +172,13 @@ class ValueFunctionWarmupCallback(BaseCallback):
         # After model.train() returns, the rollout buffer is still full (buffer.reset()
         # only happens at the START of the next collect_rollouts()). So we can call
         # buffer.get() again for additional VF-only gradient steps.
-        # Guard: skip if already patched (prevents recursion from double-patching)
+        # Use the unbound class method directly to avoid capturing an already-patched instance method
         if self.extra_vf_epochs > 0 and not getattr(self.model, '_extra_vf_patched', False):
-            _original_train = self.model.train
+            _ppo_train = type(self.model).train  # unbound class method — never patched
+            _model = self.model
             _callback = self
             def _train_with_extra_vf():
-                _original_train()
+                _ppo_train(_model)
                 _callback._extra_vf_training()
             self.model.train = _train_with_extra_vf
             self.model._extra_vf_patched = True
@@ -327,13 +328,14 @@ class PermanentPolicyScalingCallback(BaseCallback):
         print(f"  [PolicyScaling] Tracking {len(self._saved_state)} policy params, "
               f"scale={self.max_scale:.2f}")
 
-        # Monkey-patch model.train() for extra VF training (same as VFWarmup)
-        # Guard: skip if already patched (prevents recursion from double-patching)
+        # Monkey-patch model.train() for extra VF training
+        # Use the unbound class method directly to avoid capturing an already-patched instance method
         if self.extra_vf_epochs > 0 and not getattr(self.model, '_extra_vf_patched', False):
-            _original_train = self.model.train
+            _ppo_train = type(self.model).train  # unbound class method — never patched
+            _model = self.model
             _callback = self
             def _train_with_extra_vf():
-                _original_train()
+                _ppo_train(_model)
                 _callback._extra_vf_training()
             self.model.train = _train_with_extra_vf
             self.model._extra_vf_patched = True
