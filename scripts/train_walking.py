@@ -172,13 +172,15 @@ class ValueFunctionWarmupCallback(BaseCallback):
         # After model.train() returns, the rollout buffer is still full (buffer.reset()
         # only happens at the START of the next collect_rollouts()). So we can call
         # buffer.get() again for additional VF-only gradient steps.
-        if self.extra_vf_epochs > 0:
+        # Guard: skip if already patched (prevents recursion from double-patching)
+        if self.extra_vf_epochs > 0 and not getattr(self.model, '_extra_vf_patched', False):
             _original_train = self.model.train
             _callback = self
             def _train_with_extra_vf():
                 _original_train()
                 _callback._extra_vf_training()
             self.model.train = _train_with_extra_vf
+            self.model._extra_vf_patched = True
             print(f"  [VFWarmup] Extra VF training: {self.extra_vf_epochs} epochs after each train()")
 
     def _extra_vf_training(self):
@@ -326,13 +328,15 @@ class PermanentPolicyScalingCallback(BaseCallback):
               f"scale={self.max_scale:.2f}")
 
         # Monkey-patch model.train() for extra VF training (same as VFWarmup)
-        if self.extra_vf_epochs > 0:
+        # Guard: skip if already patched (prevents recursion from double-patching)
+        if self.extra_vf_epochs > 0 and not getattr(self.model, '_extra_vf_patched', False):
             _original_train = self.model.train
             _callback = self
             def _train_with_extra_vf():
                 _original_train()
                 _callback._extra_vf_training()
             self.model.train = _train_with_extra_vf
+            self.model._extra_vf_patched = True
             print(f"  [PolicyScaling] Extra VF training: {self.extra_vf_epochs} epochs after each train()")
 
     def _extra_vf_training(self):
