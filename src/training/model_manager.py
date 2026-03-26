@@ -17,6 +17,13 @@ import json
 import yaml
 
 
+def _fix_vecnorm_for_save(env):
+    """Fix SB3 version mismatch: VecNormalize.__getstate__ expects class_attributes."""
+    for obj in [env] + ([env.venv] if hasattr(env, 'venv') else []):
+        if hasattr(obj, '__getstate__') and not hasattr(obj, 'class_attributes'):
+            obj.class_attributes = {}
+
+
 class ModelManager:
     """
     Manages model checkpoints and weights storage.
@@ -117,7 +124,8 @@ class ModelManager:
         """
         model_path = self.latest_dir / "model"
         vecnorm_path = self.latest_dir / "vecnorm.pkl"
-        
+
+        _fix_vecnorm_for_save(env)
         model.save(str(model_path))
         try:
             env.save(str(vecnorm_path))
@@ -165,6 +173,7 @@ class ModelManager:
             filename = f"model_{ts_str}{extra_suffix}"
         
         model_path = stage_dir / filename
+        _fix_vecnorm_for_save(env)
         model.save(str(model_path))
         
         # Save vecnorm alongside
@@ -209,7 +218,8 @@ class ModelManager:
             
             model_path = self.best_dir / "model"
             vecnorm_path = self.best_dir / "vecnorm.pkl"
-            
+
+            _fix_vecnorm_for_save(env)
             model.save(str(model_path))
             try:
                 env.save(str(vecnorm_path))
@@ -231,6 +241,7 @@ class ModelManager:
         model_path = self.final_dir / "model"
         vecnorm_path = self.final_dir / "vecnorm.pkl"
         
+        _fix_vecnorm_for_save(env)
         model.save(str(model_path))
         try:
             env.save(str(vecnorm_path))
