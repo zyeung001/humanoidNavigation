@@ -38,6 +38,14 @@ from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNorm
 from stable_baselines3.common.callbacks import CallbackList, BaseCallback
 from stable_baselines3.common.monitor import Monitor
 
+# Fix SB3 version mismatch: VecNormalize.__getstate__ crashes if class_attributes missing
+_orig_getstate = VecNormalize.__getstate__
+def _safe_getstate(self):
+    if not hasattr(self, 'class_attributes'):
+        self.class_attributes = {}
+    return _orig_getstate(self)
+VecNormalize.__getstate__ = _safe_getstate
+
 from src.environments.walking_curriculum import make_walking_curriculum_env
 from src.training.model_manager import ModelManager
 from src.training.callbacks import (
