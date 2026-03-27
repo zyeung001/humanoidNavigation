@@ -38,13 +38,14 @@ from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNorm
 from stable_baselines3.common.callbacks import CallbackList, BaseCallback
 from stable_baselines3.common.monitor import Monitor
 
-# Fix SB3 version mismatch: VecNormalize.__getstate__ crashes if class_attributes missing
-# Must check __dict__ directly — hasattr triggers __getattr__ → infinite recursion
-_orig_getstate = VecNormalize.__getstate__
+# Fix SB3 version mismatch: __getstate__ does `del state[key]` for keys that may not exist
+# when VecNormalize is loaded from an older pickle. Use pop() instead of del.
 def _safe_getstate(self):
-    if 'class_attributes' not in self.__dict__:
-        self.__dict__['class_attributes'] = {}
-    return _orig_getstate(self)
+    state = self.__dict__.copy()
+    state.pop("venv", None)
+    state.pop("class_attributes", None)
+    state.pop("returns", None)
+    return state
 VecNormalize.__getstate__ = _safe_getstate
 
 from src.environments.walking_curriculum import make_walking_curriculum_env
