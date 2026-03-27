@@ -39,10 +39,11 @@ from stable_baselines3.common.callbacks import CallbackList, BaseCallback
 from stable_baselines3.common.monitor import Monitor
 
 # Fix SB3 version mismatch: VecNormalize.__getstate__ crashes if class_attributes missing
+# Must check __dict__ directly — hasattr triggers __getattr__ → infinite recursion
 _orig_getstate = VecNormalize.__getstate__
 def _safe_getstate(self):
-    if not hasattr(self, 'class_attributes'):
-        self.class_attributes = {}
+    if 'class_attributes' not in self.__dict__:
+        self.__dict__['class_attributes'] = {}
     return _orig_getstate(self)
 VecNormalize.__getstate__ = _safe_getstate
 
