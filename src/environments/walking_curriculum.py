@@ -131,14 +131,15 @@ class WalkingCurriculumEnv(WalkingEnv):
             cfg['random_height_prob'] = 0.0
             cfg['velocity_weight'] = 5.0
         elif stage == 3:
-            # Stage 3 - Faster walking + light domain rand, moderate pushes
+            # Stage 3 - Same as Stage 2 + light domain rand only
+            # Pushes stay at Stage 2 levels — isolate domain rand as the new challenge
             cfg['domain_rand'] = True
             cfg['rand_mass_range'] = [0.97, 1.03]
             cfg['rand_friction_range'] = [0.97, 1.03]
-            cfg['max_episode_steps'] = 3500
+            cfg['max_episode_steps'] = 3000
             cfg['push_enabled'] = True
-            cfg['push_magnitude_range'] = [15.0, 60.0]
-            cfg['push_interval'] = 300
+            cfg['push_magnitude_range'] = [10.0, 40.0]
+            cfg['push_interval'] = 350
             cfg['random_height_init'] = False
             cfg['random_height_prob'] = 0.0
             cfg['random_velocity_init'] = False
