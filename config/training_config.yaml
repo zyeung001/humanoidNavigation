@@ -182,7 +182,7 @@ walking:
   curriculum_max_speed_stages: [0.15, 0.3, 0.45, 0.45, 0.6]  # Stage 3 stays at 0.45 — add robustness before speed
 
   # Arm penalty gating: weight per curriculum stage (ramps smoothly between stages)
-  arm_penalty_stage_weights: [0.0, 0.5, 0.7, 1.0, 1.0]
+  arm_penalty_stage_weights: [0.0, 0.5, 0.7, 0.7, 1.0]  # Stage 3 keeps 0.7 — don't change arm penalty during robustness training
   arm_penalty_ramp_rate: 0.000002  # Per-step ramp toward stage target (slower)
   
   # ========== VELOCITY COMMAND GENERATOR  ==========
