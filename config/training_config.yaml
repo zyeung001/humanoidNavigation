@@ -179,10 +179,10 @@ walking:
 
   # Speed curriculum stages (m/s) - sized for ~2ft (0.6m) humanoid sim-to-real
   # Froude scaling: sim 1.5 m/s ≈ real 1.0 m/s for 0.6m robot
-  curriculum_max_speed_stages: [0.15, 0.3, 0.45, 0.6]
+  curriculum_max_speed_stages: [0.15, 0.3, 0.45, 0.45, 0.6]  # Stage 3 stays at 0.45 — add robustness before speed
 
   # Arm penalty gating: weight per curriculum stage (ramps smoothly between stages)
-  arm_penalty_stage_weights: [0.0, 0.5, 0.7, 1.0]  # 0.15 at Stage 1 gave effective weight 0.12 — too weak (arm=-1.0 cap never hit). 0.5 gives ~2.0/step raw penalty.
+  arm_penalty_stage_weights: [0.0, 0.5, 0.7, 1.0, 1.0]
   arm_penalty_ramp_rate: 0.000002  # Per-step ramp toward stage target (slower)
   
   # ========== VELOCITY COMMAND GENERATOR  ==========
