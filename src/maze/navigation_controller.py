@@ -20,10 +20,10 @@ class NavigationController:
         self,
         waypoints,
         target_speed=0.3,
-        max_yaw_rate=1.0,
+        max_yaw_rate=0.5,
         lookahead_distance=1.5,
         reach_radius=0.5,
-        kp_yaw=2.0,
+        kp_yaw=1.0,
         goal_threshold=0.5,
     ):
         """
@@ -56,10 +56,11 @@ class NavigationController:
     def get_command(self, position, heading):
         """Compute velocity command for the current state.
 
-        The walking policy was trained facing +x with forward-only commands,
-        so it only understands velocity commands aligned with its body frame.
-        We decompose speed along the humanoid's CURRENT heading (body-forward)
-        and use yaw rate to steer toward the goal.
+        The walking policy tracks world-frame velocity commands (vx, vy) and
+        a yaw rate. We command velocity toward the WAYPOINT (desired heading)
+        so the command changes slowly — matching training where commands are
+        held for entire episodes. The yaw rate steers the robot to face the
+        waypoint direction.
 
         Args:
             position: (x, y) current position in world frame.
@@ -119,13 +120,13 @@ class NavigationController:
         else:
             speed = self.target_speed * max(0.3, math.cos(heading_error))
 
-        # Velocity along CURRENT heading (body-forward in world frame).
-        # The policy was trained facing +x with positive vx commands — it
-        # interprets the command relative to its body orientation. Decomposing
-        # along the current heading keeps the command aligned with what the
-        # policy expects ("walk forward").
-        vx = speed * math.cos(heading)
-        vy = speed * math.sin(heading)
+        # Velocity toward the WAYPOINT (desired heading) in world frame.
+        # This changes slowly (only when waypoints advance), matching training
+        # where commands are held for entire episodes. The robot's current
+        # heading doesn't affect the velocity command — only the yaw rate
+        # steers the robot to align with the travel direction.
+        vx = speed * math.cos(desired_heading)
+        vy = speed * math.sin(desired_heading)
 
         return (vx, vy, yaw_rate)
 
