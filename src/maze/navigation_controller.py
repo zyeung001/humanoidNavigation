@@ -16,14 +16,18 @@ class NavigationController:
     be fed to the walking policy via fixed_command.
     """
 
+    # Stop-turn-walk thresholds (degrees converted to radians)
+    TURN_STOP_THRESHOLD = math.radians(25)   # Stop walking when error exceeds this
+    TURN_RESUME_THRESHOLD = math.radians(12) # Resume walking when error drops below this
+
     def __init__(
         self,
         waypoints,
         target_speed=0.3,
-        max_yaw_rate=0.5,
+        max_yaw_rate=0.4,
         lookahead_distance=1.5,
         reach_radius=0.5,
-        kp_yaw=1.0,
+        kp_yaw=0.8,
         goal_threshold=0.5,
     ):
         """
@@ -47,6 +51,7 @@ class NavigationController:
         self.current_waypoint_idx = 0
         self._goal_reached = False
         self._committed_turn_dir = None  # Hysteresis for large heading errors
+        self._turning_in_place = False   # Stop-turn-walk state
 
     @property
     def goal_reached(self):
@@ -99,32 +104,32 @@ class NavigationController:
         heading_error = self._normalize_angle(desired_heading - heading)
         abs_error = abs(heading_error)
 
+        # --- Stop-turn-walk with hysteresis ---
+        # The policy can walk forward or stand+turn, but NOT both at once
+        # for large heading errors. Use hysteresis to avoid oscillating.
+        if abs_error > self.TURN_STOP_THRESHOLD:
+            self._turning_in_place = True
+        elif abs_error < self.TURN_RESUME_THRESHOLD:
+            self._turning_in_place = False
+
         # Yaw rate control with hysteresis for near-180° turns.
-        # Without this, heading error oscillates between +π and -π when the
-        # humanoid faces away from the goal, causing the yaw command to flip
-        # every step and producing zero net rotation.
         if abs_error > math.pi * 0.75:
-            # Large error — commit to one turn direction until error drops
             if self._committed_turn_dir is None:
                 self._committed_turn_dir = 1.0 if heading_error > 0 else -1.0
             yaw_rate = self._committed_turn_dir * self.max_yaw_rate
         else:
-            # Normal proportional control
             self._committed_turn_dir = None
             yaw_rate = self.kp_yaw * heading_error
             yaw_rate = max(-self.max_yaw_rate, min(self.max_yaw_rate, yaw_rate))
 
-        # Speed modulation — slow down for turns, crawl when facing away
-        if abs_error > math.pi / 2:
-            speed = self.target_speed * 0.15
-        else:
-            speed = self.target_speed * max(0.3, math.cos(heading_error))
+        if self._turning_in_place:
+            # Stand still, only turn — the policy handles (0, 0, yaw) well
+            return (0.0, 0.0, yaw_rate)
+
+        # Walking phase — heading is roughly aligned, walk toward waypoint
+        speed = self.target_speed * math.cos(heading_error)
 
         # Velocity toward the WAYPOINT (desired heading) in world frame.
-        # This changes slowly (only when waypoints advance), matching training
-        # where commands are held for entire episodes. The robot's current
-        # heading doesn't affect the velocity command — only the yaw rate
-        # steers the robot to align with the travel direction.
         vx = speed * math.cos(desired_heading)
         vy = speed * math.sin(desired_heading)
 
@@ -183,3 +188,4 @@ class NavigationController:
         self.current_waypoint_idx = 0
         self._goal_reached = False
         self._committed_turn_dir = None
+        self._turning_in_place = False

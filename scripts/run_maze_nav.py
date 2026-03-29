@@ -286,25 +286,11 @@ def main():
 
     import mujoco
 
-    # Compute initial heading: face toward the first waypoint so the robot
-    # doesn't need a large turn at the start.
-    initial_heading = 0.0
-    if len(waypoints) >= 2:
-        dx = waypoints[1][0] - waypoints[0][0]
-        dy = waypoints[1][1] - waypoints[0][1]
-        initial_heading = math.atan2(dy, dx)
-    print(f"  Initial heading: {math.degrees(initial_heading):.1f}°")
-
-    # Reset env, then teleport to maze start facing the first waypoint.
+    # Reset env, then teleport to maze start facing +x (the heading the
+    # policy was trained with).
     obs = vec_env.reset()
     base_env.data.qpos[0] = start_x
     base_env.data.qpos[1] = start_y
-    # Set quaternion for desired heading (rotation around z-axis)
-    # quat = [w, x, y, z] = [cos(θ/2), 0, 0, sin(θ/2)]
-    base_env.data.qpos[3] = math.cos(initial_heading / 2)  # w
-    base_env.data.qpos[4] = 0.0                              # x
-    base_env.data.qpos[5] = 0.0                              # y
-    base_env.data.qpos[6] = math.sin(initial_heading / 2)    # z
     base_env.data.qvel[:] = 0
     mujoco.mj_forward(base_env.model, base_env.data)
 
