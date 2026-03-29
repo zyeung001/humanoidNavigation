@@ -178,8 +178,9 @@ class WalkingCurriculumEnv(WalkingEnv):
         
         # Mix standing and walking commands based on curriculum stage
         standing_prob = self.standing_probability[current_stage]
-        # Turn-in-place probability: 15% of episodes at Stage 1+, teaches (0, 0, yaw)
-        turn_in_place_prob = 0.15 if current_stage >= 1 else 0.0
+        # Turn-in-place probability: 5% of episodes at Stage 1+, teaches (0, 0, yaw)
+        # 15% was too much — destabilized walking while VF adjusted to new episode type
+        turn_in_place_prob = 0.05 if current_stage >= 1 else 0.0
         if np.random.random() < standing_prob:
             # Force standing command with yaw_rate = 0
             self.fixed_command = (0.0, 0.0, 0.0)
