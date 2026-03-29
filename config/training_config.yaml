@@ -196,7 +196,7 @@ walking:
   yaw_rate_weight: 1.5               # Reward weight for yaw tracking. 0.5 was too weak — policy ignored yaw commands. 3.0 gave free reward for standing. 1.5 balances incentive vs tracking signal.
   
   # ========== CURRICULUM LEARNING ==========
-  curriculum_start_stage: 2          # Model already handles Stage 2 — skip to it, promote to Stage 3 quickly
+  curriculum_start_stage: 3          # Skip to Stage 3 to test domain rand fix directly
   curriculum_max_stage: 3            # Unlock Stage 3: 0.6 m/s, domain rand, heavy pushes, sim-to-real hardening.
   curriculum_advance_after: 30    # Episodes before considering advancement
   warmup_episodes: 0              # NO warmup leniency - enforce strict criteria
