@@ -298,16 +298,20 @@ class WalkingEnv(gym.Wrapper):
             self.commanded_yaw_rate = np.random.uniform(-self.max_yaw_rate, self.max_yaw_rate) if self.include_yaw_rate else 0.0
         
         if self.domain_rand:
-            # Randomize body masses
-            self.env.unwrapped.model.body_mass *= np.random.uniform(
+            # Save original values on first call, then restore before randomizing
+            # Without this, masses/frictions drift multiplicatively across resets
+            if not hasattr(self, '_orig_body_mass'):
+                self._orig_body_mass = self.env.unwrapped.model.body_mass.copy()
+                self._orig_geom_friction = self.env.unwrapped.model.geom_friction.copy()
+
+            self.env.unwrapped.model.body_mass[:] = self._orig_body_mass * np.random.uniform(
                 self.rand_mass_range[0], self.rand_mass_range[1],
-                size=self.env.unwrapped.model.body_mass.shape
+                size=self._orig_body_mass.shape
             )
-            
-            # Randomize geom friction
-            self.env.unwrapped.model.geom_friction[:, 0] *= np.random.uniform(
+
+            self.env.unwrapped.model.geom_friction[:, 0] = self._orig_geom_friction[:, 0] * np.random.uniform(
                 self.rand_friction_range[0], self.rand_friction_range[1],
-                size=self.env.unwrapped.model.geom_friction.shape[0]
+                size=self._orig_geom_friction.shape[0]
             )
         
         # Random height initialization for recovery training
