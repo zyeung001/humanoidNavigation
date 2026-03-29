@@ -178,9 +178,21 @@ class WalkingCurriculumEnv(WalkingEnv):
         
         # Mix standing and walking commands based on curriculum stage
         standing_prob = self.standing_probability[current_stage]
+        # Turn-in-place probability: 15% of episodes at Stage 1+, teaches (0, 0, yaw)
+        turn_in_place_prob = 0.15 if current_stage >= 1 else 0.0
         if np.random.random() < standing_prob:
             # Force standing command with yaw_rate = 0
             self.fixed_command = (0.0, 0.0, 0.0)
+        elif np.random.random() < turn_in_place_prob:
+            # Turn in place: zero speed, non-zero yaw — essential for maze navigation
+            max_yaw = getattr(self, 'max_yaw_rate', 1.0)
+            num_stages = max(len(self.speed_stages) - 1, 1)
+            yaw_scale = min(1.0, 0.2 + 0.4 * current_stage / num_stages)
+            yaw_rate = np.random.uniform(-max_yaw, max_yaw) * yaw_scale
+            # Avoid near-zero yaw (not useful training signal)
+            if abs(yaw_rate) < 0.1:
+                yaw_rate = 0.1 * (1.0 if yaw_rate >= 0 else -1.0)
+            self.fixed_command = (0.0, 0.0, yaw_rate)
         elif self.direction_diversity:
             # Stage-dependent direction distribution
             if current_stage == 0:
