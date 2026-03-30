@@ -286,8 +286,22 @@ def main():
 
     import mujoco
 
-    # Reset env, then teleport to maze start facing +x (the heading the
-    # policy was trained with).
+    # Orient the path so the first segment goes roughly in +x (the heading
+    # the policy was trained with). Compute the initial path direction and
+    # if it's more than 90° from +x, reverse start/goal.
+    if len(waypoints) >= 2:
+        path_dx = waypoints[1][0] - waypoints[0][0]
+        path_dy = waypoints[1][1] - waypoints[0][1]
+        path_heading = math.atan2(path_dy, path_dx)
+        if abs(path_heading) > math.pi / 2:
+            print(f"  Path starts heading {math.degrees(path_heading):.0f}° — reversing so robot walks in +x")
+            start_x, goal_x = goal_x, start_x
+            start_y, goal_y = goal_y, start_y
+            waypoints = list(reversed(waypoints))
+            nav = NavigationController(waypoints, target_speed=args.speed)
+            goal_world = (goal_x, goal_y)
+
+    # Reset env, then teleport to maze start facing +x.
     obs = vec_env.reset()
     base_env.data.qpos[0] = start_x
     base_env.data.qpos[1] = start_y
