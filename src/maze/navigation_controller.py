@@ -107,12 +107,13 @@ class NavigationController:
         yaw_rate = self.kp_yaw * heading_error
         yaw_rate = max(-self.max_yaw_rate, min(self.max_yaw_rate, yaw_rate))
 
-        # Always walk forward at target speed — velocity along CURRENT heading.
-        # This is what the policy understands: "walk forward."
-        # As yaw slowly changes the heading, the world-frame velocity rotates
-        # with it, but the body-frame command is always "walk forward."
-        vx = self.target_speed * math.cos(heading)
-        vy = self.target_speed * math.sin(heading)
+        # Velocity toward the WAYPOINT in world frame.
+        # The robot may not turn its body, but the policy tracks world-frame
+        # velocities — so it will walk diagonally/laterally to match.
+        # Speed is reduced for large heading errors (lateral walking is harder).
+        speed = self.target_speed * max(0.5, math.cos(heading_error))
+        vx = speed * math.cos(desired_heading)
+        vy = speed * math.sin(desired_heading)
 
         return (vx, vy, yaw_rate)
 
