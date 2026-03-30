@@ -29,9 +29,9 @@ class NavigationController:
         target_speed=0.3,
         max_yaw_rate=0.3,
         lookahead_distance=1.5,
-        reach_radius=0.5,
+        reach_radius=1.0,
         kp_yaw=0.6,
-        goal_threshold=0.5,
+        goal_threshold=1.0,
     ):
         """
         Args:
