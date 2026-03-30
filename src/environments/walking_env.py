@@ -457,7 +457,7 @@ class WalkingEnv(gym.Wrapper):
         yaw_error = abs(actual_yaw_rate - self.commanded_yaw_rate)
         yaw_tracking_reward = 0.0
         if self.include_yaw_rate:
-            yaw_tracking_reward = self.yaw_rate_weight * np.exp(-3.0 * yaw_error**2)
+            yaw_tracking_reward = self.yaw_rate_weight * np.exp(-8.0 * yaw_error**2)
         
         # ========== HEIGHT REWARD (halved — survival must not compete with tracking) ==========
         base_height_reward = 0.0

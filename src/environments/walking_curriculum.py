@@ -178,9 +178,14 @@ class WalkingCurriculumEnv(WalkingEnv):
         
         # Mix standing and walking commands based on curriculum stage
         standing_prob = self.standing_probability[current_stage]
-        # Turn-in-place probability: 5% of episodes at Stage 1+, teaches (0, 0, yaw)
-        # 15% was too much — destabilized walking while VF adjusted to new episode type
-        turn_in_place_prob = 0.05 if current_stage >= 1 else 0.0
+        # Turn-in-place probability: essential for maze navigation
+        # Stage 0: 5% (gentle yaw only), Stage 1+: 15%
+        if current_stage == 0:
+            turn_in_place_prob = 0.05
+        elif current_stage >= 1:
+            turn_in_place_prob = 0.15
+        else:
+            turn_in_place_prob = 0.0
         if np.random.random() < standing_prob:
             # Force standing command with yaw_rate = 0
             self.fixed_command = (0.0, 0.0, 0.0)
@@ -239,13 +244,17 @@ class WalkingCurriculumEnv(WalkingEnv):
         else:
             # No direction diversity
             if current_stage == 0:
-                # Stage 0: Forward only, fixed speed, tiny angle variance
-                # This prevents standing-still exploit while keeping the task simple
+                # Stage 0: Forward + gentle yaw to start learning turning early
                 angle = np.random.uniform(-np.pi/12, np.pi/12)  # ±15 degrees
                 speed = self.max_commanded_speed  # Fixed, not sampled
                 vx = speed * np.cos(angle)
                 vy = speed * np.sin(angle)
-                yaw_rate = 0.0
+                # 50% chance of gentle yaw command (±0.15 rad/s)
+                max_yaw = getattr(self, 'max_yaw_rate', 1.0)
+                if np.random.random() < 0.5:
+                    yaw_rate = np.random.uniform(-max_yaw * 0.15, max_yaw * 0.15)
+                else:
+                    yaw_rate = 0.0
                 self.fixed_command = (vx, vy, yaw_rate)
             elif current_stage == 1:
                 # Stage 1: Forward walking + yaw commands for turning
@@ -253,21 +262,21 @@ class WalkingCurriculumEnv(WalkingEnv):
                 speed = self.max_commanded_speed
                 vx = speed * np.cos(angle)
                 vy = speed * np.sin(angle)
-                # Add gentle yaw commands — 70% chance of yaw, ±0.3 rad/s max
+                # 80% chance of yaw, ±0.5 rad/s max (increased for better yaw tracking)
                 max_yaw = getattr(self, 'max_yaw_rate', 1.0)
-                if np.random.random() < 0.7:
-                    yaw_rate = np.random.uniform(-max_yaw * 0.3, max_yaw * 0.3)
+                if np.random.random() < 0.8:
+                    yaw_rate = np.random.uniform(-max_yaw * 0.5, max_yaw * 0.5)
                 else:
                     yaw_rate = 0.0
                 self.fixed_command = (vx, vy, yaw_rate)
             elif current_stage == 2:
-                # Stage 2: Full direction range, variable speed
+                # Stage 2: Full direction range, variable speed, strong yaw
                 angle = np.random.uniform(-np.pi/4, np.pi/4)  # ±45 degrees
                 speed = np.random.uniform(0.2, self.max_commanded_speed)
                 vx = speed * np.cos(angle)
                 vy = speed * np.sin(angle)
                 max_yaw = getattr(self, 'max_yaw_rate', 1.0)
-                yaw_rate = np.random.uniform(-max_yaw * 0.5, max_yaw * 0.5)
+                yaw_rate = np.random.uniform(-max_yaw * 0.75, max_yaw * 0.75)
                 self.fixed_command = (vx, vy, yaw_rate)
             else:
                 # Later stages: let command generator handle variety

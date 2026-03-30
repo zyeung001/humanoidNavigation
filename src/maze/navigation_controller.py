@@ -5,39 +5,39 @@ Pure pursuit navigation controller.
 Converts a list of waypoints into velocity commands [vx, vy, yaw_rate]
 compatible with the walking policy's command interface.
 
-Strategy: walk-and-steer. The robot always walks forward at target speed
-while gentle yaw corrections steer it toward waypoints. This matches the
-training distribution (forward walking with small yaw perturbations).
-The robot never stops — it curves toward each waypoint.
+Strategy: stop-turn-walk. For large heading errors (>60°), the robot stops
+and turns in place. For moderate errors (30-60°), it slows down while turning.
+For small errors (<30°), it walks at full speed. Velocity is always commanded
+along the robot's current heading — matching the training distribution of
+forward walking + yaw commands.
 """
 
 import math
 
 
 class NavigationController:
-    """Walk-and-steer controller for waypoint following.
+    """Stop-turn-walk controller for waypoint following.
 
-    Always commands forward walking with gentle yaw corrections.
-    The velocity command is along the robot's CURRENT heading (body-forward
-    projected into world frame) so the policy sees a consistent "walk forward"
-    signal. Yaw rate steers the robot to face each waypoint.
+    Commands velocity along the robot's CURRENT heading (body-forward
+    projected into world frame). For large heading errors, stops and turns
+    in place. Yaw rate steers the robot to face each waypoint.
     """
 
     def __init__(
         self,
         waypoints,
         target_speed=0.3,
-        max_yaw_rate=0.3,
+        max_yaw_rate=0.5,
         lookahead_distance=1.5,
         reach_radius=1.0,
-        kp_yaw=0.6,
+        kp_yaw=1.0,
         goal_threshold=1.0,
     ):
         """
         Args:
             waypoints: List of (x, y) world-coordinate waypoints.
             target_speed: Forward speed in m/s.
-            max_yaw_rate: Maximum yaw rate in rad/s (kept gentle for stability).
+            max_yaw_rate: Maximum yaw rate in rad/s.
             lookahead_distance: How far ahead to look along the path in meters.
             reach_radius: Distance to waypoint before advancing to next.
             kp_yaw: Proportional gain for heading error to yaw rate.
@@ -62,10 +62,8 @@ class NavigationController:
     def get_command(self, position, heading):
         """Compute velocity command for the current state.
 
-        Always walks forward (velocity along current heading) with gentle yaw
-        corrections to steer toward the next waypoint. The velocity command
-        changes slowly because heading changes slowly with gentle yaw — this
-        matches training where commands are held for entire episodes.
+        Commands velocity along robot's current heading. Stops for large
+        heading errors to turn in place first.
 
         Args:
             position: (x, y) current position in world frame.
@@ -103,17 +101,26 @@ class NavigationController:
         desired_heading = math.atan2(ty - py, tx - px)
         heading_error = self._normalize_angle(desired_heading - heading)
 
-        # Gentle yaw correction — proportional control, clamped
+        # Yaw correction — proportional control, clamped
         yaw_rate = self.kp_yaw * heading_error
         yaw_rate = max(-self.max_yaw_rate, min(self.max_yaw_rate, yaw_rate))
 
-        # Velocity toward the WAYPOINT in world frame.
-        # The robot may not turn its body, but the policy tracks world-frame
-        # velocities — so it will walk diagonally/laterally to match.
-        # Speed is reduced for large heading errors (lateral walking is harder).
-        speed = self.target_speed * max(0.5, math.cos(heading_error))
-        vx = speed * math.cos(desired_heading)
-        vy = speed * math.sin(desired_heading)
+        # Command velocity along ROBOT HEADING (body-forward), not toward waypoint.
+        # The policy was trained on forward walking + yaw — not lateral walking.
+        # Large heading errors: slow down and turn in place first.
+        abs_err = abs(heading_error)
+        if abs_err > math.pi / 3:
+            # Large error (>60°): stop and turn in place
+            speed = 0.0
+        elif abs_err > math.pi / 6:
+            # Moderate error (30-60°): slow down while turning
+            speed = self.target_speed * (1.0 - (abs_err - math.pi / 6) / (math.pi / 6))
+        else:
+            # Small error (<30°): full speed
+            speed = self.target_speed
+
+        vx = speed * math.cos(heading)
+        vy = speed * math.sin(heading)
 
         return (vx, vy, yaw_rate)
 

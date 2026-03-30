@@ -193,7 +193,7 @@ walking:
   # ========== YAW RATE TRACKING  ==========
   include_yaw_rate: true             # Enable yaw rate tracking in observation/reward
   max_yaw_rate: 1.0                  # rad/s maximum commanded yaw rate
-  yaw_rate_weight: 1.5               # Reward weight for yaw tracking. 0.5 was too weak — policy ignored yaw commands. 3.0 gave free reward for standing. 1.5 balances incentive vs tracking signal.
+  yaw_rate_weight: 3.0               # Reward weight for yaw tracking. Increased from 1.5 — agent was ignoring yaw commands entirely during maze navigation.
   
   # ========== CURRICULUM LEARNING ==========
   curriculum_start_stage: 3          # Skip to Stage 3 to test domain rand fix directly
