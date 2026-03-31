@@ -178,14 +178,9 @@ class WalkingCurriculumEnv(WalkingEnv):
         
         # Mix standing and walking commands based on curriculum stage
         standing_prob = self.standing_probability[current_stage]
-        # Turn-in-place probability: essential for maze navigation
-        # Stage 0: 5% (gentle yaw only), Stage 1+: 15%
-        if current_stage == 0:
-            turn_in_place_prob = 0.05
-        elif current_stage >= 1:
-            turn_in_place_prob = 0.15
-        else:
-            turn_in_place_prob = 0.0
+        # Turn-in-place probability: 5% at all stages
+        # 15% was too aggressive — bimodal reward distribution destabilized VF
+        turn_in_place_prob = 0.05 if current_stage >= 0 else 0.0
         if np.random.random() < standing_prob:
             # Force standing command with yaw_rate = 0
             self.fixed_command = (0.0, 0.0, 0.0)

@@ -193,8 +193,11 @@ walking:
   # ========== YAW RATE TRACKING  ==========
   include_yaw_rate: true             # Enable yaw rate tracking in observation/reward
   max_yaw_rate: 1.0                  # rad/s maximum commanded yaw rate
-  yaw_rate_weight: 3.0               # Reward weight for yaw tracking. Increased from 1.5 — agent was ignoring yaw commands entirely during maze navigation.
-  
+  yaw_rate_weight: 1.5               # SOTA standard: 0.5-1.0x velocity tracking weight. Gaussian sigma=0.25 (bw=16).
+
+  # ========== FEET AIR TIME (enables rotation) ==========
+  feet_air_time_weight: 1.0           # Reward per foot landing after air time. SOTA: 0.5-1.0. Critical for turning.
+
   # ========== CURRICULUM LEARNING ==========
   curriculum_start_stage: 3          # Skip to Stage 3 to test domain rand fix directly
   curriculum_max_stage: 3            # Unlock Stage 3: 0.6 m/s, domain rand, heavy pushes, sim-to-real hardening.

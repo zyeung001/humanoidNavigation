@@ -71,6 +71,16 @@ class WalkingEnv(gym.Wrapper):
         self.push_countdown = 0  # Counter for push duration
         self.current_push_force = np.zeros(3)  # Current push force being applied
         
+        # ========== FEET AIR TIME TRACKING (enables rotation) ==========
+        # Robot can't rotate with feet planted — must lift feet to pivot.
+        # Reward periodic foot lifting (SOTA: Isaac Lab, Walk These Ways, legged_gym).
+        self.feet_air_time_weight = float(self.cfg.get('feet_air_time_weight', 1.0))
+        self.feet_air_time = np.zeros(2)  # [right_foot, left_foot] air duration
+        self.feet_contact_prev = np.ones(2, dtype=bool)  # Previous contact state
+        self.foot_body_ids = [6, 9]  # right_foot=body6, left_foot=body9
+        self.min_air_time = 0.1  # Minimum air time to count as a "step" (seconds)
+        self.contact_force_threshold = 5.0  # Force threshold for contact detection (N)
+
         # Arm posture penalty (prevent chicken-wing arms, allow natural swing)
         self.arm_posture_weight = float(self.cfg.get('reward_arm_posture_weight', 0.0))
         self.arm_joint_indices = slice(18, 24)  # qpos indices for 6 arm joints
@@ -239,6 +249,10 @@ class WalkingEnv(gym.Wrapper):
         self.prev_action[:] = 0.0
         self.obs_history = []  # Clear history
         
+        # Reset feet air time tracking
+        self.feet_air_time[:] = 0.0
+        self.feet_contact_prev[:] = True
+
         # Clear push perturbation state
         self.push_countdown = 0
         self.current_push_force = np.zeros(3)
@@ -453,11 +467,38 @@ class WalkingEnv(gym.Wrapper):
         standing_penalty = 0.0
         
         # ========== YAW RATE TRACKING REWARD ==========
+        # Pure Gaussian (SOTA standard: Isaac Lab, Walk These Ways, legged_gym).
+        # sigma=0.25 rad/s (bandwidth=16) matches industry standard.
         actual_yaw_rate = angular_vel[2]
         yaw_error = abs(actual_yaw_rate - self.commanded_yaw_rate)
         yaw_tracking_reward = 0.0
         if self.include_yaw_rate:
-            yaw_tracking_reward = self.yaw_rate_weight * np.exp(-8.0 * yaw_error**2)
+            yaw_tracking_reward = self.yaw_rate_weight * np.exp(-16.0 * yaw_error**2)
+
+        # ========== FEET AIR TIME REWARD (enables rotation) ==========
+        # Robot must lift feet to rotate — friction prevents rotation with feet planted.
+        # Reward each foot landing after spending enough time in the air.
+        feet_air_time_reward = 0.0
+        if self.feet_air_time_weight > 0:
+            for i, body_id in enumerate(self.foot_body_ids):
+                contact_force = np.linalg.norm(self.env.unwrapped.data.cfrc_ext[body_id])
+                in_contact = contact_force > self.contact_force_threshold
+                if in_contact:
+                    if not self.feet_contact_prev[i]:
+                        # Foot just landed — reward if it was in the air long enough
+                        if self.feet_air_time[i] > self.min_air_time:
+                            feet_air_time_reward += self.feet_air_time_weight
+                        self.feet_air_time[i] = 0.0
+                else:
+                    self.feet_air_time[i] += self.dt
+                self.feet_contact_prev[i] = in_contact
+
+        # ========== ANTI-DRIFT PENALTY (during turn-in-place) ==========
+        # When only yaw is commanded (vel~0), penalize any linear velocity.
+        # Prevents agent from drifting instead of rotating in place.
+        anti_drift_penalty = 0.0
+        if self.commanded_speed < 0.05 and abs(self.commanded_yaw_rate) > 0.05:
+            anti_drift_penalty = -1.0 * min(actual_speed, 0.5)
         
         # ========== HEIGHT REWARD (halved — survival must not compete with tracking) ==========
         base_height_reward = 0.0
@@ -552,13 +593,16 @@ class WalkingEnv(gym.Wrapper):
                 termination_penalty = -0.5  # FIX: was -5.0
         
         # ========== TOTAL REWARD ==========
-        # Simplified: 7 active components (was 17). Tracking is dominant signal.
+        # SOTA-aligned: velocity tracking + yaw tracking + feet air time.
         # Zeroed components kept in sum for WandB logging compatibility.
         total_reward = (
             # PRIMARY: Velocity tracking (dominant)
             velocity_tracking_reward +  # Up to +5.0 per step
             progress_bonus +            # Up to +2.25 per step (continuous)
-            yaw_tracking_reward +       # Up to +0.5 per step
+            yaw_tracking_reward +       # Up to +1.5 per step (Gaussian, sigma=0.25)
+
+            # LOCOMOTION: Feet air time (enables rotation by rewarding foot lifting)
+            feet_air_time_reward +      # +1.0 per foot landing after air time
 
             # SECONDARY: Survival (halved — must not compete with tracking)
             height_reward +             # Up to +0.5
@@ -567,6 +611,7 @@ class WalkingEnv(gym.Wrapper):
             # PENALTIES
             control_cost +              # Small action regularization
             arm_posture_penalty +       # Curriculum-gated (0 in Stage 0)
+            anti_drift_penalty +        # Penalize drift during turn-in-place
 
             # ZEROED (kept for WandB compatibility)
             standing_penalty +          # 0.0
@@ -612,6 +657,8 @@ class WalkingEnv(gym.Wrapper):
             'walking_bonus': walking_bonus,
             'sustained_bonus': sustained_bonus,
             'consistency_bonus': consistency_bonus,
+            'feet_air_time': feet_air_time_reward,
+            'anti_drift': anti_drift_penalty,
             'termination_penalty': termination_penalty,
             'total': total_reward,
         }
@@ -647,7 +694,7 @@ class WalkingEnv(gym.Wrapper):
                 f"h={height:.3f}, cmd=({self.commanded_vx_world:.2f},{self.commanded_vy_world:.2f}), "
                 f"actual=({com_vel_x:.2f},{com_vel_y:.2f}){yaw_info}, "
                 f"vel_err={vel_error:.3f}, r={total_reward:6.1f} "
-                f"[track={velocity_tracking_reward:.1f}, prog={progress_bonus:.1f}, stand_pen={standing_penalty:.1f}, arm={arm_posture_penalty:.1f}]")
+                f"[track={velocity_tracking_reward:.1f}, prog={progress_bonus:.1f}, yaw={yaw_tracking_reward:.1f}, air={feet_air_time_reward:.1f}, arm={arm_posture_penalty:.1f}]")
 
         return total_reward, terminate
 
