@@ -467,13 +467,15 @@ class WalkingEnv(gym.Wrapper):
         standing_penalty = 0.0
         
         # ========== YAW RATE TRACKING REWARD ==========
-        # Pure Gaussian (SOTA standard: Isaac Lab, Walk These Ways, legged_gym).
-        # sigma=0.25 rad/s (bandwidth=16) matches industry standard.
+        # Gaussian yaw tracking. sigma=0.5 (bandwidth=4) is wider than SOTA
+        # sigma=0.25 because we're fine-tuning a model with large yaw errors
+        # (0.5-1.0 rad/s). SOTA uses tight sigma because yaw is trained from
+        # scratch when errors are small. Tighten sigma once errors drop below 0.3.
         actual_yaw_rate = angular_vel[2]
         yaw_error = abs(actual_yaw_rate - self.commanded_yaw_rate)
         yaw_tracking_reward = 0.0
         if self.include_yaw_rate:
-            yaw_tracking_reward = self.yaw_rate_weight * np.exp(-16.0 * yaw_error**2)
+            yaw_tracking_reward = self.yaw_rate_weight * np.exp(-4.0 * yaw_error**2)
 
         # ========== FEET AIR TIME REWARD (enables rotation) ==========
         # Robot must lift feet to rotate — friction prevents rotation with feet planted.
