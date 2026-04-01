@@ -1,0 +1,18 @@
+# Variant C: Yaw Dominant (sacrifice walking quality for turning ability)
+# Yaw:tracking ratio = 2.0x (matches Isaac Lab G1)
+# 35% TIP, reduced tracking weight, capped at Stage 1
+#
+# Run: python scripts/train_walking.py --model models/walking/final/final_walking_model.zip --fresh-lr --override config/variants/yaw_dominant.yaml
+#
+# WARNING: Will likely degrade forward walking quality. Use only if A/B fail.
+# The idea is to first teach turning, then restore walking quality with
+# a follow-up training run at normal weights.
+walking:
+  yaw_rate_weight: 6.0               # 2.0x tracking — turning is the priority
+  feet_air_time_weight: 1.0          # Strong foot lifting
+  reward_tracking_weight: 3.0        # Reduced (was 5.0) to let yaw dominate
+  reward_direction_weight: 0.4       # Reduced progress bonus
+  turn_in_place_prob: 0.35           # 35% TIP episodes
+  command_switch_interval: [2.0, 5.0] # Fast resampling
+  curriculum_start_stage: 0
+  curriculum_max_stage: 1            # Cap at Stage 1 until yaw works

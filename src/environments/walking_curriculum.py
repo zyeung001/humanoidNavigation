@@ -168,114 +168,52 @@ class WalkingCurriculumEnv(WalkingEnv):
         self.max_commanded_speed = self.speed_stages[current_stage]
         
         # Update command generator ranges based on curriculum stage
+        # Yaw range scales with stage: Stage 0 gets ±0.3, Stage 1 gets ±0.5, Stage 2+ gets full range
+        # This gives the command generator curriculum-appropriate yaw for within-episode resampling
         if hasattr(self, 'command_generator') and self.command_generator is not None:
             max_yaw = getattr(self, 'max_yaw_rate', 1.0)
+            yaw_scales = [0.3, 0.5, 0.75, 1.0]  # Per-stage yaw scaling
+            yaw_scale = yaw_scales[min(current_stage, len(yaw_scales) - 1)]
             self.command_generator.update_curriculum_ranges([
                 (0.0, self.max_commanded_speed),
                 (-self.max_commanded_speed * 0.5, self.max_commanded_speed * 0.5),
-                (-max_yaw, max_yaw)
+                (-max_yaw * yaw_scale, max_yaw * yaw_scale)
             ])
         
         # Mix standing and walking commands based on curriculum stage
         standing_prob = self.standing_probability[current_stage]
-        # Turn-in-place probability: 5% at all stages
-        # 15% was too aggressive — bimodal reward distribution destabilized VF
-        turn_in_place_prob = 0.05 if current_stage >= 0 else 0.0
+        # Turn-in-place probability: configurable, default 20%
+        # 5% was too low — agent saw ~250 TIP episodes in 3M steps, not enough to learn.
+        # 15% was tried before with sparse air time + pure Gaussian — destabilized VF.
+        # Now with continuous air time + denser yaw signal, 20% should be safe.
+        tip_prob = float(self.cfg.get('turn_in_place_prob', 0.20))
+        turn_in_place_prob = tip_prob if current_stage >= 0 else 0.0
         if np.random.random() < standing_prob:
             # Force standing command with yaw_rate = 0
             self.fixed_command = (0.0, 0.0, 0.0)
         elif np.random.random() < turn_in_place_prob:
             # Turn in place: zero speed, non-zero yaw — essential for maze navigation
             max_yaw = getattr(self, 'max_yaw_rate', 1.0)
-            num_stages = max(len(self.speed_stages) - 1, 1)
-            yaw_scale = min(1.0, 0.2 + 0.4 * current_stage / num_stages)
+            yaw_scales = [0.3, 0.5, 0.75, 1.0]  # Match command generator stage scaling
+            yaw_scale = yaw_scales[min(current_stage, len(yaw_scales) - 1)]
             yaw_rate = np.random.uniform(-max_yaw, max_yaw) * yaw_scale
             # Avoid near-zero yaw (not useful training signal)
             if abs(yaw_rate) < 0.1:
                 yaw_rate = 0.1 * (1.0 if yaw_rate >= 0 else -1.0)
             self.fixed_command = (0.0, 0.0, yaw_rate)
         elif self.direction_diversity:
-            # Stage-dependent direction distribution
-            if current_stage == 0:
-                # Stage 0: Mostly forward, no lateral/backward
-                direction_type = np.random.choice(['forward', 'diagonal'],
-                                                 p=[0.85, 0.15])
-            elif current_stage == 1:
-                # Stage 1: Mostly forward, some diagonal, rare lateral
-                direction_type = np.random.choice(['forward', 'diagonal', 'lateral', 'random'],
-                                                 p=[0.60, 0.25, 0.10, 0.05])
-            else:
-                # Stage 2+: Full variety
-                direction_type = np.random.choice(['forward', 'diagonal', 'lateral', 'backward', 'random'],
-                                                 p=[0.5, 0.25, 0.15, 0.02, 0.08])
-
-            # Stage 0-1: Fixed speed at max to avoid variance
-            # Later stages: Allow speed variation
-            if current_stage <= 1:
-                speed = self.max_commanded_speed  # Fixed speed
-            else:
-                speed = np.random.uniform(0.2, self.max_commanded_speed)
-            
-            if direction_type == 'forward':
-                angle = np.random.uniform(-np.pi/6, np.pi/6)
-            elif direction_type == 'diagonal':
-                base_angles = [np.pi/4, 3*np.pi/4, -np.pi/4, -3*np.pi/4]
-                angle = np.random.choice(base_angles) + np.random.uniform(-np.pi/8, np.pi/8)
-            elif direction_type == 'lateral':
-                angle = np.random.choice([np.pi/2, -np.pi/2]) + np.random.uniform(-np.pi/8, np.pi/8)
-            elif direction_type == 'backward':
-                angle = np.pi + np.random.uniform(-np.pi/6, np.pi/6)
-            else:
-                angle = np.random.uniform(-np.pi, np.pi)
-            
-            vx = speed * np.cos(angle)
-            vy = speed * np.sin(angle)
-            # Sample yaw rate — scale by stage (gentle at Stage 0, full by Stage 2+)
-            max_yaw = getattr(self, 'max_yaw_rate', 1.0)
-            num_stages = max(len(self.speed_stages) - 1, 1)
-            yaw_scale = min(1.0, 0.2 + 0.4 * current_stage / num_stages)  # Stage 0: 0.2, Stage 1: 0.33, Stage 2: 0.47, Stage 3: 0.6
-            yaw_rate = np.random.uniform(-max_yaw, max_yaw) * yaw_scale
-            self.fixed_command = (vx, vy, yaw_rate)
+            # Direction diversity also uses command generator now (same reasoning).
+            # Command generator handles direction variety with within-episode resampling.
+            self.fixed_command = None
         else:
-            # No direction diversity
-            if current_stage == 0:
-                # Stage 0: Forward + gentle yaw to start learning turning early
-                angle = np.random.uniform(-np.pi/12, np.pi/12)  # ±15 degrees
-                speed = self.max_commanded_speed  # Fixed, not sampled
-                vx = speed * np.cos(angle)
-                vy = speed * np.sin(angle)
-                # 50% chance of gentle yaw command (±0.15 rad/s)
-                max_yaw = getattr(self, 'max_yaw_rate', 1.0)
-                if np.random.random() < 0.5:
-                    yaw_rate = np.random.uniform(-max_yaw * 0.15, max_yaw * 0.15)
-                else:
-                    yaw_rate = 0.0
-                self.fixed_command = (vx, vy, yaw_rate)
-            elif current_stage == 1:
-                # Stage 1: Forward walking + yaw commands for turning
-                angle = np.random.uniform(-np.pi/6, np.pi/6)  # ±30 degrees
-                speed = self.max_commanded_speed
-                vx = speed * np.cos(angle)
-                vy = speed * np.sin(angle)
-                # 80% chance of yaw, ±0.5 rad/s max (increased for better yaw tracking)
-                max_yaw = getattr(self, 'max_yaw_rate', 1.0)
-                if np.random.random() < 0.8:
-                    yaw_rate = np.random.uniform(-max_yaw * 0.5, max_yaw * 0.5)
-                else:
-                    yaw_rate = 0.0
-                self.fixed_command = (vx, vy, yaw_rate)
-            elif current_stage == 2:
-                # Stage 2: Full direction range, variable speed, strong yaw
-                angle = np.random.uniform(-np.pi/4, np.pi/4)  # ±45 degrees
-                speed = np.random.uniform(0.2, self.max_commanded_speed)
-                vx = speed * np.cos(angle)
-                vy = speed * np.sin(angle)
-                max_yaw = getattr(self, 'max_yaw_rate', 1.0)
-                yaw_rate = np.random.uniform(-max_yaw * 0.75, max_yaw * 0.75)
-                self.fixed_command = (vx, vy, yaw_rate)
-            else:
-                # Later stages: let command generator handle variety
-                self.fixed_command = None
+            # CRITICAL FIX: Let command generator handle ALL walking episodes.
+            # SOTA (legged_gym, Isaac Lab, Walk These Ways) resamples commands
+            # every 2-6 seconds WITHIN each episode. Our old approach fixed
+            # commands per-episode — 80% of episodes never changed yaw, so
+            # the policy never practiced turning during walking.
+            # Command generator ranges are already set above with stage-appropriate
+            # yaw scaling (Stage 0: ±0.3, Stage 1: ±0.5, Stage 2+: full range).
+            self.fixed_command = None
         
         # Store the curriculum's fixed_command before calling parent reset
         curriculum_fixed_command = self.fixed_command

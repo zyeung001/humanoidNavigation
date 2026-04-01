@@ -634,11 +634,22 @@ def main():
                         help='Skip warmup collection (faster but may degrade transfer)')
     parser.add_argument('--fresh-lr', action='store_true',
                         help='Reset LR schedule on resume (start from initial_lr instead of where model left off)')
+    parser.add_argument('--config', type=str, default='config/training_config.yaml',
+                        help='Path to config YAML (default: config/training_config.yaml)')
+    parser.add_argument('--override', type=str, default=None,
+                        help='Path to override YAML (merged on top of base config, e.g. config/variants/aggressive_yaw.yaml)')
     args = parser.parse_args()
 
     # Load config
-    cfg = load_yaml('config/training_config.yaml')
+    cfg = load_yaml(args.config)
     walking = cfg.get('walking', {}).copy()
+
+    # Apply override config if specified
+    if args.override:
+        override_cfg = load_yaml(args.override)
+        override_walking = override_cfg.get('walking', override_cfg)  # Allow flat or nested
+        walking.update(override_walking)
+        print(f"  Applied config override from: {args.override}")
 
     # Overrides / defaults
     n_envs = args.n_envs if args.n_envs is not None else int(walking.get('n_envs', 12))

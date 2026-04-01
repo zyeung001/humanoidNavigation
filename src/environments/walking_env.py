@@ -78,7 +78,8 @@ class WalkingEnv(gym.Wrapper):
         self.feet_air_time = np.zeros(2)  # [right_foot, left_foot] air duration
         self.feet_contact_prev = np.ones(2, dtype=bool)  # Previous contact state
         self.foot_body_ids = [6, 9]  # right_foot=body6, left_foot=body9
-        self.min_air_time = 0.1  # Minimum air time to count as a "step" (seconds)
+        self.min_air_time = 0.4  # SOTA standard (legged_gym, Isaac Lab): 0.4-0.5s
+                                 # Enforces proper stepping vs shuffling. Was 0.1s (too low).
         self.contact_force_threshold = 5.0  # Force threshold for contact detection (N)
 
         # Arm posture penalty (prevent chicken-wing arms, allow natural swing)
@@ -479,20 +480,22 @@ class WalkingEnv(gym.Wrapper):
 
         # ========== FEET AIR TIME REWARD (enables rotation) ==========
         # Robot must lift feet to rotate — friction prevents rotation with feet planted.
-        # Reward each foot landing after spending enough time in the air.
+        # CONTINUOUS: per-step reward for each foot currently in the air past min_air_time.
+        # This gives dense gradient every step (vs sparse landing-only which fires once
+        # per gait cycle and was invisible in training — air=0.0 in 99% of step logs).
         feet_air_time_reward = 0.0
         if self.feet_air_time_weight > 0:
             for i, body_id in enumerate(self.foot_body_ids):
                 contact_force = np.linalg.norm(self.env.unwrapped.data.cfrc_ext[body_id])
                 in_contact = contact_force > self.contact_force_threshold
                 if in_contact:
-                    if not self.feet_contact_prev[i]:
-                        # Foot just landed — reward if it was in the air long enough
-                        if self.feet_air_time[i] > self.min_air_time:
-                            feet_air_time_reward += self.feet_air_time_weight
-                        self.feet_air_time[i] = 0.0
+                    self.feet_air_time[i] = 0.0
                 else:
                     self.feet_air_time[i] += self.dt
+                    # Continuous reward: scales with air time, capped at 1.0
+                    if self.feet_air_time[i] > self.min_air_time:
+                        air_bonus = min(self.feet_air_time[i] - self.min_air_time, 0.3) / 0.3
+                        feet_air_time_reward += self.feet_air_time_weight * air_bonus
                 self.feet_contact_prev[i] = in_contact
 
         # ========== ANTI-DRIFT PENALTY (during turn-in-place) ==========
@@ -601,10 +604,10 @@ class WalkingEnv(gym.Wrapper):
             # PRIMARY: Velocity tracking (dominant)
             velocity_tracking_reward +  # Up to +5.0 per step
             progress_bonus +            # Up to +2.25 per step (continuous)
-            yaw_tracking_reward +       # Up to +1.5 per step (Gaussian, sigma=0.25)
+            yaw_tracking_reward +       # Up to +3.0 per step (Gaussian, sigma=0.5)
 
             # LOCOMOTION: Feet air time (enables rotation by rewarding foot lifting)
-            feet_air_time_reward +      # +1.0 per foot landing after air time
+            feet_air_time_reward +      # Up to +1.0 per step (continuous, both feet airborne)
 
             # SECONDARY: Survival (halved — must not compete with tracking)
             height_reward +             # Up to +0.5

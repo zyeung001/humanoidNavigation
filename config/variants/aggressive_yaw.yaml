@@ -1,0 +1,12 @@
+# Variant B: Aggressive Yaw (Isaac Lab G1 inspired)
+# Yaw:tracking ratio = 1.0x (Isaac Lab G1 uses 2.0x)
+# 30% TIP, faster command switching
+#
+# Run: python scripts/train_walking.py --model models/walking/final/final_walking_model.zip --fresh-lr --override config/variants/aggressive_yaw.yaml
+walking:
+  yaw_rate_weight: 5.0               # 1.0x tracking (between Isaac Lab H1=1.0x and G1=2.0x)
+  feet_air_time_weight: 0.25         # Isaac Lab standard (weight=0.25)
+  turn_in_place_prob: 0.30           # 30% TIP — more turning practice
+  command_switch_interval: [2.0, 6.0] # Faster resampling, closer to SOTA 2-6s
+  curriculum_start_stage: 0
+  curriculum_max_stage: 3

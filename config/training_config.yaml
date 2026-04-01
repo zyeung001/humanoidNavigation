@@ -187,23 +187,33 @@ walking:
   
   # ========== VELOCITY COMMAND GENERATOR  ==========
   use_command_generator: true        # Use VelocityCommandGenerator
-  command_switch_interval: [10.0, 20.0]  # LONGER intervals for Stage 0 learning
+  command_switch_interval: [3.0, 8.0]    # SOTA: 2-6s. Was 10-20s — too long, agent only
+                                         # saw one command per episode. Now resamples 2-5x
+                                         # per episode, giving yaw practice in EVERY episode.
   stop_probability: 0.0              # NO stop commands - don't reward standing
   
   # ========== YAW RATE TRACKING  ==========
   include_yaw_rate: true             # Enable yaw rate tracking in observation/reward
   max_yaw_rate: 1.0                  # rad/s maximum commanded yaw rate
-  yaw_rate_weight: 1.5               # SOTA standard: 0.5-1.0x velocity tracking weight. Gaussian sigma=0.25 (bw=16).
+  yaw_rate_weight: 3.0               # Increased from 1.5: must be competitive with tracking (5.0).
+                                     # At 1.5, agent earned 3x more from walking straight than turning.
+                                     # 3.0 makes yaw ~60% of tracking weight — strong enough to matter.
 
   # ========== FEET AIR TIME (enables rotation) ==========
-  feet_air_time_weight: 1.0           # Reward per foot landing after air time. SOTA: 0.5-1.0. Critical for turning.
+  feet_air_time_weight: 0.5          # CHANGED: Now continuous (per-step, not sparse landing-only).
+                                     # Lower weight because it fires every step (was 1.0 sparse).
+                                     # At 0.5, max per-step = 1.0 (both feet airborne). Enough to
+                                     # encourage stepping without dominating tracking.
 
   # ========== CURRICULUM LEARNING ==========
-  curriculum_start_stage: 3          # Skip to Stage 3 to test domain rand fix directly
-  curriculum_max_stage: 3            # Unlock Stage 3: 0.6 m/s, domain rand, heavy pushes, sim-to-real hardening.
+  curriculum_start_stage: 0          # Restart from Stage 0 — re-learn walking with yaw from scratch
+  curriculum_max_stage: 3            # Unlock through Stage 3
   curriculum_advance_after: 30    # Episodes before considering advancement
   warmup_episodes: 0              # NO warmup leniency - enforce strict criteria
   curriculum_success_rate: 0.50   # Success rate needed to advance
+
+  # Turn-in-place episode probability (fraction of episodes with vel=0, yaw≠0)
+  turn_in_place_prob: 0.20           # 20% TIP. Was 5% — too few episodes to learn turning.
 
   # Direction diversity - DISABLED: policy walks forward only, yaw handles turning
   direction_diversity: false

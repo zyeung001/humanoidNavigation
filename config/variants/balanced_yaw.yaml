@@ -1,0 +1,14 @@
+# Variant A: Balanced Yaw (DEFAULT — already in training_config.yaml)
+# Closest to legged_gym/Walk These Ways approach
+# Yaw:tracking ratio = 0.6x (SOTA range: 0.5x-2.0x)
+# Within-episode command resampling every 3-8s (SOTA: 2-6s)
+#
+# Run: python scripts/train_walking.py --model models/walking/final/final_walking_model.zip --fresh-lr
+# (No --override needed — these are the defaults in training_config.yaml)
+walking:
+  yaw_rate_weight: 3.0               # 0.6x tracking (legged_gym uses 0.5x)
+  feet_air_time_weight: 0.5          # Continuous, per-step
+  turn_in_place_prob: 0.20           # SOTA: 20% of commands are pure rotation
+  command_switch_interval: [3.0, 8.0]
+  curriculum_start_stage: 0
+  curriculum_max_stage: 3
