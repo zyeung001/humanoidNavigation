@@ -78,8 +78,9 @@ class WalkingEnv(gym.Wrapper):
         self.feet_air_time = np.zeros(2)  # [right_foot, left_foot] air duration
         self.feet_contact_prev = np.ones(2, dtype=bool)  # Previous contact state
         self.foot_body_ids = [6, 9]  # right_foot=body6, left_foot=body9
-        self.min_air_time = 0.4  # SOTA standard (legged_gym, Isaac Lab): 0.4-0.5s
-                                 # Enforces proper stepping vs shuffling. Was 0.1s (too low).
+        self.min_air_time = 0.15  # Humanoid-v5 gait has ~0.1-0.3s foot air time.
+                                  # SOTA uses 0.4s but that's for quadrupeds/larger humanoids.
+                                  # 0.15s filters shuffling while matching this humanoid's gait.
         self.contact_force_threshold = 5.0  # Force threshold for contact detection (N)
 
         # Arm posture penalty (prevent chicken-wing arms, allow natural swing)
