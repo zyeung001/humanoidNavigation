@@ -5,28 +5,28 @@ Pure pursuit navigation controller.
 Converts a list of waypoints into velocity commands [vx, vy, yaw_rate]
 compatible with the walking policy's command interface.
 
-Strategy: stop-turn-walk. For large heading errors (>60°), the robot stops
-and turns in place. For moderate errors (30-60°), it slows down while turning.
-For small errors (<30°), it walks at full speed. Velocity is always commanded
-along the robot's current heading — matching the training distribution of
-forward walking + yaw commands.
+Strategy: walk-and-steer. Always maintains minimum forward speed while turning.
+The humanoid was trained on forward walking + yaw commands — it cannot stop
+and turn in place (17M steps of forward walking too ingrained). For large
+heading errors, slow down but keep walking. The robot turns in a curve.
 """
 
 import math
 
 
 class NavigationController:
-    """Stop-turn-walk controller for waypoint following.
+    """Walk-and-steer controller for waypoint following.
 
-    Commands velocity along the robot's CURRENT heading (body-forward
-    projected into world frame). For large heading errors, stops and turns
-    in place. Yaw rate steers the robot to face each waypoint.
+    Always maintains minimum forward speed while turning. The humanoid
+    can't stop walking (forward gait too ingrained from 17M steps of training),
+    so we turn in curves instead of turning in place.
     """
 
     def __init__(
         self,
         waypoints,
         target_speed=0.3,
+        min_speed=0.10,
         max_yaw_rate=0.5,
         lookahead_distance=1.5,
         reach_radius=1.0,
@@ -37,6 +37,7 @@ class NavigationController:
         Args:
             waypoints: List of (x, y) world-coordinate waypoints.
             target_speed: Forward speed in m/s.
+            min_speed: Minimum forward speed (never stop — agent can't turn in place).
             max_yaw_rate: Maximum yaw rate in rad/s.
             lookahead_distance: How far ahead to look along the path in meters.
             reach_radius: Distance to waypoint before advancing to next.
@@ -45,6 +46,7 @@ class NavigationController:
         """
         self.waypoints = list(waypoints)
         self.target_speed = target_speed
+        self.min_speed = min_speed
         self.max_yaw_rate = max_yaw_rate
         self.lookahead_distance = lookahead_distance
         self.reach_radius = reach_radius
@@ -106,15 +108,16 @@ class NavigationController:
         yaw_rate = max(-self.max_yaw_rate, min(self.max_yaw_rate, yaw_rate))
 
         # Command velocity along ROBOT HEADING (body-forward), not toward waypoint.
-        # The policy was trained on forward walking + yaw — not lateral walking.
-        # Large heading errors: slow down and turn in place first.
+        # The policy was trained on forward walking + yaw — it CANNOT stop.
+        # Always maintain min_speed to keep the walking gait active.
         abs_err = abs(heading_error)
-        if abs_err > math.pi / 3:
-            # Large error (>60°): stop and turn in place
-            speed = 0.0
+        if abs_err > math.pi / 2:
+            # Large error (>90°): slow to minimum — turn in a tight curve
+            speed = self.min_speed
         elif abs_err > math.pi / 6:
-            # Moderate error (30-60°): slow down while turning
-            speed = self.target_speed * (1.0 - (abs_err - math.pi / 6) / (math.pi / 6))
+            # Moderate error (30-90°): interpolate between min and target speed
+            t = (abs_err - math.pi / 6) / (math.pi / 2 - math.pi / 6)
+            speed = self.target_speed * (1.0 - t) + self.min_speed * t
         else:
             # Small error (<30°): full speed
             speed = self.target_speed
