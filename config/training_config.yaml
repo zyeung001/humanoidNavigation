@@ -265,10 +265,8 @@ walking:
 
   # Training schedule
   total_timesteps: 30_000_000
-  learning_rate: 0.00005         # 10x increase for arm posture fine-tuning. 5e-6 produced clip_fraction=0 (frozen policy).
-                                 # Walker is stable (93% success, ep_len=2500) — can absorb larger updates.
-                                 # Original 3e-5 note was for standing→walking transfer, not fine-tuning.
-  final_learning_rate: 0.00005   # No decay — keep flat for arm correction phase.
+  learning_rate: 0.000005         # 5e-6: known-good for standing→walking transfer with policy_max_scale=0.5.
+  final_learning_rate: 0.000003   # 3e-6: gentle decay.
 
   # PPO algorithm parameters
   n_steps: 2048
