@@ -654,7 +654,7 @@ def main():
     # Auto-detect device: fall back to CPU if CUDA unavailable
     cfg_device = walking.get('device', 'cuda')
     if cfg_device == 'cuda' and not torch.cuda.is_available():
-        print(f"  CUDA not available — switching to CPU mode")
+        print("  CUDA not available — switching to CPU mode")
         walking['device'] = 'cpu'
         # Reduce n_envs for CPU (leave cores for training process)
         cpu_count = os.cpu_count() or 4
