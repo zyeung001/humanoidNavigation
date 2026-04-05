@@ -11,4 +11,4 @@ walking:
   turn_in_place_prob: 0.20           # SOTA: 20% of commands are pure rotation
   command_switch_interval: [3.0, 8.0]
   curriculum_start_stage: 0
-  curriculum_max_stage: 3
+  curriculum_max_stage: 1            # Cap at Stage 1 until yaw is solid
