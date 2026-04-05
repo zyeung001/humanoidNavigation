@@ -651,14 +651,31 @@ def main():
         walking.update(override_walking)
         print(f"  Applied config override from: {args.override}")
 
+    # Auto-detect device: fall back to CPU if CUDA unavailable
+    cfg_device = walking.get('device', 'cuda')
+    if cfg_device == 'cuda' and not torch.cuda.is_available():
+        print(f"  CUDA not available — switching to CPU mode")
+        walking['device'] = 'cpu'
+        # Reduce n_envs for CPU (leave cores for training process)
+        cpu_count = os.cpu_count() or 4
+        cpu_envs = max(4, cpu_count - 2)
+        if int(walking.get('n_envs', 12)) > cpu_envs:
+            walking['n_envs'] = cpu_envs
+            print(f"  Adjusted n_envs: {cpu_envs} (detected {cpu_count} threads)")
+        # Keep batch_size = full buffer for PPO stability
+        adjusted_n_envs = int(walking.get('n_envs', cpu_envs))
+        n_steps = int(walking.get('n_steps', 2048))
+        walking['batch_size'] = adjusted_n_envs * n_steps
+        print(f"  Adjusted batch_size: {walking['batch_size']} ({adjusted_n_envs} envs × {n_steps} steps)")
+
     # Overrides / defaults
     n_envs = args.n_envs if args.n_envs is not None else int(walking.get('n_envs', 12))
     seed = int(walking.get('seed', 42))
     total_timesteps = int(walking.get('total_timesteps', 30_000_000)) if args.timesteps is None else args.timesteps
-    
+
     learn_timesteps = total_timesteps
     reset_num_timesteps = True
-    
+
     print(f"\n{'='*60}")
     print("WALKING TRAINING CONFIGURATION")
     print(f"{'='*60}")
