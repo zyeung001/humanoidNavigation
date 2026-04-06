@@ -388,7 +388,7 @@ walking:
   wandb_project: humanoid_walking
   wandb_log_freq: 5000
   video_freq: 500000
-  episode_print_freq: 1000
+  episode_print_freq: 5000
 
 
 # ============================================================================
