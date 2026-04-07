@@ -276,6 +276,7 @@ def main():
         vec_env.norm_reward = False
 
     model = PPO.load(args.model, env=vec_env)
+    print("  Model loaded successfully.", flush=True)
     nav = NavigationController(waypoints, target_speed=args.speed)
 
     # Get the unwrapped MuJoCo env
@@ -285,6 +286,7 @@ def main():
     base_env = base_env.unwrapped
 
     import mujoco
+    print("  MuJoCo imported.", flush=True)
 
     # Orient the path so the first segment goes roughly in +x (the heading
     # the policy was trained with). Compute the initial path direction and
@@ -302,7 +304,9 @@ def main():
             goal_world = (goal_x, goal_y)
 
     # Reset env, then teleport to maze start facing +x.
+    print("  Resetting environment...", flush=True)
     obs = vec_env.reset()
+    print("  Environment reset complete.", flush=True)
     base_env.data.qpos[0] = start_x
     base_env.data.qpos[1] = start_y
     base_env.data.qvel[:] = 0
