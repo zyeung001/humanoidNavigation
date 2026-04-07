@@ -155,7 +155,8 @@ def get_maze_grid(maze_type, seed=42):
 def main():
     parser = argparse.ArgumentParser(description="Run maze navigation demo")
     parser.add_argument("--maze-type", type=str, default="corridor", help="Maze type")
-    parser.add_argument("--model", type=str, default=None, help="Path to walking model .zip")
+    parser.add_argument("--model", type=str, default=None,
+                        help="Path to walking model .zip (default: models/walking/final/model.zip)")
     parser.add_argument("--vecnorm", type=str, default=None, help="Path to VecNormalize .pkl")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for maze generation")
     parser.add_argument("--render", action="store_true", help="Show visualization")
