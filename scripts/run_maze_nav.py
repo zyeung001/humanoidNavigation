@@ -269,12 +269,16 @@ def main():
         "action_smoothing_tau": 0.08,
     })
     vec_env = DummyVecEnv([lambda: env])
+    print("  DummyVecEnv created.", flush=True)
 
     if vecnorm_path:
+        print(f"  Loading VecNormalize from {vecnorm_path}...", flush=True)
         vec_env = VecNormalize.load(vecnorm_path, vec_env)
         vec_env.training = False
         vec_env.norm_reward = False
+        print("  VecNormalize loaded.", flush=True)
 
+    print(f"  Loading PPO model from {args.model}...", flush=True)
     model = PPO.load(args.model, env=vec_env, custom_objects={"train": None})
     print("  Model loaded successfully.", flush=True)
     nav = NavigationController(waypoints, target_speed=args.speed)
