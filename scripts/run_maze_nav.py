@@ -275,7 +275,7 @@ def main():
         vec_env.training = False
         vec_env.norm_reward = False
 
-    model = PPO.load(args.model, env=vec_env)
+    model = PPO.load(args.model, env=vec_env, custom_objects={"train": None})
     print("  Model loaded successfully.", flush=True)
     nav = NavigationController(waypoints, target_speed=args.speed)
 
