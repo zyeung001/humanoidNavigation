@@ -287,8 +287,8 @@ def main():
         "lr_schedule": None,
         "clip_range": 0.3,
     })
-    print("  Model loaded, setting env...", flush=True)
-    model.set_env(vec_env)
+    # Don't use set_env — model was trained with 6 envs, we have 1.
+    # For inference we only need model.predict() which doesn't require env binding.
     print("  Model loaded successfully.", flush=True)
     nav = NavigationController(waypoints, target_speed=args.speed)
 
