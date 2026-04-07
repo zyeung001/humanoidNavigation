@@ -280,7 +280,13 @@ def main():
         print("  VecNormalize loaded.", flush=True)
 
     print(f"  Loading PPO model from {args.model}...", flush=True)
-    model = PPO.load(args.model, device="cpu", custom_objects={"train": None})
+    # Skip serialized training functions that may use incompatible Python bytecode
+    model = PPO.load(args.model, device="cpu", custom_objects={
+        "train": None,
+        "learning_rate": 3e-6,
+        "lr_schedule": None,
+        "clip_range": 0.3,
+    })
     print("  Model loaded, setting env...", flush=True)
     model.set_env(vec_env)
     print("  Model loaded successfully.", flush=True)
