@@ -280,7 +280,9 @@ def main():
         print("  VecNormalize loaded.", flush=True)
 
     print(f"  Loading PPO model from {args.model}...", flush=True)
-    model = PPO.load(args.model, env=vec_env, custom_objects={"train": None})
+    model = PPO.load(args.model, device="cpu", custom_objects={"train": None})
+    print("  Model loaded, setting env...", flush=True)
+    model.set_env(vec_env)
     print("  Model loaded successfully.", flush=True)
     nav = NavigationController(waypoints, target_speed=args.speed)
 
