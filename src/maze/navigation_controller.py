@@ -27,10 +27,10 @@ class NavigationController:
         waypoints,
         target_speed=0.3,
         min_speed=0.10,
-        max_yaw_rate=0.5,
+        max_yaw_rate=1.0,
         lookahead_distance=1.5,
         reach_radius=1.0,
-        kp_yaw=1.0,
+        kp_yaw=2.0,
         goal_threshold=1.0,
     ):
         """
