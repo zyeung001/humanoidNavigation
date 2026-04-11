@@ -277,7 +277,12 @@ def main():
         vec_env = VecNormalize.load(vecnorm_path, vec_env)
         vec_env.training = False
         vec_env.norm_reward = False
-        print("  VecNormalize loaded.", flush=True)
+        # Pin command block stats to identity so commands are visible to the policy
+        # (CommandStatsProtectorCallback does this during training)
+        cmd_start = 1484
+        vec_env.obs_rms.mean[cmd_start:] = 0.0
+        vec_env.obs_rms.var[cmd_start:] = 1.0
+        print("  VecNormalize loaded (command stats pinned).", flush=True)
 
     print(f"  Loading PPO model from {args.model}...", flush=True)
     # Skip serialized training functions that may use incompatible Python bytecode
