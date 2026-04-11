@@ -107,9 +107,10 @@ class NavigationController:
         yaw_rate = self.kp_yaw * heading_error
         yaw_rate = max(-self.max_yaw_rate, min(self.max_yaw_rate, yaw_rate))
 
-        # Command velocity along ROBOT HEADING (body-forward), not toward waypoint.
-        # The policy was trained on forward walking + yaw — it CANNOT stop.
-        # Always maintain min_speed to keep the walking gait active.
+        # Command velocity TOWARD the waypoint (world frame).
+        # The policy tracks world-frame vx/vy — commanding toward the target
+        # makes velocity tracking naturally steer the robot, even if yaw
+        # tracking is weak.
         abs_err = abs(heading_error)
         if abs_err > math.pi / 2:
             # Large error (>90°): slow to minimum — turn in a tight curve
@@ -122,8 +123,8 @@ class NavigationController:
             # Small error (<30°): full speed
             speed = self.target_speed
 
-        vx = speed * math.cos(heading)
-        vy = speed * math.sin(heading)
+        vx = speed * math.cos(desired_heading)
+        vy = speed * math.sin(desired_heading)
 
         return (vx, vy, yaw_rate)
 
