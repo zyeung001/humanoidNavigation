@@ -163,6 +163,8 @@ def main():
     parser.add_argument("--record", action="store_true", help="Record video")
     parser.add_argument("--max-steps", type=int, default=5000, help="Max simulation steps")
     parser.add_argument("--speed", type=float, default=0.3, help="Target walking speed (m/s)")
+    parser.add_argument("--max-yaw", type=float, default=0.5,
+                        help="Max yaw rate command in rad/s (should match training max_yaw_rate)")
     parser.add_argument("--record-interval", type=int, default=3,
                         help="Record every Nth frame (higher = faster, default 3 → 10fps video)")
     parser.add_argument("--cell-size", type=float, default=2.0,
@@ -295,7 +297,7 @@ def main():
     # Don't use set_env — model was trained with 6 envs, we have 1.
     # For inference we only need model.predict() which doesn't require env binding.
     print("  Model loaded successfully.", flush=True)
-    nav = NavigationController(waypoints, target_speed=args.speed)
+    nav = NavigationController(waypoints, target_speed=args.speed, max_yaw_rate=args.max_yaw)
 
     # Get the unwrapped MuJoCo env
     base_env = env
@@ -318,7 +320,7 @@ def main():
             start_x, goal_x = goal_x, start_x
             start_y, goal_y = goal_y, start_y
             waypoints = list(reversed(waypoints))
-            nav = NavigationController(waypoints, target_speed=args.speed)
+            nav = NavigationController(waypoints, target_speed=args.speed, max_yaw_rate=args.max_yaw)
             goal_world = (goal_x, goal_y)
 
     # Reset env, then teleport to maze start facing +x.

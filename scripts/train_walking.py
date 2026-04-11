@@ -1062,6 +1062,16 @@ def main():
                 else:
                     raise
 
+            # Clean up stale monkey-patches from previous training sessions.
+            # PermanentPolicyScalingCallback replaces model.train with a closure
+            # that captures the model instance. SB3's save()/load() serializes
+            # __dict__, so the old closure survives — but it references the OLD
+            # model whose rollout buffer is never filled, causing AssertionError.
+            if 'train' in model.__dict__:
+                del model.__dict__['train']
+            if hasattr(model, '_extra_vf_patched'):
+                del model._extra_vf_patched
+
             loaded_timesteps = model.num_timesteps
             remaining_timesteps = total_timesteps - loaded_timesteps
 

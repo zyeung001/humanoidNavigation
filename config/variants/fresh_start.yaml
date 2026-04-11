@@ -1,42 +1,46 @@
-# Yaw fine-tuning from chicken-wing walking model (expanded 1493→1495)
+# Yaw fine-tuning v3: strong yaw signal, no arm penalty
 #
-# The chicken-wing model walks but can't turn. Previous yaw training (March)
-# failed because the obs space lacked yaw_actual and err_yaw — the policy
-# was blind to yaw rate. Now those 2 dims are in the obs. Gentle yaw settings
-# so walking isn't disrupted.
+# v1 failed: LR decayed to zero (clip_fraction=0)
+# v2 failed: yaw_rate_weight=1.0 too weak (10% of reward signal),
+#   arm penalty (-1.5/step) was 1.5x the max yaw reward (+1.0/step).
+#   Model had no incentive to learn turning.
+#
+# Fixes:
+#   - yaw_rate_weight: 3.0 (now 30-40% of reward signal)
+#   - arm penalty: 0.0 (cosmetic — add back AFTER yaw works)
+#   - max_yaw_rate: 1.0 (train for the full range maze needs)
+#   - Constant LR (no decay)
 #
 # Run:
-#   python scripts/expand_obs_dims.py \
-#       --model models/walking/final/final_walking_model.zip \
-#       --vecnorm models/walking/final/vecnorm_walking.pkl \
-#       --output-model models/walking/final/expanded_walking_model.zip \
-#       --output-vecnorm models/walking/final/expanded_vecnorm.pkl
-#
 #   python scripts/train_walking.py \
-#       --model models/walking/final/expanded_walking_model.zip \
+#       --model models/walking/best/model.zip \
+#       --vecnorm models/walking/best/vecnorm.pkl \
 #       --override config/variants/fresh_start.yaml
 walking:
-  # ===== GENTLE YAW =====
+  # ===== STRONG YAW =====
   include_yaw_rate: true
-  yaw_rate_weight: 1.0            # Low: don't compete with tracking (5.0)
-  turn_in_place_prob: 0.05        # 5% TIP
-  max_yaw_rate: 0.5               # Gentle: 0.5 rad/s not 1.0
+  yaw_rate_weight: 3.0            # Strong: ~30-40% of reward signal
+  turn_in_place_prob: 0.10        # 10% TIP practice
+  max_yaw_rate: 1.0               # Full range — maze needs this
 
-  # ===== PPO (fine-tuning a converged model needs higher LR + exploration) =====
-  learning_rate: 0.0001           # 1e-4: model is converged, needs strong signal
-  final_learning_rate: 0.00003    # 3e-5
-  batch_size: 12288               # 2 minibatches × 3 epochs = 6 steps/cycle
+  # ===== DISABLE ARM PENALTY (cosmetic, add back later) =====
+  reward_arm_posture_weight: 0.0
+
+  # ===== PPO (constant LR) =====
+  learning_rate: 0.0001
+  final_learning_rate: 0.0001     # No decay
+  batch_size: 12288
   n_epochs: 3
-  clip_range: 0.2                 # Moderate
-  final_clip_range: 0.15
-  ent_coef: 0.01                  # Push exploration (converged model has std=0.6)
-  final_ent_coef: 0.005
-  log_std_max: 0.5                # Allow std to grow from 0.6 back toward 1.0+
+  clip_range: 0.2
+  final_clip_range: 0.2
+  ent_coef: 0.01
+  final_ent_coef: 0.01
+  log_std_max: 0.5
 
-  # ===== NO SCALING (converged model, not transfer) =====
+  # ===== NO SCALING =====
   policy_max_scale: 1.0
   extra_vf_epochs: 0
-  resume_policy_scale: 1.0        # No scaling on resume either
+  resume_policy_scale: 1.0
 
   # ===== CURRICULUM =====
   curriculum_max_speed_stages: [0.15, 0.3, 0.45, 0.45, 0.6]
