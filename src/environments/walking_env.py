@@ -483,7 +483,7 @@ class WalkingEnv(gym.Wrapper):
         yaw_error = abs(actual_yaw_rate - self.commanded_yaw_rate)
         yaw_tracking_reward = 0.0
         if self.include_yaw_rate:
-            yaw_tracking_reward = self.yaw_rate_weight * np.exp(-4.0 * yaw_error**2)
+            yaw_tracking_reward = self.yaw_rate_weight * np.exp(-14.0 * yaw_error**2)
 
         # ========== FEET AIR TIME REWARD (enables rotation) ==========
         # Robot must lift feet to rotate — friction prevents rotation with feet planted.
