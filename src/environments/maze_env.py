@@ -25,7 +25,7 @@ class MazeNavigationEnv(gym.Wrapper):
     Extends the walking observation space with 6 navigation features and
     adds goal-conditioned rewards on top of locomotion rewards.
 
-    Observation space: walking_obs (1493) + nav_features (6) = 1499 dims
+    Observation space: walking_obs (1495) + nav_features (6) = 1501 dims
     Navigation features (in agent-local frame):
         - goal_dx, goal_dy: Vector to goal (2)
         - goal_dist: Euclidean distance to goal, normalized (1)
@@ -35,8 +35,8 @@ class MazeNavigationEnv(gym.Wrapper):
     """
 
     NAV_OBS_DIM = 6
-    WALKING_OBS_DIM = 1493
-    TOTAL_OBS_DIM = WALKING_OBS_DIM + NAV_OBS_DIM  # 1499
+    WALKING_OBS_DIM = 1495
+    TOTAL_OBS_DIM = WALKING_OBS_DIM + NAV_OBS_DIM  # 1501
 
     def __init__(
         self,

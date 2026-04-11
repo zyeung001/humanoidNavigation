@@ -94,6 +94,11 @@ class WalkingEnv(gym.Wrapper):
         # Cap: maximum per-step penalty magnitude (prevents arm penalty from dominating tracking)
         self.arm_penalty_cap = float(self.cfg.get('arm_penalty_cap', 1.0))
 
+        # Height reward scaling — multiplies height_reward and upright_reward.
+        # Use > 1.0 for fresh training where balance must be learned from scratch.
+        # The default (1.0) keeps original behavior for transfer-based training.
+        self.height_reward_scale = float(self.cfg.get('height_reward_scale', 1.0))
+
         # FIX 5: Consistency reward for reducing velocity error variance
         self.recent_vel_errors = []
         self.consistency_window = int(self.cfg.get('reward_consistency_window', 100))
@@ -206,13 +211,14 @@ class WalkingEnv(gym.Wrapper):
         self.body_dim_per_frame = base_obs_dim + extra_dim  # 371
 
         # Command block (appended ONCE, not stacked)
-        # [vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual, err_vx, err_vy, err_speed, err_angle]
-        self.command_block_dim = 9
+        # [vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual, yaw_actual,
+        #  err_vx, err_vy, err_speed, err_angle, err_yaw]
+        self.command_block_dim = 11
 
         if self.enable_history:
             # Body features stacked, command block appended once
             stacked_body_dim = self.body_dim_per_frame * self.history_len  # 1484
-            total_dim = stacked_body_dim + self.command_block_dim  # 1493
+            total_dim = stacked_body_dim + self.command_block_dim  # 1495
         else:
             total_dim = self.body_dim_per_frame + self.command_block_dim
 
@@ -518,7 +524,7 @@ class WalkingEnv(gym.Wrapper):
             base_height_reward = 0.5
         else:
             base_height_reward = 0.4 - 0.25 * np.clip((height - 1.5) / 0.2, 0.0, 1.0)
-        height_reward = base_height_reward
+        height_reward = base_height_reward * self.height_reward_scale
 
         # ========== UPRIGHT REWARD (halved — survival must not compete with tracking) ==========
         upright_error = 1.0 - max(up_z, 0.0)  # 0 when upright, 1 when horizontal
@@ -528,7 +534,7 @@ class WalkingEnv(gym.Wrapper):
             base_upright = 0.15 * np.exp(-6.0 * upright_error**2)
         else:
             base_upright = 0.0
-        upright_reward = base_upright
+        upright_reward = base_upright * self.height_reward_scale
 
         # ========== ZEROED COMPONENTS (kept for WandB logging compatibility) ==========
         stability_reward = 0.0    # Penalizes angular momentum — walking REQUIRES this
@@ -747,9 +753,9 @@ class WalkingEnv(gym.Wrapper):
 
         New observation structure:
         - Stacked body: [body_t-3, body_t-2, body_t-1, body_t] = 1484 dims
-        - Command block: [vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual,
-                         err_vx, err_vy, err_speed, err_angle] = 9 dims
-        - Total: 1493 dims
+        - Command block: [vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual, yaw_actual,
+                         err_vx, err_vy, err_speed, err_angle, err_yaw] = 11 dims
+        - Total: 1495 dims
         """
         # ========== BODY FEATURES ==========
         body_features = [obs]
@@ -817,16 +823,23 @@ class WalkingEnv(gym.Wrapper):
         max_speed = max(self.max_commanded_speed, 1.0)  # Avoid division by zero
         max_yaw = max(self.max_yaw_rate, 1.0)
 
+        # Yaw rate feedback (actual + error)
+        angular_vel = self.env.unwrapped.data.qvel[3:6]
+        yaw_actual = angular_vel[2]  # Rotation around z-axis
+        err_yaw = self.commanded_yaw_rate - yaw_actual
+
         command_block = np.array([
             np.clip(self.commanded_vx_world / max_speed, -1.0, 1.0),   # vx_cmd normalized
             np.clip(self.commanded_vy_world / max_speed, -1.0, 1.0),   # vy_cmd normalized
             np.clip(self.commanded_yaw_rate / max_yaw, -1.0, 1.0),     # yaw_cmd normalized
             np.clip(vx_actual / max_speed, -1.0, 1.0),                 # vx_actual normalized
             np.clip(vy_actual / max_speed, -1.0, 1.0),                 # vy_actual normalized
+            np.clip(yaw_actual / max_yaw, -1.0, 1.0),                  # yaw_actual normalized
             np.clip(err_vx / max_speed, -1.0, 1.0),                    # err_vx normalized
             np.clip(err_vy / max_speed, -1.0, 1.0),                    # err_vy normalized
             np.clip(err_speed / max_speed, 0.0, 1.0),                  # err_speed normalized (always positive)
             np.clip(err_angle / np.pi, -1.0, 1.0),                     # err_angle normalized
+            np.clip(err_yaw / max_yaw, -1.0, 1.0),                     # err_yaw normalized
         ], dtype=np.float32)
 
         # ========== CONCATENATE: stacked body + command block ==========

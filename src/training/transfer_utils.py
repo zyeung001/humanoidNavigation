@@ -60,17 +60,17 @@ class VecNormalizeExtender:
         self.command_var = command_var
 
         # ========== NEW DIMENSION STRUCTURE ==========
-        # Walking now has: stacked body (1484) + command block ONCE (9) = 1493
+        # Walking now has: stacked body (1484) + command block ONCE (11) = 1495
         # (Previously was: (body + cmd) * 4 = 1496)
         self.standing_per_frame = 371  # base(365) + com(6)
         self.history_len = 4
         self.standing_total = self.standing_per_frame * self.history_len  # 1484
 
         # Walking: stacked body + command block (appended once, not per frame)
-        # Command block: [vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual,
-        #                 err_vx, err_vy, err_speed, err_angle] = 9 dims
-        self.command_block_dim = 9
-        self.walking_total = self.standing_total + self.command_block_dim  # 1493
+        # Command block: [vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual, yaw_actual,
+        #                 err_vx, err_vy, err_speed, err_angle, err_yaw] = 11 dims
+        self.command_block_dim = 11
+        self.walking_total = self.standing_total + self.command_block_dim  # 1495
         
     def extend(self) -> VecNormalize:
         """
@@ -167,9 +167,9 @@ class VecNormalizeExtender:
 
         NEW STRUCTURE (command block appended once, not per-frame):
         - Stacked body: [body_t-3, body_t-2, body_t-1, body_t] = 1484 dims
-        - Command block: [vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual,
-                         err_vx, err_vy, err_speed, err_angle] = 9 dims
-        - Total: 1493 dims
+        - Command block: [vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual, yaw_actual,
+                         err_vx, err_vy, err_speed, err_angle, err_yaw] = 11 dims
+        - Total: 1495 dims
 
         Since standing uses the same body structure (1484 dims), we can
         copy standing stats directly to the body portion and add fresh
@@ -271,8 +271,8 @@ class PolicyTransfer:
 
         # Dimension info (NEW structure: body stacked + command block once)
         self.standing_dim = 1484  # Body features × 4 frames
-        self.walking_dim = 1493   # Body (1484) + command block (9)
-        self.new_dims = 9         # Command block: [vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual, err_vx, err_vy, err_speed, err_angle]
+        self.walking_dim = 1495   # Body (1484) + command block (11)
+        self.new_dims = 11        # Command block: [vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual, yaw_actual, err_vx, err_vy, err_speed, err_angle, err_yaw]
         
     def transfer(self) -> Dict[str, Any]:
         """
@@ -609,17 +609,24 @@ def transfer_standing_to_walking(
         print("\n[2/4] Skipping warmup (warmup_steps=0)")
     
     # Step 3: Load standing model and create walking model
-    print("\n[3/4] Loading standing model and creating walking model...")
-    standing_model = PPO.load(standing_model_path, device=device)
+    print("\n[3/4] Loading standing model and creating walking model...", flush=True)
+    print(f"  Loading standing model from: {standing_model_path}", flush=True)
+    standing_model = PPO.load(standing_model_path, device=device, custom_objects={
+        "learning_rate": 3e-4,
+        "lr_schedule": None,
+    })
+    print(f"  Standing model loaded successfully", flush=True)
     print(f"  Standing obs space: {standing_model.observation_space.shape}")
-    print(f"  Walking obs space: {walking_vecnorm.observation_space.shape}")
-    
+    print(f"  Walking obs space: {walking_vecnorm.observation_space.shape}", flush=True)
+
     # Create walking model
+    print(f"  Creating walking PPO model...", flush=True)
     walking_model = PPO(
         env=walking_vecnorm,
         device=device,
         **walking_model_kwargs
     )
+    print(f"  Walking model created successfully", flush=True)
     
     # Step 4: Transfer weights
     print("\n[4/4] Transferring policy weights...")

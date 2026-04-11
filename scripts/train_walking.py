@@ -597,7 +597,7 @@ class SaveWithModelManagerCallback(BaseCallback):
                     self.best_vel_error = avg_vel_error
                     
             except Exception as e:
-                print(f"✗ Save failed: {e}")
+                print(f"[FAIL] Save failed: {e}")
         return True
 
 
@@ -744,13 +744,13 @@ def main():
                     print(f"Attempting to load VecNormalize from: {candidate_path}")
                     env = VecNormalize.load(candidate_path, vec)
                     vecnorm_loaded = True
-                    print("✓ Successfully loaded VecNormalize statistics")
+                    print("[OK] Successfully loaded VecNormalize statistics")
                     print(f"  - Mean[:5]: {env.obs_rms.mean[:5]}")
                     print(f"  - Var[:5]: {env.obs_rms.var[:5]}")
                     print(f"  - ret_rms.var: {env.ret_rms.var:.4f}")
                     break
                 except Exception as e:
-                    print(f"✗ Failed to load VecNormalize from {candidate_path}: {e}")
+                    print(f"[FAIL] Failed to load VecNormalize from {candidate_path}: {e}")
                     env = None
 
         if env is None and vecnorm_explicitly_provided:
@@ -895,13 +895,13 @@ def main():
             reset_num_timesteps = True
             resume = True
             
-            print(f"✓ Transfer complete! Init strategy: {args.init_strategy}")
+            print(f"[OK] Transfer complete! Init strategy: {args.init_strategy}")
             if warmup_steps > 0:
                 print(f"  Warmup: {warmup_steps:,} steps collected")
             print(f"{'='*60}\n")
             
         except Exception as e:
-            print(f"✗ Transfer from standing failed: {e}")
+            print(f"[FAIL] Transfer from standing failed: {e}")
             import traceback
             traceback.print_exc()
             print("\n  Falling back to fresh model...")
@@ -990,14 +990,14 @@ def main():
                 print(f"  FIX: n_epochs {model.n_epochs} → {config_n_epochs} (from config)")
                 model.n_epochs = config_n_epochs
 
-            print(f"✓ Loaded model at {loaded_timesteps:,} timesteps")
+            print(f"[OK] Loaded model at {loaded_timesteps:,} timesteps")
             print(f"  Training {remaining_timesteps:,} more steps (target: {total_timesteps:,})")
             print(f"  LR schedule: {resume_lr:.6f} → {final_lr} over remaining steps")
             print(f"  Clip schedule: {resume_clip:.4f} → {final_clip} over remaining steps")
             print(f"  batch_size: {model.batch_size}, n_epochs: {model.n_epochs}")
 
         except Exception as e:
-            print(f"✗ Failed to load model: {e}")
+            print(f"[FAIL] Failed to load model: {e}")
             print("  Starting fresh training instead...")
             resume = False
     
@@ -1030,9 +1030,10 @@ def main():
     callback_list = [
         # FIX: Pin command stats EVERY step to prevent variance drift
         CommandStatsProtectorCallback(body_dim=1484, pin_freq=1, verbose=0),
-        # log_std_max=0.0 gives std=1.0: enough exploration without making KL explode
-        # 0.5 (std=1.65) caused KL>100 even at LR=5e-5, preventing any learning
-        LogStdClampCallback(log_std_min=-2.0, log_std_max=0.0, clamp_freq=500, verbose=1),
+        # log_std_max: 0.0 for transfer (std=1.0, prevents KL explosion with scaled policy)
+        #             0.5 for fresh training (std=1.65, allows exploration to discover gait)
+        LogStdClampCallback(log_std_min=-2.0, log_std_max=float(walking.get('log_std_max', 0.0)),
+                            clamp_freq=500, verbose=1),
         EntropyScheduleCallback(initial_ent, final_ent, learn_timesteps, verbose=1),
         WalkingMetricsCallback(log_freq=int(walking.get('wandb_log_freq', 10000)), verbose=1),
         SaveWithModelManagerCallback(
@@ -1101,9 +1102,9 @@ def main():
     print(f"  obs_rms.var max: {env.obs_rms.var.max():.4f}")
     print(f"  ret_rms.var: {env.ret_rms.var:.4f}")
 
-    # Check command dims specifically (last 9 dims)
+    # Check command dims specifically (last 11 dims)
     cmd_start = 1484
-    print(f"\nCommand block stats (dims {cmd_start}:{cmd_start+9}):")
+    print(f"\nCommand block stats (dims {cmd_start}:{cmd_start+11}):")
     print(f"  mean: {env.obs_rms.mean[cmd_start:]}")
     print(f"  var: {env.obs_rms.var[cmd_start:]}")
     if env.obs_rms.var[cmd_start:].min() < 0.5:
@@ -1181,7 +1182,7 @@ if __name__ == "__main__":
         print("\n\n⚠️  Training interrupted by user (Ctrl+C)")
         print("   To resume, use: python scripts/train_walking.py --model models/walking/latest/model.zip")
     except Exception as e:
-        print(f"\n\n❌ Training failed with error: {e}")
+        print(f"\n\n[ERROR] Training failed with error: {e}")
         import traceback
         traceback.print_exc()
         raise
