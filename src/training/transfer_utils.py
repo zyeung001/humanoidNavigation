@@ -185,7 +185,7 @@ class VecNormalizeExtender:
         walking_mean[:min_len] = standing_mean[:min_len]
         walking_var[:min_len] = standing_var[:min_len]
 
-        # Add command block statistics (last 9 dims)
+        # Add command block statistics (last 11 dims)
         # Command block is normalized to [-1, 1], so mean=0, var=1 is appropriate
         cmd_start = self.standing_total
         walking_mean[cmd_start:] = self.command_mean  # 0.0
@@ -213,7 +213,7 @@ class VecNormalizeExtender:
         print(f"  Base obs mean range: [{mean[:20].min():.3f}, {mean[:20].max():.3f}]")
         print(f"  Base obs var range: [{var[:20].min():.3f}, {var[:20].max():.3f}]")
 
-        # Check command block (last 9 dims, appended once)
+        # Check command block (last 11 dims, appended once)
         cmd_start = self.standing_total  # 1484
         print(f"  Command block mean: {mean[cmd_start:]}")
         print(f"  Command block var: {var[cmd_start:]}")
@@ -544,7 +544,7 @@ class WarmupCollector:
             print(f"\n✓ Warmup complete: {collected:,} steps, {episodes} episodes")
             print(f"  Final count: {self.env.obs_rms.count:.0f}")
 
-            # Verify command block statistics (last 9 dims, pinned to identity)
+            # Verify command block statistics (last 11 dims, pinned to identity)
             cmd_mean = self.env.obs_rms.mean[body_dim:]
             cmd_var = self.env.obs_rms.var[body_dim:]
             print(f"  Command block mean (pinned): {cmd_mean}")

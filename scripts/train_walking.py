@@ -82,6 +82,97 @@ def clip_schedule(initial: float, final: float, total_steps: int = 0):
     return schedule
 
 
+def _expand_vecnorm_9to11(vecnorm_path, venv, walking_cfg):
+    """Auto-expand a 1493-dim VecNormalize to 1495-dim (9→11 command block).
+
+    Inserts identity stats for yaw_actual (dim 1489) and err_yaw (dim 1494).
+    """
+    import pickle
+    try:
+        with open(vecnorm_path, 'rb') as f:
+            old_vn = pickle.load(f)
+        old_mean = old_vn.obs_rms.mean.copy()
+        old_var = old_vn.obs_rms.var.copy()
+        if len(old_mean) != 1493:
+            print(f"  [AUTO-EXPAND] Unexpected dim {len(old_mean)}, expected 1493")
+            return None
+
+        cmd_start = 1484
+        new_mean = np.zeros(1495, dtype=old_mean.dtype)
+        new_mean[:cmd_start + 5] = old_mean[:cmd_start + 5]
+        new_mean[cmd_start + 6:cmd_start + 10] = old_mean[cmd_start + 5:cmd_start + 9]
+        # yaw_actual (1489) and err_yaw (1494) stay 0
+
+        new_var = np.ones(1495, dtype=old_var.dtype)
+        new_var[:cmd_start + 5] = old_var[:cmd_start + 5]
+        new_var[cmd_start + 6:cmd_start + 10] = old_var[cmd_start + 5:cmd_start + 9]
+        # yaw_actual (1489) and err_yaw (1494) stay 1.0
+
+        # Pin all command dims to identity (commands are pre-normalized)
+        new_mean[cmd_start:] = 0.0
+        new_var[cmd_start:] = 1.0
+
+        env = VecNormalize(
+            venv, norm_obs=True, norm_reward=True,
+            clip_obs=10.0, clip_reward=10.0,
+            gamma=walking_cfg.get('gamma', 0.995),
+        )
+        env.obs_rms.mean = new_mean
+        env.obs_rms.var = new_var
+        env.obs_rms.count = old_vn.obs_rms.count
+        env.ret_rms.mean = old_vn.ret_rms.mean if hasattr(old_vn.ret_rms, 'mean') else 0.0
+        env.ret_rms.var = old_vn.ret_rms.var if hasattr(old_vn.ret_rms, 'var') else 100.0
+        env.ret_rms.count = old_vn.ret_rms.count if hasattr(old_vn.ret_rms, 'count') else 1.0
+
+        print("  [AUTO-EXPAND] VecNormalize expanded 1493→1495")
+        print(f"  - Mean[:5]: {env.obs_rms.mean[:5]}")
+        print(f"  - Var[:5]: {env.obs_rms.var[:5]}")
+        print(f"  - ret_rms.var: {env.ret_rms.var:.4f}")
+        return env
+    except Exception as e:
+        print(f"  [AUTO-EXPAND] Failed: {e}")
+        return None
+
+
+def _expand_model_9to11(model_path, env, device, custom_objects):
+    """Auto-expand a 1493-dim PPO model to 1495-dim (9→11 command block).
+
+    Inserts zero-weight columns for yaw_actual (dim 1489) and err_yaw (dim 1494)
+    in the first layer, then loads with correct obs space.
+    """
+    # Load without env to avoid shape check
+    model = PPO.load(model_path, device=device, custom_objects=custom_objects)
+    if model.observation_space.shape[0] != 1493:
+        return None
+
+    print("  [AUTO-EXPAND] Model is 1493-dim, expanding to 1495-dim")
+    state_dict = model.policy.state_dict()
+    cmd_start = 1484
+    expanded = 0
+
+    for key, tensor in list(state_dict.items()):
+        if tensor.dim() == 2 and tensor.shape[1] == 1493:
+            new_tensor = torch.zeros(tensor.shape[0], 1495, dtype=tensor.dtype, device=tensor.device)
+            new_tensor[:, :cmd_start + 5] = tensor[:, :cmd_start + 5]
+            new_tensor[:, cmd_start + 6:cmd_start + 10] = tensor[:, cmd_start + 5:cmd_start + 9]
+            state_dict[key] = new_tensor
+            expanded += 1
+        elif tensor.dim() == 1 and tensor.shape[0] == 1493:
+            new_tensor = torch.zeros(1495, dtype=tensor.dtype, device=tensor.device)
+            new_tensor[:cmd_start + 5] = tensor[:cmd_start + 5]
+            new_tensor[cmd_start + 6:cmd_start + 10] = tensor[cmd_start + 5:cmd_start + 9]
+            state_dict[key] = new_tensor
+            expanded += 1
+
+    print(f"  [AUTO-EXPAND] Expanded {expanded} layers")
+
+    # Set env (1495-dim) and rebuild policy, then load expanded weights
+    model.set_env(env)
+    model.policy.load_state_dict(state_dict)
+    print("  [AUTO-EXPAND] Model expanded 1493→1495 successfully")
+    return model
+
+
 def make_env_fns(n_envs: int, seed: int, cfg: dict, use_subproc: bool = True):
     """
     Create vectorized environments.
@@ -749,6 +840,17 @@ def main():
                     print(f"  - Var[:5]: {env.obs_rms.var[:5]}")
                     print(f"  - ret_rms.var: {env.ret_rms.var:.4f}")
                     break
+                except AssertionError as e:
+                    if "1493" in str(e) and "1495" in str(e):
+                        # Auto-expand 1493→1495 (9-dim→11-dim command block)
+                        print("[AUTO-EXPAND] VecNormalize is 1493-dim, env is 1495-dim — expanding command block 9→11")
+                        env = _expand_vecnorm_9to11(candidate_path, vec, walking)
+                        if env is not None:
+                            vecnorm_loaded = True
+                            break
+                    else:
+                        print(f"[FAIL] Failed to load VecNormalize from {candidate_path}: {e}")
+                        env = None
                 except Exception as e:
                     print(f"[FAIL] Failed to load VecNormalize from {candidate_path}: {e}")
                     env = None
@@ -838,7 +940,7 @@ def main():
     if args.from_standing and args.model:
         # ========== IMPROVED TRANSFER FROM STANDING MODEL ==========
         # Uses new transfer_utils module that properly handles:
-        # 1. VecNormalize dimension mismatch (1484 → 1496)
+        # 1. VecNormalize dimension mismatch (1484 → 1495)
         # 2. Command feature weight initialization (xavier instead of 0.01 noise)
         # 3. Optional warmup for normalization statistics
         
@@ -937,17 +1039,28 @@ def main():
             config_batch_size = int(walking.get('batch_size', 2048))
             config_n_epochs = int(walking.get('n_epochs', 6))
 
-            model = PPO.load(
-                args.model, env=env, device=device,
-                custom_objects={
-                    'learning_rate': dummy_lr_fn,
-                    'lr_schedule': dummy_lr_fn,
-                    'clip_range': dummy_clip_fn,
-                    'batch_size': config_batch_size,
-                    'n_epochs': config_n_epochs,
-                    'verbose': int(walking.get('verbose', 1)),
-                },
-            )
+            custom_objs = {
+                'learning_rate': dummy_lr_fn,
+                'lr_schedule': dummy_lr_fn,
+                'clip_range': dummy_clip_fn,
+                'batch_size': config_batch_size,
+                'n_epochs': config_n_epochs,
+                'verbose': int(walking.get('verbose', 1)),
+            }
+
+            try:
+                model = PPO.load(
+                    args.model, env=env, device=device,
+                    custom_objects=custom_objs,
+                )
+            except (AssertionError, ValueError) as load_err:
+                # Try auto-expanding 1493→1495 if shape mismatch
+                if "1493" in str(load_err) or "shape" in str(load_err).lower():
+                    model = _expand_model_9to11(args.model, env, device, custom_objs)
+                    if model is None:
+                        raise load_err
+                else:
+                    raise
 
             loaded_timesteps = model.num_timesteps
             remaining_timesteps = total_timesteps - loaded_timesteps

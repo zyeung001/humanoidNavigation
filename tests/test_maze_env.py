@@ -12,8 +12,8 @@ from src.environments.maze_curriculum import MazeCurriculum, MAZE_STAGES
 def test_maze_env_obs_dim_constant():
     """Verify expected observation dimension constant."""
     assert MazeNavigationEnv.NAV_OBS_DIM == 6
-    assert MazeNavigationEnv.WALKING_OBS_DIM == 1493
-    assert MazeNavigationEnv.TOTAL_OBS_DIM == 1499
+    assert MazeNavigationEnv.WALKING_OBS_DIM == 1495
+    assert MazeNavigationEnv.TOTAL_OBS_DIM == 1501
 
 
 def test_maze_env_nav_obs_shape():
