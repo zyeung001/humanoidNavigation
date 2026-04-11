@@ -422,7 +422,3 @@ def example_step_function():
     env.close()
     print("\nExample completed!")
 
-
-if __name__ == "__main__":
-    example_step_function()
-

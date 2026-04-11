@@ -1,191 +1,197 @@
 # Humanoid Navigation
 
-Reinforcement learning for training humanoid robots to stand, walk, and navigate using MuJoCo physics simulation and PPO.
+**End-to-end reinforcement learning for humanoid locomotion and autonomous maze navigation.**
 
-## Overview
+Train a simulated humanoid to stand, walk with velocity commands, and navigate procedurally generated mazes — all in MuJoCo with PPO.
 
-Two-stage training pipeline with curriculum learning and transfer:
-
-1. **Standing** — Balance at 1.40m target height via 6-stage curriculum (1.29m ±0.04m achieved, 90%+ success)
-2. **Walking** — Command-conditioned velocity tracking via 3-stage speed curriculum (0-0.6 m/s)
-3. **Maze Navigation** — Frozen walking policy + pure pursuit controller navigates procedurally generated mazes
-
-Standing policy weights transfer to walking via `transfer_standing_to_walking()`, which extends the observation space from 1484 to 1493 dims and re-initializes the value function.
-
-## Architecture
+## Training Pipeline
 
 ```
-Standing (5M steps)       Transfer Learning       Walking (30M steps)        Maze Navigation
-┌────────────────────┐   ┌────────────────────┐   ┌────────────────────┐   ┌────────────────────┐
-│StandingCurriculumEnv│   │VecNormalizeExtender │   │WalkingCurriculumEnv│   │ NavigationController│
-│6 stages: 0.80→1.40m│──→│PolicyTransfer       │──→│3 stages: 0.15→0.6 │──→│ Pure pursuit + A*  │
-│Height targeting     │   │WarmupCollector      │   │Velocity tracking   │   │ Frozen walking PPO │
-└────────────────────┘   └────────────────────┘   └────────────────────┘   └────────────────────┘
+                    Transfer Learning
+Standing (5M steps) ──────────────────> Walking (30M steps) ──────────> Maze Navigation
+                                                                        (zero-shot)
+
+┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────────────┐
+│ StandingCurriculumEnv│  │ WalkingCurriculumEnv │  │ NavigationController│
+│                     │  │                     │  │                     │
+│ 6-stage curriculum  │  │ 3-stage curriculum  │  │ A* pathfinding      │
+│ 0.80m → 1.40m      │──│ 0.15 → 0.80 m/s    │──│ Pure pursuit control│
+│ Height balancing    │  │ Velocity tracking   │  │ Frozen walking PPO  │
+│ Domain randomization│  │ Push perturbations  │  │ Procedural mazes    │
+└─────────────────────┘  └─────────────────────┘  └─────────────────────┘
 ```
 
-## Project Structure
+**Key ideas:**
+- **Curriculum learning** — progressive difficulty prevents reward hacking and collapse
+- **Transfer learning** — standing policy bootstraps walking (obs space extended 1484 → 1493 dims, value function re-initialized)
+- **Zero-shot navigation** — walking policy is frozen; a classical planner (A* + pure pursuit) issues velocity commands
 
-```
-humanoidNavigation/
-├── config/                  # Training configuration (single YAML)
-│   └── training_config.yaml
-├── models/                  # Trained weights + VecNormalize stats
-├── scripts/                 # Training, evaluation, debug entry points
-│   ├── train_standing.py
-│   ├── train_walking.py
-│   ├── evaluate.py
-│   ├── run_maze_nav.py      # Maze navigation demo
-│   ├── record_video.py
-│   └── debug/               # Diagnostic and analysis tools
-└── src/                     # Source library
-    ├── agents/              # High-level agent wrappers + diagnostics
-    ├── core/                # Reward calculator + velocity command generator
-    ├── environments/        # Gym wrappers + curriculum learning
-    ├── maze/                # Maze generation, solving, and navigation
-    │   ├── maze_generator.py    # DFS and Prim's maze generation
-    │   ├── maze_maps.py         # Predefined maze layouts
-    │   ├── maze_mjcf.py         # MuJoCo XML generation with walls
-    │   ├── solver.py            # A* pathfinding
-    │   └── navigation_controller.py  # Pure pursuit waypoint following
-    ├── training/            # Transfer learning, model management, callbacks
-    └── utils/               # Visualization + WandB utilities
-```
+## Results
+
+| Capability | Performance |
+|------------|-------------|
+| Standing balance | 1.29m ± 0.04m height, 90%+ success over 1500-step episodes |
+| Walking speed range | 0 – 0.80 m/s, command-conditioned (vx, vy, yaw) |
+| Orientation stability | q_w > 0.98 (near-perfect upright) |
+| Robustness | Survives ±5% mass/friction perturbation, 20–80N push forces |
+| Maze navigation | Solves corridor, L-maze, U-maze, and procedural DFS/Prim's mazes |
 
 ## Quick Start
 
 ### Installation
 
 ```bash
-pip install -r requirements.txt
+make setup
+# or: pip install -r requirements.txt
 ```
 
-### Training
+Requires Python 3.10+ and a working MuJoCo installation.
 
-**Standing (from scratch):**
+### Train
+
 ```bash
-python scripts/train_standing.py --timesteps 5000000
+# Standing controller (from scratch)
+make train-standing ARGS="--timesteps 5000000"
+
+# Walking controller (transfer from standing — recommended)
+make train-walking ARGS="--from-standing --model models/best_standing_model.zip --timesteps 30000000"
+
+# Resume walking training
+make train-walking ARGS="--model models/walking/latest/model.zip --vecnorm models/walking/latest/vecnorm.pkl"
 ```
 
-**Walking (from standing model — recommended):**
-```bash
-python scripts/train_walking.py --from-standing \
-    --model models/best_standing_model.zip \
-    --timesteps 30000000
-```
-
-**Resume training:**
-```bash
-python scripts/train_walking.py \
-    --model models/walking/final/final_walking_model.zip \
-    --vecnorm models/walking/final/vecnorm_walking.pkl \
-    --timesteps 30000000
-```
-
-### Evaluation & Video Recording
+### Evaluate
 
 ```bash
-# Evaluate standing
-python scripts/evaluate.py --task standing \
-    --model models/best_standing_model.zip
-
-# Evaluate walking + record video
-python scripts/evaluate.py --task walking \
-    --model models/walking/final/final_walking_model.zip --record
+# Evaluate + record video
+make evaluate ARGS="--task walking --model models/walking/final/final_walking_model.zip --record"
 
 # Walking with specific velocity command
-python scripts/evaluate.py --task walking \
-    --model models/walking/final/final_walking_model.zip \
-    --vx 1.0 --vy 0.0 --record
+make evaluate ARGS="--task walking --model models/walking/final/final_walking_model.zip --vx 1.0 --vy 0.0 --record"
 ```
 
 ### Maze Navigation
 
 ```bash
-# Run corridor maze with video recording
-python scripts/run_maze_nav.py --maze-type corridor \
-    --model models/walking/best/model.zip --record
+# Corridor maze with video
+python scripts/run_maze_nav.py --maze-type corridor --model models/walking/best/model.zip --record
 
-# Smaller maze for faster runs
-python scripts/run_maze_nav.py --maze-type corridor \
-    --model models/walking/best/model.zip --record --cell-size 1.0
+# Random 5x5 maze
+python scripts/run_maze_nav.py --maze-type dfs_5x5 --model models/walking/best/model.zip --record
 
 # Open arena
-python scripts/run_maze_nav.py --maze-type open \
-    --model models/walking/best/model.zip --record --speed 0.3
-
-# Random 3x3 maze
-python scripts/run_maze_nav.py --maze-type dfs_3x3 \
-    --model models/walking/best/model.zip --record
+python scripts/run_maze_nav.py --maze-type open --model models/walking/best/model.zip --speed 0.3 --record
 ```
 
-**Available maze types:** `corridor`, `open`, `l_maze`, `u_maze`, `medium`, `open_arena`, `corridor_gen`, `dfs_3x3`, `dfs_5x5`, `prims_3x3`, `prims_5x5`
-
-**Options:**
+Available maze types: `corridor`, `open`, `l_maze`, `u_maze`, `medium`, `open_arena`, `dfs_3x3`, `dfs_5x5`, `prims_3x3`, `prims_5x5`
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--maze-type` | `corridor` | Maze layout |
-| `--model` | — | Path to walking model `.zip` |
+| `--model` | required | Path to walking model `.zip` |
 | `--vecnorm` | auto-detect | Path to VecNormalize `.pkl` |
 | `--speed` | `0.3` | Target walking speed (m/s) |
 | `--cell-size` | `2.0` | Maze cell size in meters |
 | `--max-steps` | `5000` | Max simulation steps |
 | `--record` | off | Save video to `data/videos/maze_nav.mp4` |
-| `--record-interval` | `3` | Record every Nth frame |
 
-### Debug / Analysis
+## Project Structure
 
-```bash
-# Standalone standing test
-python scripts/debug/test_standing.py --model models/best_standing_model.zip
-
-# Standalone walking test
-python scripts/debug/test_walking.py \
-    --model models/walking/final/final_walking_model.zip
-
-# Diagnose transfer learning
-python scripts/debug/diagnose_transfer.py
+```
+humanoidNavigation/
+├── config/
+│   └── training_config.yaml        # All hyperparameters (standing, walking, maze)
+├── models/                         # Trained weights + VecNormalize stats
+│   ├── best_standing_model.zip
+│   └── walking/
+│       ├── best/
+│       ├── latest/
+│       └── final/
+├── scripts/
+│   ├── train_standing.py           # Standing training entry point
+│   ├── train_walking.py            # Walking training entry point
+│   ├── evaluate.py                 # Unified evaluation + video recording
+│   ├── run_maze_nav.py             # Maze navigation demo
+│   ├── record_video.py             # Legacy video recording
+│   └── debug/                      # Diagnostic and analysis tools
+├── src/
+│   ├── core/                       # Reward calculator + velocity command generator
+│   │   ├── rewards.py              # Gaussian kernel rewards (RewardCalculator)
+│   │   └── command_generator.py    # Velocity command sampling with smoothing
+│   ├── environments/               # Gym wrappers + curriculum learning
+│   │   ├── standing_env.py         # Standing balance environment
+│   │   ├── standing_curriculum.py  # 6-stage height curriculum
+│   │   ├── walking_env.py          # Command-conditioned walking environment
+│   │   └── walking_curriculum.py   # 3-stage speed curriculum
+│   ├── maze/                       # Maze generation, solving, and navigation
+│   │   ├── maze_generator.py       # DFS and Prim's procedural generation
+│   │   ├── maze_maps.py            # Predefined maze layouts
+│   │   ├── maze_mjcf.py            # Grid → MuJoCo XML with physical walls
+│   │   ├── solver.py               # A* pathfinding
+│   │   ├── navigation_controller.py # Pure pursuit waypoint following
+│   │   └── maze_renderer.py        # Top-down minimap overlay
+│   ├── training/                   # Transfer learning + model management
+│   │   ├── transfer_utils.py       # Standing → walking policy transfer
+│   │   ├── model_manager.py        # Checkpoint organization
+│   │   ├── callbacks.py            # WandB logging callbacks
+│   │   └── schedules.py            # LR and clip range decay schedules
+│   ├── agents/                     # High-level agent wrapper + diagnostics
+│   └── utils/                      # Visualization utilities
+├── Makefile                        # Build targets (setup, train, evaluate, lint)
+└── requirements.txt
 ```
 
-## Key Capabilities
+## Technical Details
 
-### Standing Controller
-- Maintains height at 1.29m ±0.04m (target: 1.40m)
-- 90%+ success rate over 1000-1500+ step episodes
-- Perfect upright orientation (q_w > 0.98)
-- Minimal XY drift
-- Robust to mass/friction perturbations (±5%)
+### Observation Space
 
-### Walking Controller
-- Command-conditioned on desired velocity (vx, vy, yaw_rate) in world frame
-- 4-stage speed curriculum: 0.15 → 0.30 → 0.45 → 0.60 m/s
-- Stable height during locomotion (~1.27m)
-- Three-phase transfer warmup: VF warmup → gradual ramp → permanent policy scaling
-- Arm posture penalty (curriculum-gated) for sim-to-real transfer
+| Component | Dims | Notes |
+|-----------|------|-------|
+| Humanoid-v5 base | 365 | Joint positions, velocities, contact forces |
+| COM features | +6 | Center of mass position + velocity |
+| History stacking | x4 | Temporal context for velocity estimation |
+| Command block | +9 | Walking only: cmd, actual, error vectors |
+| **Standing total** | **1484** | (365 + 6) x 4 |
+| **Walking total** | **1493** | 1484 + 9 |
 
-### Maze Navigation
-- Frozen walking policy steered by pure pursuit controller
-- A* pathfinding on procedural or predefined maze grids
-- Supports DFS, Prim's, and hand-designed maze layouts
-- Configurable cell size, wall thickness, and walking speed
-- Auto-detects VecNormalize stats and reverses path direction when needed
-- Dual-view video: third-person chase cam + top-down map overlay
+### Network Architecture
+
+- Policy: `[512, 512, 256]` MLP with SiLU activation
+- Value: `[512, 512, 256]` MLP (separate network)
+- Orthogonal initialization
+- Action space: 17 continuous joint torques
+
+### Reward Design
+
+Walking uses Gaussian kernel rewards for smooth gradients:
+
+```
+reward = weight * exp(-bandwidth * ||error||^2)
+```
+
+Dominant signal is velocity tracking (weight=25.0, bandwidth=2.0). Additional terms for height maintenance, upright orientation, action smoothness, and arm posture.
+
+### Transfer Learning
+
+Standing → walking transfer extends observation statistics and re-initializes critical components:
+
+1. `VecNormalizeExtender` — grows obs normalization from 1484 → 1493 dims
+2. `PolicyTransfer` — copies weights, Xavier-initializes command dimensions
+3. `WarmupCollector` — 10k random steps to populate normalization statistics
+4. Value function re-initialized (standing values corrupt walking gradients)
+5. `log_std` reset (standing models can have std ~8000)
+
+### Curriculum Learning
+
+**Standing (6 stages):** Progressive height targets from 0.80m to 1.40m with increasing episode length requirements and domain randomization.
+
+**Walking (3 stages):** Progressive speed from 0.15 to 0.80 m/s with increasing push perturbation strength and direction diversity. Anti-exploit mechanism requires actual movement to advance.
 
 ## Configuration
 
-All training hyperparameters live in `config/training_config.yaml`, organized under `standing:`, `walking:`, and `maze:` top-level keys. Covers:
-
-- Network architecture (`[512, 512, 256]` policy and value networks, SiLU activation)
-- Learning rate schedules (linear decay)
-- Reward function weights and Gaussian kernel bandwidths
-- Curriculum stages and advancement criteria
-- Domain randomization ranges
-- VecNormalize clip values
-- WandB logging settings
+All hyperparameters in `config/training_config.yaml` under `standing:`, `walking:`, and `maze:` keys. Covers network architecture, learning rate schedules, reward weights, curriculum stages, and domain randomization.
 
 ## Requirements
-
-See `requirements.txt`. Key dependencies:
 
 | Package | Purpose |
 |---------|---------|
@@ -193,8 +199,8 @@ See `requirements.txt`. Key dependencies:
 | `stable-baselines3` | PPO implementation |
 | `torch` | Neural network backend |
 | `opencv-python` | Video recording |
-| `numpy` | Numerical computing |
+| `numpy` | Array computation |
 | `matplotlib` | Visualization |
-| `pyyaml` | Configuration parsing |
+| `pyyaml` | Configuration |
 
-Optional: `wandb` for experiment tracking (enabled via config).
+Optional: `wandb` for experiment tracking.

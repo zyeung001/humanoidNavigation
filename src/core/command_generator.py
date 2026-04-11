@@ -257,31 +257,3 @@ class VelocityCommandGeneratorWithSmoothing(VelocityCommandGenerator):
         self._smoothed_command = command.copy()
         return command
 
-
-if __name__ == "__main__":
-    # Quick test
-    print("Testing VelocityCommandGenerator")
-    print("=" * 50)
-    
-    generator = VelocityCommandGenerator(seed=42)
-    
-    dt = 0.01
-    total_time = 10.0
-    steps = int(total_time / dt)
-    
-    commands = []
-    for _ in range(steps):
-        cmd = generator.get_command(dt)
-        commands.append(cmd.copy())
-    
-    commands = np.array(commands)
-    
-    print(f"\nSimulated {total_time:.1f} seconds ({steps} steps)")
-    print("Command statistics:")
-    print(f"  vx range: [{commands[:, 0].min():.2f}, {commands[:, 0].max():.2f}]")
-    print(f"  vy range: [{commands[:, 1].min():.2f}, {commands[:, 1].max():.2f}]")
-    print(f"  yaw range: [{commands[:, 2].min():.2f}, {commands[:, 2].max():.2f}]")
-    
-    stats = generator.get_statistics()
-    print(f"\nGenerator stats: {stats}")
-

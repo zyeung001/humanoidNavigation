@@ -615,18 +615,18 @@ def transfer_standing_to_walking(
         "learning_rate": 3e-4,
         "lr_schedule": None,
     })
-    print(f"  Standing model loaded successfully", flush=True)
+    print("  Standing model loaded successfully", flush=True)
     print(f"  Standing obs space: {standing_model.observation_space.shape}")
     print(f"  Walking obs space: {walking_vecnorm.observation_space.shape}", flush=True)
 
     # Create walking model
-    print(f"  Creating walking PPO model...", flush=True)
+    print("  Creating walking PPO model...", flush=True)
     walking_model = PPO(
         env=walking_vecnorm,
         device=device,
         **walking_model_kwargs
     )
-    print(f"  Walking model created successfully", flush=True)
+    print("  Walking model created successfully", flush=True)
     
     # Step 4: Transfer weights
     print("\n[4/4] Transferring policy weights...")
@@ -650,15 +650,3 @@ def transfer_standing_to_walking(
     print(f"{'='*60}\n")
     
     return walking_model, walking_vecnorm
-
-
-if __name__ == "__main__":
-    print("Transfer utils module - run tests")
-
-    # Test VecNormalizeExtender dimensions (NEW structure)
-    print("\nDimension calculations (NEW structure):")
-    print("  Body per-frame: 371 (365 base + 6 COM)")
-    print(f"  Standing total: 371 × 4 = {371 * 4} (body only)")
-    print(f"  Walking body: 371 × 4 = {371 * 4} (stacked)")
-    print("  Command block: 9 (vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual, err_vx, err_vy, err_speed, err_angle)")
-    print(f"  Walking total: {371 * 4} + 9 = {371 * 4 + 9}")

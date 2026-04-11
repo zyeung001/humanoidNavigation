@@ -27,28 +27,12 @@ from stable_baselines3.common.callbacks import CallbackList, BaseCallback
 
 from src.environments.standing_curriculum import make_standing_curriculum_env
 from src.agents.diagnostics import DiagnosticsCallback
+from src.training.schedules import lr_schedule, clip_schedule
 
 
 def load_yaml(path: str):
     with open(path, 'r') as f:
         return yaml.safe_load(f)
-
-
-def lr_schedule(initial_lr: float, final_lr: float, total_steps: int):
-    def schedule(progress_remaining: float):
-        # SB3 passes progress_remaining in [1..0]
-        step = (1.0 - progress_remaining) * total_steps
-        ratio = float(np.clip(step / max(total_steps, 1), 0.0, 1.0))
-        return initial_lr * (1.0 - ratio) + final_lr * ratio
-    return schedule
-
-
-def clip_schedule(initial: float, final: float, total_steps: int):
-    def schedule(progress_remaining: float):
-        step = (1.0 - progress_remaining) * total_steps
-        ratio = float(np.clip(step / max(total_steps, 1), 0.0, 1.0))
-        return initial * (1.0 - ratio) + final * ratio
-    return schedule
 
 
 def make_env_fns(n_envs: int, seed: int, cfg: dict):
@@ -61,7 +45,7 @@ def make_env_fns(n_envs: int, seed: int, cfg: dict):
             try:
                 env.action_space.seed(seed + rank)
                 env.observation_space.seed(seed + rank)
-            except Exception:
+            except (AttributeError, NotImplementedError):
                 pass
             return env
         return _init

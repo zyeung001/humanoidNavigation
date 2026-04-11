@@ -283,28 +283,3 @@ def plot_command_distribution(n_samples: int = 10000, seed: int = 42):
     plt.tight_layout()
     plt.show()
 
-
-if __name__ == "__main__":
-    print("=" * 60)
-    print("Velocity Command Generator Visualization")
-    print("=" * 60)
-    
-    # Main visualization (vx, vy, speed)
-    simulate_and_plot(
-        duration=60.0,
-        dt=0.01,
-        seed=42,
-        save_path=None  # Set to 'velocity_commands.png' to save
-    )
-    
-    # Yaw rate visualization
-    plot_yaw_rate(
-        duration=60.0,
-        dt=0.01,
-        seed=42,
-        save_path=None
-    )
-    
-    # Distribution plot
-    plot_command_distribution(n_samples=10000, seed=42)
-

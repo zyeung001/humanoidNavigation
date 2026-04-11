@@ -1,10 +1,13 @@
 # standing_env.py
 
 
+import logging
 import gymnasium as gym
 import numpy as np
 from typing import Optional
 from gymnasium.spaces import Box
+
+logger = logging.getLogger(__name__)
 
 
 class StandingEnv(gym.Wrapper):
@@ -345,7 +348,7 @@ class StandingEnv(gym.Wrapper):
                 qvel = self.env.unwrapped.data.qvel[6:6+action.shape[-1]]
                 pd = (-self.pd_kp * qpos) + (-self.pd_kd * qvel)
                 action = np.clip(action + pd, -1.0, 1.0)
-            except Exception:
+            except (AttributeError, IndexError):
                 pass
 
         if self.enable_action_smoothing:
@@ -368,8 +371,8 @@ class StandingEnv(gym.Wrapper):
                 com_vel = self.env.unwrapped.data.cdof_dot[:3] if hasattr(self.env.unwrapped.data, 'cdof_dot') else self.env.unwrapped.data.qvel[:3]
                 features.append(np.asarray(com_pos, dtype=np.float32))
                 features.append(np.asarray(com_vel, dtype=np.float32))
-            except Exception as e:
-                print(f"Warning: Failed to add COM features: {e}")
+            except (AttributeError, IndexError) as e:
+                logger.warning("Failed to add COM features: %s", e)
 
         # Concatenate base + COM features
         feat_vec = np.concatenate([np.atleast_1d(f).ravel() for f in features]).astype(np.float32)
@@ -452,45 +455,4 @@ class StandingEnv(gym.Wrapper):
 
 def make_standing_env(render_mode=None, config=None):
     return StandingEnv(render_mode=render_mode, config=config)
-
-
-if __name__ == "__main__":
-    print("Testing Standing Environment")
-    print("=" * 60)
-    
-    config = {
-        'obs_history': 4,
-        'obs_include_com': True,
-        'obs_feature_norm': True,
-        'action_smoothing': True,
-        'action_smoothing_tau': 0.5,  
-        'random_height_init': True,
-        'random_height_prob': 0.3,
-        'reward_caps': {
-            'max_height_maintenance_penalty': 15.0,
-            'recovery_bonus_scale': 50.0,
-            'termination_penalty_constant': 50.0
-        }
-    }
-    
-    env = make_standing_env(render_mode=None, config=config)
-    
-    obs, info = env.reset()
-    print(f"\n Reset observation shape: {obs.shape}")
-    print(f" Expected frozen dimension: {env.frozen_obs_dim}")
-    
-    print("\nRunning 200 steps...")
-    for step in range(200):
-        action = env.action_space.sample()
-        obs, reward, terminated, truncated, info = env.step(action)
-        
-        if step % 50 == 0:
-            print(f"Step {step}: height={info['height']:.3f}, reward={reward:.2f}")
-        
-        if terminated or truncated:
-            print(f"\nEpisode ended at step {step}")
-            break
-    
-    env.close()
-    print("\n Test completed!")
 
