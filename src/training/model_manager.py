@@ -293,7 +293,7 @@ class ModelManager:
                 ts_match = str(old_ckpt.stem).split('_')[1]
                 for vecnorm in stage_dir.glob(f"vecnorm_{ts_match}*.pkl"):
                     vecnorm.unlink()
-            except OSError as e:
+            except (OSError, IndexError) as e:
                 logger.debug("Could not clean up old checkpoint %s: %s", old_ckpt, e)
     
     def load_latest(self, model_class, env):

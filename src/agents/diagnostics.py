@@ -180,12 +180,12 @@ class DiagnosticsCallback(BaseCallback):
                     'diag/xy_drift_max': float(np.max(distances_from_origin)),
                 })
 
-            # Try wandb if available
+            # Try wandb if available — never crash training for a logging failure
             try:
                 import wandb
                 if wandb.run:
                     wandb.log(metrics, step=t)
-            except ImportError:
+            except Exception:
                 pass
 
             if self.verbose:

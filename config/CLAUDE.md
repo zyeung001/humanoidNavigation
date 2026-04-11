@@ -2,7 +2,7 @@
 
 ## `training_config.yaml`
 
-Single YAML file with two top-level keys: `standing` and `walking`. Both tasks share most parameter names but with different values.
+Single YAML file with three top-level keys: `standing`, `walking`, and `maze`. Standing and walking share most parameter names but with different values.
 
 ## Parameter Groups
 

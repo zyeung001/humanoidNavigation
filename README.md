@@ -56,8 +56,8 @@ make train-standing ARGS="--timesteps 5000000"
 # Walking controller (transfer from standing — recommended)
 make train-walking ARGS="--from-standing --model models/best_standing_model.zip --timesteps 30000000"
 
-# Resume walking training
-make train-walking ARGS="--model models/walking/latest/model.zip --vecnorm models/walking/latest/vecnorm.pkl"
+# Resume walking training (paths created by ModelManager during training)
+make train-walking ARGS="--model models/walking/final/final_walking_model.zip --vecnorm models/walking/final/vecnorm_walking.pkl"
 ```
 
 ### Evaluate
@@ -102,11 +102,9 @@ humanoidNavigation/
 ├── config/
 │   └── training_config.yaml        # All hyperparameters (standing, walking, maze)
 ├── models/                         # Trained weights + VecNormalize stats
-│   ├── best_standing_model.zip
-│   └── walking/
-│       ├── best/
-│       ├── latest/
-│       └── final/
+│   ├── best_standing_model.zip     # Standing model
+│   ├── vecnorm.pkl                 # Standing normalization stats
+│   └── walking/final/              # Walking model (more dirs created during training)
 ├── scripts/
 │   ├── train_standing.py           # Standing training entry point
 │   ├── train_walking.py            # Walking training entry point
