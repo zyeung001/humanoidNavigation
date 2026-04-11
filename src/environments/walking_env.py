@@ -8,10 +8,13 @@ Uses modular RewardCalculator for clean reward computation
 Integrates VelocityCommandGenerator for proper command sampling
 """
 
+import logging
 import gymnasium as gym
 import numpy as np
 from typing import Optional
 from gymnasium.spaces import Box
+
+logger = logging.getLogger(__name__)
 
 # Import modular reward calculator
 from src.core.rewards import RewardCalculator, RewardWeights
@@ -266,7 +269,7 @@ class WalkingEnv(gym.Wrapper):
         self.current_push_force = np.zeros(3)
         try:
             self.env.unwrapped.data.xfrc_applied[:] = 0.0
-        except Exception:
+        except (AttributeError, IndexError):
             pass
         
         # FIX 5: Clear consistency tracking
@@ -729,7 +732,7 @@ class WalkingEnv(gym.Wrapper):
                 qvel = self.env.unwrapped.data.qvel[6:6+action.shape[-1]]
                 pd = (-self.pd_kp * qpos) + (-self.pd_kd * qvel)
                 action = np.clip(action + pd, -1.0, 1.0)
-            except Exception:
+            except (AttributeError, IndexError):
                 pass
 
         if self.enable_action_smoothing:
@@ -767,8 +770,8 @@ class WalkingEnv(gym.Wrapper):
                 com_vel = self.env.unwrapped.data.cdof_dot[:3] if hasattr(self.env.unwrapped.data, 'cdof_dot') else self.env.unwrapped.data.qvel[:3]
                 body_features.append(np.asarray(com_pos, dtype=np.float32))
                 body_features.append(np.asarray(com_vel, dtype=np.float32))
-            except Exception as e:
-                print(f"Warning: Failed to add COM features: {e}")
+            except (AttributeError, IndexError) as e:
+                logger.warning("Failed to add COM features: %s", e)
 
         # Concatenate body features (NO command here)
         body_vec = np.concatenate([np.atleast_1d(f).ravel() for f in body_features]).astype(np.float32)
@@ -923,15 +926,15 @@ class WalkingEnv(gym.Wrapper):
             try:
                 # Apply external force to torso (body index 1 typically)
                 self.env.unwrapped.data.xfrc_applied[1, :3] = self.current_push_force
-            except Exception:
+            except (AttributeError, IndexError):
                 pass
             self.push_countdown -= 1
-            
+
             # Clear force when push ends
             if self.push_countdown == 0:
                 try:
                     self.env.unwrapped.data.xfrc_applied[1, :3] = np.zeros(3)
-                except Exception:
+                except (AttributeError, IndexError):
                     pass
             return
         
@@ -1001,48 +1004,4 @@ class WalkingEnv(gym.Wrapper):
 def make_walking_env(render_mode=None, config=None):
     """Create walking environment with given config."""
     return WalkingEnv(render_mode=render_mode, config=config)
-
-
-if __name__ == "__main__":
-    print("Testing Walking Environment")
-    print("=" * 60)
-    
-    config = {
-        'obs_history': 4,
-        'obs_include_com': True,
-        'obs_feature_norm': True,
-        'action_smoothing': True,
-        'action_smoothing_tau': 0.2,
-        'random_height_init': False,
-        'max_commanded_speed': 1.0,  # Allow up to 1 m/s
-        'velocity_weight': 5.0,
-        'reward_caps': {
-            'max_height_maintenance_penalty': 15.0,
-            'recovery_bonus_scale': 50.0,
-            'termination_penalty_constant': 50.0
-        }
-    }
-    
-    env = make_walking_env(render_mode=None, config=config)
-    
-    obs, info = env.reset()
-    print(f"\n Reset observation shape: {obs.shape}")
-    print(f" Expected frozen dimension: {env.frozen_obs_dim}")
-    print(f" Commanded velocity: ({info['commanded_vx']:.2f}, {info['commanded_vy']:.2f})")
-    
-    print("\nRunning 200 steps...")
-    for step in range(200):
-        action = env.action_space.sample()
-        obs, reward, terminated, truncated, info = env.step(action)
-        
-        if step % 50 == 0:
-            print(f"Step {step}: height={info['height']:.3f}, "
-                  f"vel_err={info['velocity_error']:.3f}, reward={reward:.2f}")
-        
-        if terminated or truncated:
-            print(f"\nEpisode ended at step {step}")
-            break
-    
-    env.close()
-    print("\n Test completed!")
 

@@ -61,25 +61,12 @@ from src.training.callbacks import (
 from src.training.transfer_utils import (
     transfer_standing_to_walking,
 )
+from src.training.schedules import lr_schedule, clip_schedule
 
 
 def load_yaml(path: str):
     with open(path, 'r') as f:
         return yaml.safe_load(f)
-
-
-def lr_schedule(initial_lr: float, final_lr: float, total_steps: int = 0):
-    """Linear decay from initial_lr to final_lr. Uses SB3's progress_remaining (1→0)."""
-    def schedule(progress_remaining: float):
-        return initial_lr * progress_remaining + final_lr * (1.0 - progress_remaining)
-    return schedule
-
-
-def clip_schedule(initial: float, final: float, total_steps: int = 0):
-    """Linear decay from initial to final. Uses SB3's progress_remaining (1→0)."""
-    def schedule(progress_remaining: float):
-        return initial * progress_remaining + final * (1.0 - progress_remaining)
-    return schedule
 
 
 def _expand_vecnorm_9to11(vecnorm_path, venv, walking_cfg):
@@ -196,7 +183,7 @@ def make_env_fns(n_envs: int, seed: int, cfg: dict, use_subproc: bool = True):
                 try:
                     env.action_space.seed(seed + rank)
                     env.observation_space.seed(seed + rank)
-                except Exception:
+                except (AttributeError, NotImplementedError):
                     pass
                 return env
             except Exception as e:
@@ -660,7 +647,7 @@ class SaveWithModelManagerCallback(BaseCallback):
                 stage = 0
                 try:
                     stage = env.envs[0].stage if hasattr(env.envs[0], 'stage') else 0
-                except Exception:
+                except (AttributeError, IndexError):
                     pass
                 
                 # Calculate average velocity error
@@ -1278,9 +1265,9 @@ def main():
     model.save(final_path)
     try:
         env.save(vecnorm_path)
-    except Exception:
-        pass
-    
+    except (OSError, AttributeError) as e:
+        print(f"Warning: Could not save final vecnorm: {e}")
+
     # Finish WandB run
     if use_wandb:
         finish_wandb_run()

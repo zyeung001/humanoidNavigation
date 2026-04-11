@@ -23,7 +23,7 @@ ARGS ?=
 
 # ── Targets ───────────────────────────────────────────────────────
 
-.PHONY: setup train-standing train-walking record evaluate clean help
+.PHONY: setup train-standing train-walking record evaluate lint clean help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -50,6 +50,9 @@ record: $(VENV)/installed ## Record evaluation video (pass ARGS="..." for flags)
 
 evaluate: $(VENV)/installed ## Run evaluation script (pass ARGS="..." for flags)
 	$(PY) scripts/evaluate.py $(ARGS)
+
+lint: ## Run ruff linter on all Python files
+	$(PY) -m ruff check src/ scripts/ || $(PYTHON) -m ruff check src/ scripts/
 
 clean: ## Remove virtualenv, caches, and generated files
 	rm -rf $(VENV)

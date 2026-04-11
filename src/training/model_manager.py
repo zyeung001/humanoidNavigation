@@ -9,12 +9,14 @@ Features:
 - Config archiving
 """
 
-import shutil
+import logging
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 import json
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 def _fix_vecnorm_for_save(env):
@@ -98,8 +100,8 @@ class ModelManager:
                     info = json.load(f)
                     self._best_metric = info.get('metric', float('inf'))
                     self._best_timesteps = info.get('timesteps', 0)
-            except Exception:
-                pass
+            except (json.JSONDecodeError, OSError) as e:
+                logger.debug("Could not load best model info: %s", e)
     
     def _save_best_info(self, metric: float, timesteps: int, extra: Dict = None):
         """Save best model metadata."""
@@ -129,9 +131,9 @@ class ModelManager:
         model.save(str(model_path))
         try:
             env.save(str(vecnorm_path))
-        except Exception as e:
-            print(f"Warning: Could not save vecnorm: {e}")
-        
+        except (OSError, AttributeError) as e:
+            logger.warning("Could not save vecnorm: %s", e)
+
         # Save metadata
         info = {
             'timesteps': timesteps or model.num_timesteps,
@@ -180,9 +182,9 @@ class ModelManager:
         vecnorm_path = stage_dir / f"vecnorm_{ts_str}.pkl"
         try:
             env.save(str(vecnorm_path))
-        except Exception:
-            pass
-        
+        except (OSError, AttributeError) as e:
+            logger.warning("Could not save vecnorm for checkpoint: %s", e)
+
         print(f"✓ Checkpoint saved: {model_path}.zip")
         
         # Cleanup old checkpoints
@@ -223,9 +225,9 @@ class ModelManager:
             model.save(str(model_path))
             try:
                 env.save(str(vecnorm_path))
-            except Exception:
-                pass
-            
+            except (OSError, AttributeError) as e:
+                logger.warning("Could not save vecnorm for best model: %s", e)
+
             self._save_best_info(metric, timesteps, {
                 'metric_name': metric_name,
                 'previous_best': old_best
@@ -245,9 +247,9 @@ class ModelManager:
         model.save(str(model_path))
         try:
             env.save(str(vecnorm_path))
-        except Exception:
-            pass
-        
+        except (OSError, AttributeError) as e:
+            logger.warning("Could not save vecnorm for final model: %s", e)
+
         info = {
             'timesteps': model.num_timesteps,
             'timestamp': datetime.now().isoformat(),
@@ -291,8 +293,8 @@ class ModelManager:
                 ts_match = str(old_ckpt.stem).split('_')[1]
                 for vecnorm in stage_dir.glob(f"vecnorm_{ts_match}*.pkl"):
                     vecnorm.unlink()
-            except Exception:
-                pass
+            except (OSError, IndexError) as e:
+                logger.debug("Could not clean up old checkpoint %s: %s", old_ckpt, e)
     
     def load_latest(self, model_class, env):
         """
@@ -358,30 +360,4 @@ class ModelManager:
             if stage_dir.is_dir():
                 all_checkpoints.extend(stage_dir.glob("model_*.zip"))
         return sorted(all_checkpoints)
-
-
-if __name__ == "__main__":
-    # Test the model manager
-    print("Testing ModelManager")
-    print("=" * 50)
-    
-    manager = ModelManager("test_task", base_dir="test_models")
-    
-    print(f"\nTask directory: {manager.task_dir}")
-    print(f"Latest directory: {manager.latest_dir}")
-    print(f"Best directory: {manager.best_dir}")
-    print(f"Checkpoint directory: {manager.checkpoint_dir}")
-    
-    # Test config archiving
-    test_config = {
-        'learning_rate': 0.0003,
-        'n_envs': 32,
-        'batch_size': 512
-    }
-    manager.archive_config(test_config)
-    
-    print("\n✓ ModelManager test complete")
-    
-    # Cleanup test directory
-    shutil.rmtree("test_models", ignore_errors=True)
 

@@ -7,9 +7,12 @@ tracks height distribution bins, action magnitudes, and velocity tracking for wa
 
 from __future__ import annotations
 
+import logging
 from typing import Dict, Any, List
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
+
+logger = logging.getLogger(__name__)
 
 
 class DiagnosticsCallback(BaseCallback):
@@ -58,13 +61,13 @@ class DiagnosticsCallback(BaseCallback):
         if actions is not None:
             try:
                 self._actions_abs.append(float(np.abs(actions).mean()))
-            except Exception:
-                pass
+            except (ValueError, TypeError):
+                logger.debug("Failed to compute action magnitude")
         if rewards is not None:
             try:
                 self._rewards.append(float(np.mean(rewards)))
-            except Exception:
-                pass
+            except (ValueError, TypeError):
+                logger.debug("Failed to compute reward mean")
 
         if self.log_freq > 0 and (t % self.log_freq == 0):
             metrics: Dict[str, Any] = {'global_step': t}
@@ -177,7 +180,7 @@ class DiagnosticsCallback(BaseCallback):
                     'diag/xy_drift_max': float(np.max(distances_from_origin)),
                 })
 
-            # Try wandb if available
+            # Try wandb if available — never crash training for a logging failure
             try:
                 import wandb
                 if wandb.run:

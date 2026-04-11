@@ -1,14 +1,14 @@
 # Humanoid Navigation
 
-Reinforcement learning for humanoid locomotion using PPO (Stable Baselines3) and MuJoCo physics simulation. Two-stage pipeline: train standing balance first, then transfer to command-conditioned walking.
+Reinforcement learning for humanoid locomotion and navigation using PPO (Stable Baselines3) and MuJoCo physics simulation. Three-stage pipeline: standing balance → walking → maze navigation.
 
 ## Architecture
 
 ```
-Standing (5M steps)  →  Transfer Learning  →  Walking (30M steps)
-  StandingCurriculumEnv      VecNormalizeExtender      WalkingCurriculumEnv
-  6-stage height curriculum  PolicyTransfer             3-stage speed curriculum
-  0.80m → 1.40m target      1484 → 1493 obs dims      0.15 → 0.80 m/s
+Standing (5M steps)  →  Transfer Learning  →  Walking (30M steps)  →  Maze Navigation
+  StandingCurriculumEnv      VecNormalizeExtender      WalkingCurriculumEnv      NavigationController
+  6-stage height curriculum  PolicyTransfer             3-stage speed curriculum  Pure pursuit + A*
+  0.80m → 1.40m target      1484 → 1493 obs dims      0.15 → 0.80 m/s          Frozen walking policy
 ```
 
 ## Directory Map
@@ -18,10 +18,11 @@ Standing (5M steps)  →  Transfer Learning  →  Walking (30M steps)
 | `src/environments/` | Gym wrappers + curriculum | [CLAUDE.md](src/environments/CLAUDE.md) |
 | `src/core/` | Reward calculator + command generator | [CLAUDE.md](src/core/CLAUDE.md) |
 | `src/training/` | Transfer learning, model management, callbacks | [CLAUDE.md](src/training/CLAUDE.md) |
+| `src/maze/` | Procedural maze generation + navigation | [CLAUDE.md](src/maze/CLAUDE.md) |
 | `src/agents/` | High-level agent wrappers + diagnostics | — |
-| `src/utils/` | Visualization + WandB utilities | — |
+| `src/utils/` | Visualization utilities | — |
 | `scripts/` | Training, evaluation, debug entry points | [CLAUDE.md](scripts/CLAUDE.md) |
-| `config/` | Single YAML config for both tasks | [CLAUDE.md](config/CLAUDE.md) |
+| `config/` | Single YAML config for all tasks | [CLAUDE.md](config/CLAUDE.md) |
 | `models/` | Trained weights + VecNormalize stats | — |
 
 Source code details: [src/CLAUDE.md](src/CLAUDE.md)
@@ -45,19 +46,22 @@ Source code details: [src/CLAUDE.md](src/CLAUDE.md)
 
 ```bash
 # Install
-pip install -r requirements.txt
+make setup        # or: pip install -r requirements.txt
+
+# Lint
+make lint         # ruff check
 
 # Train standing (fresh)
-python scripts/train_standing.py --timesteps 5000000
+make train-standing ARGS="--timesteps 5000000"
 
 # Train walking (from standing model)
-python scripts/train_walking.py --from-standing \
-    --model models/best_standing_model.zip \
-    --timesteps 30000000
+make train-walking ARGS="--from-standing --model models/best_standing_model.zip --timesteps 30000000"
 
 # Evaluate + record video
-python scripts/evaluate.py --task walking \
-    --model models/walking/final/final_walking_model.zip --record
+make evaluate ARGS="--task walking --model models/walking/final/final_walking_model.zip --record"
+
+# Maze navigation
+python scripts/run_maze_nav.py --maze-type corridor --model models/walking/best/model.zip --record
 ```
 
 ## Common Pitfalls

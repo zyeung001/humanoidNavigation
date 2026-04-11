@@ -35,12 +35,12 @@ try:
     from src.environments.standing_env import make_standing_env  # type: ignore
     from src.environments.walking_env import make_walking_env  # type: ignore
     CUSTOM_ENV_AVAILABLE = True
-except Exception:
+except ImportError:
     try:
         from environments.standing_env import make_standing_env  # type: ignore
         from environments.walking_env import make_walking_env  # type: ignore
         CUSTOM_ENV_AVAILABLE = True
-    except Exception:
+    except ImportError:
         CUSTOM_ENV_AVAILABLE = False
 
 # Suppress Gymnasium warnings

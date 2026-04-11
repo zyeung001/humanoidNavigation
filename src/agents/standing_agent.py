@@ -24,13 +24,7 @@ except ImportError:
     print("WandB not available. Install with: pip install wandb")
 
 
-# Import the environment (adjust path for Colab)
-try:
-    from src.environments.standing_env import make_standing_env
-except ImportError:
-    import sys
-    sys.path.append('/content')
-    from src.environments.standing_env import make_standing_env
+from src.environments.standing_env import make_standing_env
 
 
 def safe_step(env, action):
@@ -245,7 +239,7 @@ class StandingCallback(BaseCallback):
                         log_std = self.model.policy.log_std.detach().cpu().numpy()
                         policy_stats['policy_std_mean'] = float(np.exp(log_std).mean())
                         policy_stats['policy_std_max'] = float(np.exp(log_std).max())
-                except Exception:
+                except (AttributeError, RuntimeError):
                     pass
             
             # Base metrics
@@ -542,7 +536,7 @@ class StandingAgent:
             try:
                 env.action_space.seed(seed + rank)
                 env.observation_space.seed(seed + rank)
-            except Exception:
+            except (AttributeError, NotImplementedError):
                 pass
             return env
         return _init

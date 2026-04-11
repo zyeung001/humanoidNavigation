@@ -19,7 +19,6 @@ import argparse
 import numpy as np
 import torch
 import pickle
-import copy
 from stable_baselines3 import PPO
 
 
@@ -46,8 +45,6 @@ def expand_policy(model_path: str, output_path: str):
     # In the old layout: [0:vx_cmd, 1:vy_cmd, 2:yaw_cmd, 3:vx_actual, 4:vy_actual,
     #                     5:err_vx, 6:err_vy, 7:err_speed, 8:err_angle]
     # Insert yaw_actual after index 4 (position 5), err_yaw at end (position 10)
-    insert_positions = [cmd_start + 5, cmd_start + 10]  # 1489, 1494 (after first insert shifts indices)
-
     expanded = 0
     for key, tensor in state_dict.items():
         if tensor.dim() == 2 and tensor.shape[1] == 1493:
@@ -82,7 +79,7 @@ def expand_policy(model_path: str, output_path: str):
         low=-np.inf, high=np.inf, shape=(1495,), dtype=np.float32
     )
 
-    print(f"  Rebuilding policy with obs space (1495,)...", flush=True)
+    print("  Rebuilding policy with obs space (1495,)...", flush=True)
     model.observation_space = new_obs_space
     # Recreate policy with correct dimensions
     model.policy = model.policy_class(
@@ -93,7 +90,7 @@ def expand_policy(model_path: str, output_path: str):
     )
     # Load expanded weights into the new policy
     model.policy.load_state_dict(state_dict)
-    print(f"  Weights loaded successfully", flush=True)
+    print("  Weights loaded successfully", flush=True)
 
     model.save(output_path)
     print(f"  Saved expanded model to {output_path}")
@@ -131,8 +128,6 @@ def expand_vecnorm(vecnorm_path: str, output_path: str):
 
     # Create a fresh VecNormalize with correct obs space
     obs_space = spaces.Box(low=-np.inf, high=np.inf, shape=(1495,), dtype=np.float32)
-    act_space = spaces.Box(low=-1.0, high=1.0, shape=(17,), dtype=np.float32)
-
     def make_dummy():
         env = gym.make("Humanoid-v5")
         # Override obs/act spaces for the wrapper
@@ -186,7 +181,7 @@ def main():
     print("\n" + "=" * 60)
     print("Done! Resume training with:")
     print(f"  python scripts/train_walking.py --model {args.output_model} \\")
-    print(f"      --override config/variants/fresh_start.yaml")
+    print("      --override config/variants/fresh_start.yaml")
     print("=" * 60)
 
 
