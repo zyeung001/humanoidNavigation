@@ -2,7 +2,7 @@
 # Yaw:tracking ratio = 2.0x (matches Isaac Lab G1)
 # 35% TIP, reduced tracking weight, capped at Stage 1
 #
-# Run: python scripts/train_walking.py --model models/walking/final/final_walking_model.zip --fresh-lr --override config/variants/yaw_dominant.yaml
+# Run: python scripts/train_walking.py --model models/walking/final/model.zip --fresh-lr --override config/variants/yaw_dominant.yaml
 #
 # WARNING: Will likely degrade forward walking quality. Use only if A/B fail.
 # The idea is to first teach turning, then restore walking quality with
@@ -14,5 +14,11 @@ walking:
   reward_direction_weight: 0.4       # Reduced progress bonus
   turn_in_place_prob: 0.35           # 35% TIP episodes
   command_switch_interval: [2.0, 5.0] # Fast resampling
+  learning_rate: 0.0001              # 1e-4: aggressive — break out of forward-only local minimum
+  final_learning_rate: 0.00003       # 3e-5: decay to stable range
+  ent_coef: 0.03                     # 6x base: force exploration of turning actions
+  final_ent_coef: 0.01               # Keep some exploration throughout
   curriculum_start_stage: 0
   curriculum_max_stage: 1            # Cap at Stage 1 until yaw works
+  arm_penalty_stage_weights: [0.0, 0.0, 0.0, 0.0, 0.0]  # Zero arm penalty — learn yaw first
+  reward_arm_posture_weight: 0.0     # Ensure no arm interference

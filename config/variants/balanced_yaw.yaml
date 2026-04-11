@@ -6,9 +6,14 @@
 # Run: python scripts/train_walking.py --model models/walking/final/final_walking_model.zip --fresh-lr
 # (No --override needed — these are the defaults in training_config.yaml)
 walking:
-  yaw_rate_weight: 3.0               # 0.6x tracking (legged_gym uses 0.5x)
+  yaw_rate_weight: 5.0               # Increased from 3.0: agent only achieves 15% of commanded yaw.
+                                     # 5.0 = 1.0x tracking — yaw is now equal priority with velocity.
   feet_air_time_weight: 0.5          # Continuous, per-step
-  turn_in_place_prob: 0.20           # SOTA: 20% of commands are pure rotation
-  command_switch_interval: [3.0, 8.0]
+  turn_in_place_prob: 0.30           # Increased from 20%: more TIP practice for sharper turns.
+  command_switch_interval: [2.0, 6.0]  # Faster resampling — more yaw transitions per episode.
+  # NOTE: Do NOT override learning_rate for --from-standing transfer.
+  # Base config LR (5e-6) is tuned for the VF warmup/ramp pipeline.
+  # Higher LR causes KL explosion (6000+). Only override LR for fine-tuning.
   curriculum_start_stage: 0
   curriculum_max_stage: 1            # Cap at Stage 1 until yaw is solid
+  arm_penalty_stage_weights: [0.0, 0.0, 0.0, 0.0, 0.0]  # Zero arm penalty — learn yaw first

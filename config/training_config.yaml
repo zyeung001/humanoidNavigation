@@ -161,8 +161,8 @@ walking:
   obs_history: 4  # Stack 4 frames for temporal information
   obs_include_com: true  # Include center-of-mass features (+6 dims)
   obs_feature_norm: true  # Normalize features with tanh
-  # Note: Walking adds +2 dims for commanded velocity
-  # Total: (365 + 6 + 2) * 4 = 1492 dims
+  # Note: Walking adds 11-dim command block (cmd, actual, error for vx/vy/yaw)
+  # Total: (365 + 6) * 4 + 11 = 1495 dims
   
   # ========== ACTION PREPROCESSING ==========
   

@@ -1,0 +1,44 @@
+# Yaw fine-tuning from chicken-wing walking model (expanded 1493→1495)
+#
+# The chicken-wing model walks but can't turn. Previous yaw training (March)
+# failed because the obs space lacked yaw_actual and err_yaw — the policy
+# was blind to yaw rate. Now those 2 dims are in the obs. Gentle yaw settings
+# so walking isn't disrupted.
+#
+# Run:
+#   python scripts/expand_obs_dims.py \
+#       --model models/walking/final/final_walking_model.zip \
+#       --vecnorm models/walking/final/vecnorm_walking.pkl \
+#       --output-model models/walking/final/expanded_walking_model.zip \
+#       --output-vecnorm models/walking/final/expanded_vecnorm.pkl
+#
+#   python scripts/train_walking.py \
+#       --model models/walking/final/expanded_walking_model.zip \
+#       --override config/variants/fresh_start.yaml
+walking:
+  # ===== GENTLE YAW =====
+  include_yaw_rate: true
+  yaw_rate_weight: 1.0            # Low: don't compete with tracking (5.0)
+  turn_in_place_prob: 0.05        # 5% TIP
+  max_yaw_rate: 0.5               # Gentle: 0.5 rad/s not 1.0
+
+  # ===== PPO (fine-tuning a converged model needs higher LR + exploration) =====
+  learning_rate: 0.0001           # 1e-4: model is converged, needs strong signal
+  final_learning_rate: 0.00003    # 3e-5
+  batch_size: 12288               # 2 minibatches × 3 epochs = 6 steps/cycle
+  n_epochs: 3
+  clip_range: 0.2                 # Moderate
+  final_clip_range: 0.15
+  ent_coef: 0.01                  # Push exploration (converged model has std=0.6)
+  final_ent_coef: 0.005
+  log_std_max: 0.5                # Allow std to grow from 0.6 back toward 1.0+
+
+  # ===== NO SCALING (converged model, not transfer) =====
+  policy_max_scale: 1.0
+  extra_vf_epochs: 0
+  resume_policy_scale: 1.0        # No scaling on resume either
+
+  # ===== CURRICULUM =====
+  curriculum_max_speed_stages: [0.15, 0.3, 0.45, 0.45, 0.6]
+  curriculum_start_stage: 0
+  curriculum_max_stage: 3
