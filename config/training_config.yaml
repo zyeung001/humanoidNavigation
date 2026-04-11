@@ -207,9 +207,8 @@ walking:
 
   # ========== CURRICULUM LEARNING ==========
   curriculum_start_stage: 0          # Restart from Stage 0 — re-learn walking with yaw from scratch
-  curriculum_max_stage: 1            # Cap at Stage 1 until yaw tracking is solid.
-                                     # Stage 2+ adds pushes/domain rand that destabilize
-                                     # yaw learning. Raise to 3 once yaw_err < 0.2 consistently.
+  curriculum_max_stage: 3            # Unlocks full yaw range (+/-1.0 rad/s at Stage 3).
+                                     # Was capped at 1 — agent never trained on yaw > 0.5.
   curriculum_advance_after: 30    # Episodes before considering advancement
   warmup_episodes: 0              # NO warmup leniency - enforce strict criteria
   curriculum_success_rate: 0.50   # Success rate needed to advance
