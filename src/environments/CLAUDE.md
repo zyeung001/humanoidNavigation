@@ -8,13 +8,13 @@ All environments wrap `gymnasium.make("Humanoid-v5")` with custom observation pr
 |-----------|------|-------|
 | Humanoid-v5 base | 365 | Joint positions, velocities, forces (350 raw + 15 extra) |
 | COM features | +6 | Center of mass position (3) + velocity (3) |
-| Velocity command | +2 or +9 | Walking only: 2 appended per-frame, 9 in command block |
+| Velocity command | +11 | Walking only: 11-dim command block appended once |
 | History stacking | ×4 | Temporal context for velocity estimation |
 | **Standing total** | **1484** | (365 + 6) × 4 |
-| **Walking total** | **1493** | 1484 + 9 command block |
+| **Walking total** | **1495** | 1484 + 11 command block |
 
-Command block (9 dims, appended once, not per-frame):
-`[vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual, err_vx, err_vy, err_speed, err_angle]`
+Command block (11 dims, appended once, not per-frame):
+`[vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual, yaw_actual, err_vx, err_vy, err_speed, err_angle, err_yaw]`
 
 ## Action Space
 
@@ -80,9 +80,11 @@ Command-conditioned walking with velocity tracking.
 | 1 | 0.40 m/s | Limited | Light (10-40 N) | Light (±3%) |
 | 2 | 0.80 m/s | Full | Heavy (20-80 N) | Full |
 
-**Advancement (multiple paths):**
-- Standard: success_rate ≥ 35% AND avg_vel_error < tolerance × 1.3
-- Length-based: avg_length > 3× minimum AND fall_rate < 10%
+**Advancement (multiple paths, both require yaw gate):**
+- Standard: success_rate ≥ 35% AND avg_vel_error < tolerance × 1.3 AND avg_yaw_error < yaw_tolerance
+- Length-based: avg_length > 3× minimum AND fall_rate < 10% AND avg_yaw_error < yaw_tolerance
+
+**Yaw error tolerances:** [0.40, 0.35, 0.30, 0.25] rad/s per stage. Prevents advancing with zero yaw accuracy.
 
 **Anti-exploit (Stage 0):** Requires `actual_speed ≥ 0.5 × commanded_speed`. Prevents standing-still from passing.
 

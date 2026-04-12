@@ -20,6 +20,7 @@ walking:
   # ===== STRONG YAW =====
   include_yaw_rate: true
   yaw_rate_weight: 3.0            # Strong: ~30-40% of reward signal
+  reward_yaw_bandwidth: 10.0      # Tighter Gaussian: err=0.15→80%, err=0.3→41% (was 4.0)
   turn_in_place_prob: 0.10        # 10% TIP practice
   max_yaw_rate: 1.0               # Full range — maze needs this
 

@@ -9,6 +9,7 @@
 # a follow-up training run at normal weights.
 walking:
   yaw_rate_weight: 6.0               # 2.0x tracking — turning is the priority
+  reward_yaw_bandwidth: 14.0         # Tight Gaussian — punish any yaw error hard
   feet_air_time_weight: 1.0          # Strong foot lifting
   reward_tracking_weight: 3.0        # Reduced (was 5.0) to let yaw dominate
   reward_direction_weight: 0.4       # Reduced progress bonus

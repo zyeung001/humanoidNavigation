@@ -198,6 +198,9 @@ walking:
   yaw_rate_weight: 3.0               # Increased from 1.5: must be competitive with tracking (5.0).
                                      # At 1.5, agent earned 3x more from walking straight than turning.
                                      # 3.0 makes yaw ~60% of tracking weight — strong enough to matter.
+  reward_yaw_bandwidth: 10.0         # Gaussian sharpness for yaw tracking: exp(-bw * err²).
+                                     # Old hardcoded 4.0 was too soft — agent retained 91% reward at
+                                     # 0.15 rad/s error. At 10.0: err=0.15→80%, err=0.3→41%.
 
   # ========== FEET AIR TIME (enables rotation) ==========
   feet_air_time_weight: 0.5          # CHANGED: Now continuous (per-step, not sparse landing-only).
