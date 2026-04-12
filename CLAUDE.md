@@ -8,7 +8,7 @@ Reinforcement learning for humanoid locomotion and navigation using PPO (Stable 
 Standing (5M steps)  →  Transfer Learning  →  Walking (30M steps)  →  Maze Navigation
   StandingCurriculumEnv      VecNormalizeExtender      WalkingCurriculumEnv      NavigationController
   6-stage height curriculum  PolicyTransfer             3-stage speed curriculum  Pure pursuit + A*
-  0.80m → 1.40m target      1484 → 1493 obs dims      0.15 → 0.80 m/s          Frozen walking policy
+  0.80m → 1.40m target      1484 → 1495 obs dims      0.15 → 0.80 m/s          Frozen walking policy
 ```
 
 ## Directory Map
@@ -34,10 +34,10 @@ Source code details: [src/CLAUDE.md](src/CLAUDE.md)
 | Target height | 1.40m | Both standing and walking |
 | Base obs dims | 365 | Humanoid-v5 |
 | COM features | +6 dims | Center of mass position + velocity |
-| Command dims | +9 dims | Walking only (cmd, actual, error) |
+| Command dims | +11 dims | Walking only (cmd, actual, error for vx/vy/yaw) |
 | History frames | 4 | Temporal stacking |
 | Total obs (standing) | 1484 | (365 + 6) × 4 |
-| Total obs (walking) | 1493 | 1484 + 9 command block |
+| Total obs (walking) | 1495 | 1484 + 11 command block |
 | Action dims | 17 | Joint torques |
 | Standing curriculum | 6 stages | 0.80m → 1.40m |
 | Walking curriculum | 3 stages | 0.15 → 0.80 m/s |
@@ -72,3 +72,4 @@ python scripts/run_maze_nav.py --maze-type corridor --model models/walking/best/
 - **Standing exploit**: Walking Stage 0 requires `actual_speed ≥ 0.5 × commanded_speed` to prevent the agent from earning rewards by standing still.
 - **Reward scale**: Walking rewards were scaled down 10× from original values. High rewards cause PPO KL divergence explosion.
 - **Value function re-init**: During transfer, the standing value function must be re-initialized — standing value estimates corrupt walking gradients.
+- **Yaw bandwidth too soft**: `reward_yaw_bandwidth` controls yaw tracking sharpness. At 4.0 (old hardcoded value), the agent retained 91% of yaw reward while producing zero turning. Default is now 10.0 (configurable). Curriculum advancement also gates on yaw error.

@@ -51,6 +51,9 @@ class WalkingCurriculumEnv(WalkingEnv):
 
         # Episode velocity error tracking
         self.episode_velocity_errors = []
+        self.episode_yaw_errors = []
+        self.yaw_error_buffer = []
+        self.yaw_error_tolerances = [0.40, 0.35, 0.30, 0.25]
         self.stabilization_steps = 50  # Skip first N steps when computing average
 
         # Warmup tracking
@@ -160,8 +163,9 @@ class WalkingCurriculumEnv(WalkingEnv):
             cfg['velocity_weight'] = 5.0
 
     def reset(self, seed: Optional[int] = None):
-        # Clear episode velocity error tracking
+        # Clear episode error tracking
         self.episode_velocity_errors = []
+        self.episode_yaw_errors = []
         
         # Update max speed for current stage
         current_stage = min(self.stage, len(self.speed_stages) - 1)
@@ -254,9 +258,11 @@ class WalkingCurriculumEnv(WalkingEnv):
 
         obs, reward, terminated, truncated, info = super().step(action)
         
-        # Track velocity error every step for episode average
+        # Track velocity and yaw error every step for episode average
         if 'velocity_error' in info:
             self.episode_velocity_errors.append(info['velocity_error'])
+        if 'yaw_rate_error' in info:
+            self.episode_yaw_errors.append(info['yaw_rate_error'])
 
         done = bool(terminated or truncated)
         if done:
@@ -280,11 +286,26 @@ class WalkingCurriculumEnv(WalkingEnv):
                 velocity_error = info.get('velocity_error', 0.0)
                 velocity_error_std = 0.0
             
+            # Compute episode-average yaw error (after stabilization)
+            if len(self.episode_yaw_errors) > self.stabilization_steps:
+                stable_yaw = self.episode_yaw_errors[self.stabilization_steps:]
+                yaw_error = np.mean(stable_yaw)
+            elif self.episode_yaw_errors:
+                yaw_error = np.mean(self.episode_yaw_errors)
+            else:
+                yaw_error = info.get('yaw_rate_error', 0.0)
+
             # Update info with episode-average error
             info['velocity_error'] = velocity_error
             info['velocity_error_std'] = velocity_error_std
             info['velocity_error_full_episode'] = np.mean(self.episode_velocity_errors) if self.episode_velocity_errors else 0.0
-            
+            info['yaw_error_avg'] = yaw_error
+
+            # Buffer yaw error for advancement check
+            self.yaw_error_buffer.append(yaw_error)
+            if len(self.yaw_error_buffer) > self.advance_after * 2:
+                self.yaw_error_buffer = self.yaw_error_buffer[-self.advance_after:]
+
             # Track episode length
             self.episode_length_buffer.append(self.current_step)
             if len(self.episode_length_buffer) > self.advance_after * 2:
@@ -365,13 +386,26 @@ class WalkingCurriculumEnv(WalkingEnv):
                 avg_ep_length = np.mean(self.episode_length_buffer[-self.advance_after:]) if self.episode_length_buffer else 0
                 success_rate = np.mean(self.success_buffer)
                 fall_rate = np.mean(self.fall_buffer) if self.fall_buffer else 1.0
-                
+
+                # Yaw error gate: agent must demonstrate yaw tracking to advance.
+                # Without this, agent advances with 0% yaw accuracy by walking straight.
+                include_yaw = getattr(self, 'include_yaw_rate', False)
+                yaw_tol = self.yaw_error_tolerances[min(current_stage, len(self.yaw_error_tolerances) - 1)]
+                if include_yaw and len(self.yaw_error_buffer) >= self.advance_after:
+                    avg_recent_yaw_error = np.mean(self.yaw_error_buffer[-self.advance_after:])
+                    yaw_ok = avg_recent_yaw_error < yaw_tol
+                else:
+                    # Yaw disabled or not enough data — don't block advancement
+                    avg_recent_yaw_error = 0.0
+                    yaw_ok = True
+
                 # Path 1 - Standard advancement
                 standard_advance = (
-                    success_rate >= self.stage_success_threshold and 
-                    avg_recent_vel_error < current_vel_tol * 1.3
+                    success_rate >= self.stage_success_threshold and
+                    avg_recent_vel_error < current_vel_tol * 1.3 and
+                    yaw_ok
                 )
-                
+
                 # Path 2 - lenght based
                 # if agent consistently survives long episodes without falling
                 # TIGHTENED: Also requires minimum success rate to prevent premature advancement
@@ -379,7 +413,8 @@ class WalkingCurriculumEnv(WalkingEnv):
                     avg_ep_length > min_length * 3.0 and   # Tightened from 2.5x
                     fall_rate < 0.10 and                    # Tightened from 0.15
                     avg_recent_vel_error < current_vel_tol * 1.3 and  # Tightened from 1.6
-                    success_rate >= 0.20                    # NEW: Must have some success
+                    success_rate >= 0.20 and                # NEW: Must have some success
+                    yaw_ok
                 )
 
                 # Path 3 - improvement based - DISABLED
@@ -422,6 +457,7 @@ class WalkingCurriculumEnv(WalkingEnv):
                     # Reset success buffers for new stage
                     self.success_buffer = []
                     self.velocity_error_buffer = []
+                    self.yaw_error_buffer = []
                     self.fall_buffer = []
 
                     # Identify which path led to advancement
@@ -444,6 +480,7 @@ class WalkingCurriculumEnv(WalkingEnv):
                     print(f"  Arm penalty target: {self._arm_penalty_target:.2f} (current: {self._arm_penalty_current:.3f})")
                     print(f"  Success rate was: {success_rate:.1%}")
                     print(f"  Avg velocity error was: {avg_recent_vel_error:.3f} m/s")
+                    print(f"  Avg yaw error was: {avg_recent_yaw_error:.3f} rad/s (tol: {yaw_tol:.2f})")
                     print(f"  Fall rate was: {fall_rate:.1%}")
                     print(f"{'='*60}\n")
                     
@@ -461,6 +498,8 @@ class WalkingCurriculumEnv(WalkingEnv):
             info['curriculum_max_speed'] = self.max_commanded_speed
             info['curriculum_success_rate'] = float(np.mean(self.success_buffer)) if self.success_buffer else 0.0
             info['curriculum_avg_vel_error'] = float(np.mean(self.velocity_error_buffer)) if self.velocity_error_buffer else 0.0
+            info['curriculum_avg_yaw_error'] = float(np.mean(self.yaw_error_buffer)) if self.yaw_error_buffer else 0.0
+            info['curriculum_yaw_tolerance'] = self.yaw_error_tolerances[min(self.stage, len(self.yaw_error_tolerances) - 1)]
             info['curriculum_velocity_tolerance'] = self.velocity_tolerances[self.stage]
             info['curriculum_min_length'] = self.min_episode_lengths[self.stage]
             info['curriculum_episode_success'] = success

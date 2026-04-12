@@ -129,10 +129,11 @@ class WalkingEnv(gym.Wrapper):
         self.max_commanded_speed = float(self.cfg.get('max_commanded_speed', 0.0))  # Curriculum controls this
         self.fixed_command = self.cfg.get('fixed_command', None)  # (vx, vy, yaw_rate) tuple for inference
         
-        # Yaw rate tracking 
+        # Yaw rate tracking
         self.include_yaw_rate = bool(self.cfg.get('include_yaw_rate', True))
         self.max_yaw_rate = float(self.cfg.get('max_yaw_rate', 1.0))  # rad/s
         self.yaw_rate_weight = float(self.cfg.get('yaw_rate_weight', 3.0))
+        self.yaw_tracking_bandwidth = float(self.cfg.get('reward_yaw_bandwidth', 10.0))
         
         # Current commanded velocity (set in reset)
         self.commanded_vx_world = 0.0
@@ -478,15 +479,16 @@ class WalkingEnv(gym.Wrapper):
         standing_penalty = 0.0
         
         # ========== YAW RATE TRACKING REWARD ==========
-        # Gaussian yaw tracking. sigma=0.5 (bandwidth=4) is wider than SOTA
-        # sigma=0.25 because we're fine-tuning a model with large yaw errors
-        # (0.5-1.0 rad/s). SOTA uses tight sigma because yaw is trained from
-        # scratch when errors are small. Tighten sigma once errors drop below 0.3.
+        # Gaussian yaw tracking: exp(-bandwidth * error²)
+        # Bandwidth is configurable via reward_yaw_bandwidth (default 10.0).
+        # At 10.0: error=0.15 → 80% reward, error=0.3 → 41% reward.
+        # Old hardcoded 4.0 was too soft — agent retained 91% reward at
+        # 0.15 rad/s error, giving almost no gradient to learn turning.
         actual_yaw_rate = angular_vel[2]
         yaw_error = abs(actual_yaw_rate - self.commanded_yaw_rate)
         yaw_tracking_reward = 0.0
         if self.include_yaw_rate:
-            yaw_tracking_reward = self.yaw_rate_weight * np.exp(-14.0 * yaw_error**2)
+            yaw_tracking_reward = self.yaw_rate_weight * np.exp(-self.yaw_tracking_bandwidth * yaw_error**2)
 
         # ========== FEET AIR TIME REWARD (enables rotation) ==========
         # Robot must lift feet to rotate — friction prevents rotation with feet planted.
