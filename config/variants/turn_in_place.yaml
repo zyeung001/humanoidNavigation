@@ -1,0 +1,63 @@
+# Turn-In-Place: add stop-and-turn capability on top of omni_direction model
+#
+# Starting from: omni_direction model (20M steps) — has working forward walking,
+# yaw tracking, negative vx execution via vel_wrong_dir_penalty. What it's
+# MISSING: ability to execute (vx=0, vy=0, yaw_rate>0). On L-maze corners the
+# nav controller needs to halt and rotate in place; current policy drifts
+# forward when commanded zero velocity.
+#
+# FIX: enable turn_in_place_prob=0.20 so 20% of training commands are
+# (vx=0, vy=0, yaw_rate!=0). The 4/11/2026 A/B test confirmed TIP=20% actually
+# IMPROVES vel_error (0.122 vs 0.151 at 5%). TIP was only disabled because the
+# old nav controller never commanded zero velocity — now it does.
+#
+# Key carries from omni_direction:
+#   - vel_wrong_dir_penalty: 1.5      (prevents forward drift when cmd=0)
+#   - yaw_wrong_dir_penalty: 1.5      (maintained turning capability)
+#   - reward_tracking_bandwidth: 5.0  (soft gradient)
+#   - omnidirectional: true           (keeps negative vx in command distribution)
+#
+# Run: python scripts/train_walking.py --model models/walking/latest/model.zip \
+#        --vecnorm models/walking/latest/vecnorm.pkl \
+#        --override config/variants/turn_in_place.yaml --fresh-lr --timesteps 10000000
+walking:
+  # === KEY CHANGE: Enable turn-in-place ===
+  turn_in_place_prob: 0.20              # 20% of commands are (0, 0, yaw_rate)
+
+  # === Carry from omni_direction (direction fixes) ===
+  vel_wrong_dir_penalty: 1.5
+  reward_tracking_bandwidth: 5.0
+  omnidirectional: true
+
+  # === Yaw settings (carry) ===
+  yaw_rate_weight: 5.0
+  max_yaw_rate: 0.5
+  reward_yaw_bandwidth: 10.0
+  yaw_wrong_dir_penalty: 1.5
+
+  # === Sustained commands (carry from omni_direction) ===
+  command_switch_interval: [2.0, 15.0]
+
+  # === Reward tuning (carry) ===
+  reward_tracking_weight: 5.0
+  reward_height_weight: 1.0
+  reward_direction_weight: 0.4
+  feet_air_time_weight: 1.0
+
+  # === Stop probability — also teaches halting ===
+  stop_probability: 0.10
+
+  # === PPO / LR — fine-tuning from converged model ===
+  learning_rate: 0.0001
+  final_learning_rate: 0.00003
+  log_std_max: -0.3
+  ent_coef: 0.004
+  final_ent_coef: 0.002
+
+  # === Curriculum: stay at stage 3 ===
+  curriculum_start_stage: 3
+  curriculum_max_stage: 3
+
+  # === No arm penalty ===
+  arm_penalty_stage_weights: [0.0, 0.0, 0.0, 0.0, 0.0]
+  reward_arm_posture_weight: 0.0

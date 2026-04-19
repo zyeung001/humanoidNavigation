@@ -7,7 +7,7 @@ The core transfer pipeline. Called by `scripts/train_walking.py` when `--from-st
 ### Pipeline: `transfer_standing_to_walking()`
 
 ```
-1. VecNormalizeExtender.extend()     — Grow obs stats from 1484 → 1493 dims
+1. VecNormalizeExtender.extend()     — Grow obs stats from 1484 → 1495 dims
 2. WarmupCollector.collect()         — Run 10k random steps to populate stats
 3. PolicyTransfer.transfer()         — Copy weights + initialize command dims
 4. Return (walking_model, walking_vecnorm)
@@ -15,15 +15,15 @@ The core transfer pipeline. Called by `scripts/train_walking.py` when `--from-st
 
 ### VecNormalizeExtender
 
-Extends VecNormalize observation statistics to accommodate the 9-dim command block.
+Extends VecNormalize observation statistics to accommodate the 11-dim command block.
 
 **Dimension structure:**
 ```
 Standing: (365 + 6) × 4 frames = 1484 dims (body portion)
-Walking:  1484 body + 9 command block = 1493 dims
+Walking:  1484 body + 11 command block = 1495 dims
 
-Command block: [vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual,
-                err_vx, err_vy, err_speed, err_angle]
+Command block: [vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual, yaw_actual,
+                err_vx, err_vy, err_speed, err_angle, err_yaw]
 ```
 
 Body portion copies standing stats exactly. Command block gets identity stats (mean=0, var=1) because commands are pre-normalized to [-1, 1].
