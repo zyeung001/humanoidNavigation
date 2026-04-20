@@ -205,3 +205,22 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Project-specific
+.claude/
+data/
+logs_*.txt
+wandb/
+runs/
+
+# Trained model artefacts (kept locally, never in git)
+models/**/*.zip
+models/**/*.pkl
+models/**/info.json
+models/walking/checkpoints/
+models/configs/*.yaml
+
+# Stray legacy outputs at models/ root
+models/*.zip
+models/*.pkl
+

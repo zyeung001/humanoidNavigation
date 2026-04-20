@@ -1,0 +1,40 @@
+# Yaw Nav-Ready: Final consolidation for maze navigation
+#
+# Starting from: yaw_ramp_up model (28M steps, Stage 3)
+# Goal: Consistent yaw tracking at the range maze navigation actually needs
+#
+# Key insight from research:
+#   - Navigation controller uses max_yaw_rate=0.5, min_speed=0.10 (NEVER zero velocity)
+#   - TIP (turn-in-place) is NEVER used in maze navigation
+#   - The ramp_up model already tracks yaw correctly during walking
+#   - Wrong-direction failures were ALL during TIP episodes
+#
+# Changes from yaw_ramp_up:
+#   turn_in_place_prob: 0.30 -> 0.0  (TIP eliminated — 30% more useful training)
+#   max_yaw_rate: 1.0 -> 0.6        (only need ±0.5 for nav; ±0.6 gives margin)
+#   curriculum_start_stage: 1 -> 3   (lock at Stage 3, no advancement needed)
+#   ent_coef: 0.008 -> 0.005        (agent knows what to do, refine control)
+#
+# With max_yaw_rate=0.6 and yaw_scales=[0.3, 0.5, 0.75, 1.0]:
+#   Stage 3 (locked): ±0.60 rad/s  (covers nav's ±0.50 with margin)
+#
+# Run: python scripts/train_walking.py --model models/walking/latest/model.zip \
+#        --vecnorm models/walking/latest/vecnorm.pkl \
+#        --override config/variants/yaw_nav_ready.yaml --fresh-lr --timesteps 15000000
+walking:
+  yaw_rate_weight: 5.0               # Strong yaw signal (dominant over tracking)
+  max_yaw_rate: 0.6                  # Nav controller needs ±0.5; ±0.6 gives margin
+  reward_yaw_bandwidth: 10.0         # Soft Gaussian — proven to work
+  feet_air_time_weight: 1.0
+  reward_tracking_weight: 4.0        # Balanced with yaw (5:4 ratio)
+  reward_direction_weight: 0.4
+  turn_in_place_prob: 0.0            # ZERO TIP — maze nav never uses it
+  command_switch_interval: [2.0, 5.0]
+  learning_rate: 0.0001
+  final_learning_rate: 0.00003
+  ent_coef: 0.005                    # Low — consolidation, not exploration
+  final_ent_coef: 0.003
+  curriculum_start_stage: 3          # Lock at Stage 3 — no advancement distractions
+  curriculum_max_stage: 3
+  arm_penalty_stage_weights: [0.0, 0.0, 0.0, 0.0, 0.0]
+  reward_arm_posture_weight: 0.0

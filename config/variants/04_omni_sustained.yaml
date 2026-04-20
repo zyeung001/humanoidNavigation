@@ -1,0 +1,75 @@
+# Stage 4: Add omnidirectional commands and sustained turning to a yaw-trained model.
+#
+# Pipeline position:
+#   Stage 1 (standing) -> Stage 2 (walking) -> Stage 3 (yaw) -> [Stage 4 (omni)] -> Stage 5 (tip)
+#
+# Input model:  models/walking/best/model.zip from Stage 3 (turns correctly but
+#                drifts +x and degrades during long turns)
+# Output model: models/walking/best/model.zip
+# Timesteps:    ~15M
+#
+# Why this stage exists:
+#   1. +x drift: Stage 3 trained with vx_range=(0, max_speed). The agent never
+#      saw negative or zero vx, so it leaks ~0.003 m/step forward even when
+#      commanded to stop. Maze turns push it into walls.
+#      Fix: omnidirectional=true -> vx_range=(-max_speed, max_speed).
+#
+#   2. Gait decay during long turns: Stage 3 used command_switch_interval=[2,5],
+#      so the policy never practiced turning longer than 5s. Maze yaw commands
+#      run 15-20s; height slowly decays and the agent falls.
+#      Fix: command_switch_interval=[2,15] + reward_height_weight=1.0.
+#
+#   3. Soft tracking gradient at large velocity error.
+#      Fix: vel_wrong_dir_penalty=1.5 (same pattern as yaw_wrong_dir_penalty).
+#
+# Success criteria before moving to Stage 5:
+#   - Maze corridor traversal > 2000 steps without falling
+#   - L-maze: turns the corner without wall collision (TIP NOT yet trained)
+#   - velocity_error < 0.13
+#
+# Run:
+#   python scripts/train_walking.py \
+#       --model models/walking/best/model.zip \
+#       --vecnorm models/walking/best/vecnorm.pkl \
+#       --override config/variants/04_omni_sustained.yaml \
+#       --fresh-lr --timesteps 15000000
+
+walking:
+  # Omnidirectional + wrong-direction penalty (kills the +x drift)
+  omnidirectional: true
+  vel_wrong_dir_penalty: 1.5
+  reward_tracking_bandwidth: 5.0   # Softer Gaussian — gradient at large velocity error
+
+  # Sustained turning
+  command_switch_interval: [2.0, 15.0]
+  reward_height_weight: 1.0        # Up from 0.3 — prevent slow height decay during long turns
+
+  # Yaw settings (carry forward from Stage 3)
+  include_yaw_rate: true
+  yaw_rate_weight: 5.0
+  max_yaw_rate: 0.5
+  reward_yaw_bandwidth: 10.0
+  yaw_wrong_dir_penalty: 1.5
+  turn_in_place_prob: 0.0          # TIP added in Stage 5
+
+  # Reward tuning
+  reward_tracking_weight: 5.0
+  reward_direction_weight: 0.4
+  feet_air_time_weight: 1.0
+  stop_probability: 0.10
+  reward_arm_posture_weight: 0.0
+  arm_penalty_stage_weights: [0.0, 0.0, 0.0, 0.0, 0.0]
+
+  # PPO (fine-tuning)
+  learning_rate: 0.0001
+  final_learning_rate: 0.00003
+  log_std_max: -0.3
+  ent_coef: 0.004
+  final_ent_coef: 0.002
+  policy_max_scale: 1.0
+  resume_policy_scale: 1.0
+  extra_vf_epochs: 0
+
+  # Curriculum locked
+  curriculum_start_stage: 3
+  curriculum_max_stage: 3

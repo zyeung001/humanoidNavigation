@@ -1,0 +1,65 @@
+# Omni Sustained: Fix +x velocity drift for real hardware deployment
+#
+# Starting from: yaw_sustained model (15M steps) — has correct yaw direction,
+# sustained turning stability, but persistent +x velocity drift (~0.003 m/step).
+#
+# ROOT CAUSE of drift: command generator used vx_range=(0.0, max_speed) — ALWAYS
+# positive vx. The agent never trained on negative or zero vx, so it developed a
+# permanent forward bias it cannot suppress. During maze turns, this drift pushes
+# the agent into corridor walls.
+#
+# FIXES:
+#   1. omnidirectional: true — vx_range becomes (-max_speed, max_speed). Agent
+#      now sees backward, sideways, and zero-velocity commands. Learns to
+#      suppress +x when not commanded.
+#
+#   2. reward_tracking_weight: 5.0 — up from 4.0. Stronger velocity tracking
+#      signal to teach precise velocity control in all directions.
+#
+#   3. stop_probability: 0.10 — down from 0.15. Fewer stop commands, more
+#      time training active velocity tracking (including near-zero speeds).
+#
+#   4. Carries forward ALL yaw_sustained improvements (wrong_dir_penalty,
+#      sustained command_switch_interval, height weight, etc.)
+#
+# Run: python scripts/train_walking.py --model models/walking/latest/model.zip \
+#        --vecnorm models/walking/latest/vecnorm.pkl \
+#        --override config/variants/omni_sustained.yaml --fresh-lr --timesteps 15000000
+walking:
+  # === KEY CHANGE: Omnidirectional velocity commands ===
+  omnidirectional: true                  # vx_range: (-max, max), vy_range: (-0.75*max, 0.75*max)
+
+  # === Yaw settings (carry forward from yaw_sustained) ===
+  yaw_rate_weight: 5.0
+  max_yaw_rate: 0.5
+  reward_yaw_bandwidth: 10.0
+  yaw_wrong_dir_penalty: 1.5
+  turn_in_place_prob: 0.0
+
+  # === Sustained turning (carry forward from yaw_sustained) ===
+  command_switch_interval: [2.0, 15.0]
+
+  # === Reward tuning ===
+  reward_tracking_weight: 5.0           # Up from 4.0: stronger velocity tracking for omni control
+  reward_tracking_bandwidth: 8.0
+  reward_height_weight: 1.0             # Keep from yaw_sustained: prevent height decay
+  reward_direction_weight: 0.4
+  feet_air_time_weight: 1.0
+
+  # === Fewer stops, more active tracking ===
+  stop_probability: 0.10                # Down from 0.15: more time training velocity tracking
+
+  # === PPO / LR ===
+  learning_rate: 0.0001
+  final_learning_rate: 0.00003
+  log_std_max: -0.3
+  ent_coef: 0.004
+  final_ent_coef: 0.002
+
+  # === Curriculum: stay at stage 3 ===
+  curriculum_start_stage: 3
+  curriculum_max_stage: 3
+
+  # === No arm penalty (focus on velocity control) ===
+  arm_penalty_stage_weights: [0.0, 0.0, 0.0, 0.0, 0.0]
+  reward_arm_posture_weight: 0.0

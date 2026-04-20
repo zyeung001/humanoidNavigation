@@ -1,5 +1,19 @@
 # config/ — Training Configuration
 
+**The step-by-step training recipe lives in [`README.md`](README.md). Read it first.**
+
+## Layout
+
+| File | Purpose |
+|------|---------|
+| `training_config.yaml` | Base config — defaults for `standing`, `walking`, `maze` |
+| `variants/03_yaw.yaml` | Stage 3 override: add yaw control to a walker |
+| `variants/04_omni_sustained.yaml` | Stage 4 override: omnidirectional + sustained turning |
+| `variants/05_tip.yaml` | Stage 5 override: turn-in-place |
+| `variants/archive/` | Research history — see its README, do not use for new training |
+
+Stages 1 (standing) and 2 (walking) use `training_config.yaml` directly with no override.
+
 ## `training_config.yaml`
 
 Single YAML file with three top-level keys: `standing`, `walking`, and `maze`. Standing and walking share most parameter names but with different values.
