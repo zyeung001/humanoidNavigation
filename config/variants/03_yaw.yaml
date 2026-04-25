@@ -1,0 +1,62 @@
+# Stage 3: Add yaw (turning) control to a walking model.
+#
+# Pipeline position:
+#   Stage 1 (standing) -> Stage 2 (walking) -> [Stage 3 (yaw)] -> Stage 4 (omni) -> Stage 5 (tip)
+#
+# Input model:  models/walking/best/model.zip + matching vecnorm.pkl
+#                (a stable forward walker from Stage 2)
+# Output model: models/walking/best/model.zip (overwrites best by velocity_error)
+# Timesteps:    ~15M
+#
+# What this changes vs base config:
+#   - Adds yaw command tracking to the reward (yaw_rate_weight: 5.0)
+#   - Caps commanded yaw to the range the navigation controller uses (max_yaw_rate: 0.5)
+#   - Adds an explicit penalty for turning the WRONG direction (yaw_wrong_dir_penalty: 1.5).
+#     Pure Gaussian yaw reward has zero gradient beyond err=0.5 rad/s, so without
+#     this penalty the policy cannot tell wrong-direction from no-turn.
+#   - Locks curriculum at Stage 3 (no speed-stage relearning during yaw fine-tune)
+#   - Disables arm penalty (cosmetic, fight against turning gradient)
+#   - Fine-tuning PPO settings: LR 1e-4, no policy scaling, single-cycle entropy
+#
+# Success criteria before moving to Stage 4:
+#   - velocity_error < 0.15 sustained
+#   - Yaw tracks commanded direction (no wrong-direction turns in evaluate.py)
+#   - Episode length > 4000 steps at Stage 3
+#
+# Run:
+#   python scripts/train_walking.py \
+#       --model models/walking/best/model.zip \
+#       --vecnorm models/walking/best/vecnorm.pkl \
+#       --override config/variants/03_yaw.yaml \
+#       --fresh-lr --timesteps 15000000
+
+walking:
+  # Yaw signal
+  include_yaw_rate: true
+  yaw_rate_weight: 5.0
+  max_yaw_rate: 0.5
+  reward_yaw_bandwidth: 10.0
+  yaw_wrong_dir_penalty: 1.5
+  turn_in_place_prob: 0.0          # TIP added later in Stage 5
+
+  # Reward balance
+  reward_tracking_weight: 4.0
+  reward_direction_weight: 0.4
+  feet_air_time_weight: 1.0
+  reward_arm_posture_weight: 0.0
+  arm_penalty_stage_weights: [0.0, 0.0, 0.0, 0.0, 0.0]
+
+  # Fine-tuning PPO (no transfer scaling — model already converged)
+  learning_rate: 0.0001
+  final_learning_rate: 0.00003
+  log_std_max: -0.3                # std~0.74 — quieter actions, cleaner mean
+  ent_coef: 0.004
+  final_ent_coef: 0.002
+  policy_max_scale: 1.0
+  resume_policy_scale: 1.0
+  extra_vf_epochs: 0
+
+  # Curriculum locked at top stage
+  curriculum_start_stage: 3
+  curriculum_max_stage: 3
+  command_switch_interval: [2.0, 5.0]

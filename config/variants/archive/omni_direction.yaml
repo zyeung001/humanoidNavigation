@@ -1,0 +1,72 @@
+# Omni Direction: Fix forward velocity bias with explicit wrong-direction penalty
+#
+# Starting from: omni_sustained model (15M steps) — has omnidirectional command
+# distribution but retained forward bias. In L-maze, when commanded vx=-0.13,
+# agent produces vx=+0.05 ("stand still" instead of backward). Stalls for
+# 1500 steps then falls.
+#
+# ROOT CAUSE: Gaussian tracking reward (bandwidth=8) has weak gradient between
+# "forward bias" and "correct direction":
+#   - Commanded -0.15, actual +0.05: reward = exp(-8*0.04) = 0.73
+#   - Commanded -0.15, actual -0.15: reward = 1.00
+#   - Gap: 0.27 — not enough to overcome 30M steps of trained forward bias
+#
+# FIX (same pattern that solved yaw wrong-direction):
+#   1. vel_wrong_dir_penalty: 1.5 — explicit -1.5 when actual velocity is
+#      opposite sign of commanded velocity. Per axis (vx, vy) independently.
+#      Creates reward cliff: wrong-dir step = -1.3, correct step = +5.0.
+#      Gap of 6.3 — strong gradient to escape bias.
+#
+#   2. reward_tracking_bandwidth: 5.0 — softer (was 8.0). Wider gradient at
+#      large velocity errors gives the policy signal even when far off.
+#      exp(-5*0.4²) = 0.45 vs exp(-8*0.4²) = 0.28. More learnable.
+#
+#   3. omnidirectional: true — keep from omni_sustained (negative vx commands
+#      in training distribution).
+#
+#   4. Carry forward ALL yaw_sustained / omni_sustained improvements.
+#
+# Run: python scripts/train_walking.py --model models/walking/latest/model.zip \
+#        --vecnorm models/walking/latest/vecnorm.pkl \
+#        --override config/variants/omni_direction.yaml --fresh-lr --timesteps 20000000
+walking:
+  # === KEY CHANGE: Wrong-direction penalty + softer tracking ===
+  vel_wrong_dir_penalty: 1.5            # NEW: explicit penalty for wrong-sign velocity
+  reward_tracking_bandwidth: 5.0        # Softer (was 8.0) — more gradient at large errors
+
+  # === Omnidirectional commands (carry from omni_sustained) ===
+  omnidirectional: true
+
+  # === Yaw settings (carry from yaw_sustained) ===
+  yaw_rate_weight: 5.0
+  max_yaw_rate: 0.5
+  reward_yaw_bandwidth: 10.0
+  yaw_wrong_dir_penalty: 1.5
+  turn_in_place_prob: 0.0
+
+  # === Sustained turning (carry from yaw_sustained) ===
+  command_switch_interval: [2.0, 15.0]
+
+  # === Reward tuning ===
+  reward_tracking_weight: 5.0
+  reward_height_weight: 1.0
+  reward_direction_weight: 0.4
+  feet_air_time_weight: 1.0
+
+  # === Fewer stops, more active tracking ===
+  stop_probability: 0.10
+
+  # === PPO / LR ===
+  learning_rate: 0.0001
+  final_learning_rate: 0.00003
+  log_std_max: -0.3
+  ent_coef: 0.004
+  final_ent_coef: 0.002
+
+  # === Curriculum: stay at stage 3 ===
+  curriculum_start_stage: 3
+  curriculum_max_stage: 3
+
+  # === No arm penalty (focus on velocity control) ===
+  arm_penalty_stage_weights: [0.0, 0.0, 0.0, 0.0, 0.0]
+  reward_arm_posture_weight: 0.0

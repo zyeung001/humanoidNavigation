@@ -1,0 +1,30 @@
+# Option A: Gentle Yaw Range — only ask for what the agent can already do
+# Hypothesis: Agent produces ±0.2-0.3 rad/s reliably. By capping commands
+# within that range, every episode gives positive yaw gradient → consolidates
+# directional control. Once consistent, raise max_yaw_rate.
+#
+# Key differences from yaw_dominant:
+#   max_yaw_rate: 1.0 → 0.5 (Stage 1 commands capped at ±0.25)
+#   reward_yaw_bandwidth: 14.0 → 10.0 (softer — reward partial turns)
+#   ent_coef: 0.03 → 0.01 (less random noise, more exploitation of existing skill)
+#
+# Run: python scripts/train_walking.py --model models/walking/latest/model.zip \
+#        --vecnorm models/walking/latest/vecnorm.pkl \
+#        --override config/variants/yaw_gentle_range.yaml --fresh-lr --timesteps 55000000
+walking:
+  yaw_rate_weight: 6.0               # Keep strong yaw signal
+  max_yaw_rate: 0.5                  # Halved from 1.0: Stage 0 ±0.15, Stage 1 ±0.25
+  reward_yaw_bandwidth: 10.0         # Softer than 14.0 — reward partial success
+  feet_air_time_weight: 1.0
+  reward_tracking_weight: 3.0        # Keep yaw dominant (2:1 ratio)
+  reward_direction_weight: 0.4
+  turn_in_place_prob: 0.35           # 35% TIP
+  command_switch_interval: [2.0, 5.0]
+  learning_rate: 0.0001
+  final_learning_rate: 0.00003
+  ent_coef: 0.01                     # Lower than yaw_dominant's 0.03 — exploit existing skill
+  final_ent_coef: 0.005
+  curriculum_start_stage: 0
+  curriculum_max_stage: 1
+  arm_penalty_stage_weights: [0.0, 0.0, 0.0, 0.0, 0.0]
+  reward_arm_posture_weight: 0.0

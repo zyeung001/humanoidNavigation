@@ -1,0 +1,41 @@
+# Yaw polish: short, gentle continuation from a 145M+ step model to refine turning
+# without undoing walking. Uses conservative steady-state PPO settings and keeps
+# the curriculum at Stage 3 so the policy doesn't waste budget relearning slow walking.
+#
+# Run:
+#   python scripts/train_walking.py \
+#       --model models/walking/latest/model.zip \
+#       --vecnorm models/walking/latest/vecnorm.pkl \
+#       --override config/variants/yaw_polish.yaml \
+#       --timesteps 160000000
+#
+# NOTE: do NOT use --fresh-lr. LR should decay over the remaining 5M steps.
+walking:
+  include_yaw_rate: true
+  yaw_rate_weight: 3.0
+  turn_in_place_prob: 0.20
+  max_yaw_rate: 1.0
+
+  # Conservative steady-state PPO (per memory: 17-dim action space never tolerates full-speed PPO)
+  learning_rate: 0.000005
+  final_learning_rate: 0.000003
+  clip_range: 0.3
+  final_clip_range: 0.3
+  ent_coef: 0.005
+  final_ent_coef: 0.005
+  log_std_max: 0.0
+  policy_max_scale: 0.5
+  resume_policy_scale: 0.5
+  extra_vf_epochs: 7
+  batch_size: 24576
+  n_epochs: 3
+
+  # Keep the curriculum stage — do not reset to Stage 0
+  curriculum_start_stage: 3
+  curriculum_max_stage: 3
+
+  # Arm penalty off for clean comparison with prior tip_20pct run
+  reward_arm_posture_weight: 0.0
+
+  use_wandb: true
+  wandb_project: humanoid_walking

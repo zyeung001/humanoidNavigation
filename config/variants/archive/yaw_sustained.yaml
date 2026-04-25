@@ -1,0 +1,65 @@
+# Yaw Sustained: Train sustained turning for maze navigation
+#
+# Starting from: yaw_final model (15M steps) — has correct yaw direction,
+# but gait degrades after ~800 steps of sustained turning.
+#
+# ROOT CAUSE of maze failure: Training used command_switch_interval [2.0, 5.0],
+# so the model never practiced sustained turning (>10s). During maze nav, the
+# controller commands constant yaw for 15-20s during large heading corrections.
+# The gait slowly destabilizes (height drops 1.28 → 1.25 → fall).
+#
+# FIXES:
+#   1. command_switch_interval: [2.0, 15.0] — up from [2.0, 5.0]. Agent now
+#      sees sustained 15-second yaw commands, matching maze nav demands.
+#
+#   2. reward_height_weight: 1.0 — up from 0.3. Stronger height penalty during
+#      sustained turns prevents the slow height decay that precedes falls.
+#
+#   3. reward_tracking_bandwidth: 8.0 — slightly softer than 10.0. Reduces
+#      advantage variance for better stability during long turns.
+#
+#   4. Keep all yaw_final improvements (wrong_dir_penalty, log_std_max, etc.)
+#
+# Nav controller findings (from maze testing):
+#   - Fixed lookahead bug: was measuring from next waypoint, not agent position
+#   - Agent has persistent +x velocity drift (~0.003 m/step during turns)
+#   - Corridor (straight) works perfectly — 2600+ steps
+#   - Turns fail after ~800 steps due to gait instability, not yaw direction
+#
+# Run: python scripts/train_walking.py --model models/walking/latest/model.zip \
+#        --vecnorm models/walking/latest/vecnorm.pkl \
+#        --override config/variants/yaw_sustained.yaml --fresh-lr --timesteps 15000000
+walking:
+  # === Yaw settings (carry forward from yaw_final) ===
+  yaw_rate_weight: 5.0
+  max_yaw_rate: 0.5
+  reward_yaw_bandwidth: 10.0
+  yaw_wrong_dir_penalty: 1.5
+  turn_in_place_prob: 0.0
+
+  # === KEY CHANGE: Longer sustained commands ===
+  command_switch_interval: [2.0, 15.0]   # Was [2.0, 5.0]. Now matches maze nav durations.
+
+  # === KEY CHANGE: Stronger height maintenance ===
+  reward_height_weight: 1.0              # Was 0.3. Penalizes height decay during sustained turns.
+
+  # === Reward tuning ===
+  reward_tracking_weight: 4.0
+  reward_tracking_bandwidth: 8.0         # Slightly softer: smoother gradient for long episodes
+  reward_direction_weight: 0.4
+  feet_air_time_weight: 1.0
+
+  # === PPO / LR ===
+  learning_rate: 0.0001
+  final_learning_rate: 0.00003
+  log_std_max: -0.3
+  ent_coef: 0.004
+  final_ent_coef: 0.002
+
+  # === Curriculum: stay at stage 3 ===
+  curriculum_start_stage: 3
+  curriculum_max_stage: 3
+
+  # === No arm penalty (focus on gait stability) ===
+  arm_penalty_stage_weights: [0.0, 0.0, 0.0, 0.0, 0.0]
+  reward_arm_posture_weight: 0.0

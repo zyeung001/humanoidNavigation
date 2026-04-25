@@ -1,0 +1,48 @@
+# Yaw Final: Fix wrong-direction turns for maze navigation
+#
+# Starting from: yaw_nav_ready model (15M steps)
+#
+# ROOT CAUSE of maze failure: Gaussian yaw reward gives ZERO gradient beyond
+# error=0.5 rad/s. When the agent turns the wrong direction (error=0.8+),
+# reward ≈ 0.00 with gradient ≈ 0.00. No signal that wrong direction is
+# worse than not turning. Both give near-zero reward.
+#
+# TWO FIXES:
+#   1. yaw_wrong_dir_penalty: 1.5 — explicit negative reward for turning
+#      wrong direction. Creates a cliff: correct dir = +2 to +5, not turning
+#      = +0.4, wrong dir = -1.5. Agent now has unambiguous gradient.
+#
+#   2. log_std_max: -0.3 (std≈0.74, down from 1.0) — reduces action noise
+#      40% so the policy mean trains with less interference. Deterministic
+#      evaluation (maze) uses the mean, so this directly improves maze perf.
+#
+# Math with yaw_rate_weight=5.0, penalty=1.5:
+#   Perfect tracking:     5.0 * exp(0) = +5.0
+#   Correct dir, err=0.3: 5.0 * 0.41 = +2.05
+#   Not turning (err=0.5): 5.0 * 0.08 = +0.41
+#   Wrong direction:       5.0 * 0.00 - 1.5 = -1.50
+#
+# Nav controller needs: max_yaw=0.5, min_speed=0.10, never TIP
+#
+# Run: python scripts/train_walking.py --model models/walking/latest/model.zip \
+#        --vecnorm models/walking/latest/vecnorm.pkl \
+#        --override config/variants/yaw_final.yaml --fresh-lr --timesteps 15000000
+walking:
+  yaw_rate_weight: 5.0
+  max_yaw_rate: 0.5                  # Exact nav controller range
+  reward_yaw_bandwidth: 10.0
+  yaw_wrong_dir_penalty: 1.5         # NEW: penalize turning wrong direction
+  feet_air_time_weight: 1.0
+  reward_tracking_weight: 4.0
+  reward_direction_weight: 0.4
+  turn_in_place_prob: 0.0            # No TIP — maze never uses it
+  command_switch_interval: [2.0, 5.0]
+  learning_rate: 0.0001
+  final_learning_rate: 0.00003
+  log_std_max: -0.3                  # std≈0.74 (was 1.0) — less noise, cleaner mean
+  ent_coef: 0.004                    # Lower to match reduced noise
+  final_ent_coef: 0.002
+  curriculum_start_stage: 3
+  curriculum_max_stage: 3
+  arm_penalty_stage_weights: [0.0, 0.0, 0.0, 0.0, 0.0]
+  reward_arm_posture_weight: 0.0

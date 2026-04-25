@@ -1,0 +1,41 @@
+# TIP comparison: 20% (current main config default)
+# Tests whether 20% TIP disrupts walking quality as claimed.
+#
+# Run:
+#   python scripts/train_walking.py \
+#       --model models/walking/best/model.zip \
+#       --vecnorm models/walking/best/vecnorm.pkl \
+#       --override config/variants/tip_20pct.yaml \
+#       --timesteps 5000000
+walking:
+  include_yaw_rate: true
+  yaw_rate_weight: 3.0
+  turn_in_place_prob: 0.20           # 20% TIP — current default, claimed to disrupt walking
+  max_yaw_rate: 1.0
+
+  # PPO fine-tuning settings (same as fresh_start)
+  learning_rate: 0.0001
+  final_learning_rate: 0.0001
+  batch_size: 12288
+  n_epochs: 3
+  clip_range: 0.2
+  final_clip_range: 0.2
+  ent_coef: 0.01
+  final_ent_coef: 0.01
+  log_std_max: 0.5
+
+  # No scaling — fine-tuning a converged model
+  policy_max_scale: 1.0
+  extra_vf_epochs: 0
+  resume_policy_scale: 1.0
+
+  # Disable arm penalty for clean comparison
+  reward_arm_posture_weight: 0.0
+
+  # Curriculum
+  curriculum_start_stage: 0
+  curriculum_max_stage: 3
+
+  # WandB
+  use_wandb: true
+  wandb_project: humanoid_walking

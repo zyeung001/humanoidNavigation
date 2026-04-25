@@ -1,0 +1,36 @@
+# Yaw Ramp-Up: Extend from yaw_gentle_range success
+# Agent tracks ±0.25 rad/s with <0.08 error during walking. Now widen the range.
+#
+# Changes from yaw_gentle_range:
+#   max_yaw_rate: 0.5 → 1.0 (full range restored)
+#   curriculum_max_stage: 1 → 3 (unlock all stages)
+#   reward_tracking_weight: 3.0 → 4.0 (start rebalancing toward walking quality)
+#   yaw_rate_weight: 6.0 → 5.0 (still dominant, but less extreme)
+#   ent_coef: 0.01 → 0.008 (agent knows what to do, less exploration needed)
+#
+# Yaw curriculum scaling with max_yaw_rate=1.0:
+#   Stage 0: ±0.30 rad/s  (mastered)
+#   Stage 1: ±0.50 rad/s  (partially mastered at ±0.25)
+#   Stage 2: ±0.75 rad/s  (new territory)
+#   Stage 3: ±1.00 rad/s  (full range)
+#
+# Run: python scripts/train_walking.py --model models/walking/latest/model.zip \
+#        --vecnorm models/walking/latest/vecnorm.pkl \
+#        --override config/variants/yaw_ramp_up.yaml --fresh-lr --timesteps 55000000
+walking:
+  yaw_rate_weight: 5.0               # Still dominant but less extreme than 6.0
+  max_yaw_rate: 1.0                  # Full range — curriculum scaling handles progression
+  reward_yaw_bandwidth: 10.0         # Keep soft — worked well for gentle range
+  feet_air_time_weight: 1.0
+  reward_tracking_weight: 4.0        # Rebalance slightly toward walking (was 3.0)
+  reward_direction_weight: 0.4
+  turn_in_place_prob: 0.30           # Slightly less TIP (agent already knows TIP)
+  command_switch_interval: [2.0, 5.0]
+  learning_rate: 0.0001
+  final_learning_rate: 0.00003
+  ent_coef: 0.008
+  final_ent_coef: 0.004
+  curriculum_start_stage: 1          # Start at Stage 1 — already mastered Stage 0
+  curriculum_max_stage: 3            # Unlock all stages
+  arm_penalty_stage_weights: [0.0, 0.0, 0.0, 0.0, 0.0]
+  reward_arm_posture_weight: 0.0

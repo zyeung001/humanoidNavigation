@@ -1,0 +1,35 @@
+# Option B: Low Std — reduce action noise so intentional yaw signals come through
+# Hypothesis: At std=1.0 (log_std=0.0), action noise drowns out the policy's
+# yaw signal. The agent HAS found the turning primitive (yaw_act up to ±1.06)
+# but can't control direction because noise magnitude equals signal magnitude.
+# Forcing std=0.6 (log_std=-0.5) lets intentional asymmetric torques dominate.
+#
+# Key differences from yaw_dominant:
+#   log_std_max: 0.0 → -0.5 (std 1.0 → 0.6, 40% less action noise)
+#   ent_coef: 0.03 → 0.005 (match lower std — high entropy fights the clamp)
+#
+# Risk: Less exploration. If the agent hasn't found the right joint activations
+# for turning, it won't discover them with lower noise. But the data shows it
+# CAN produce yaw — it just needs to refine control, not explore more.
+#
+# Run: python scripts/train_walking.py --model models/walking/latest/model.zip \
+#        --vecnorm models/walking/latest/vecnorm.pkl \
+#        --override config/variants/yaw_low_std.yaml --fresh-lr --timesteps 55000000
+walking:
+  yaw_rate_weight: 6.0               # Keep strong yaw signal
+  max_yaw_rate: 1.0                  # Full range — rely on lower noise for control
+  reward_yaw_bandwidth: 14.0         # Keep tight — strong gradient for direction
+  feet_air_time_weight: 1.0
+  reward_tracking_weight: 3.0        # Keep yaw dominant (2:1 ratio)
+  reward_direction_weight: 0.4
+  turn_in_place_prob: 0.35           # 35% TIP
+  command_switch_interval: [2.0, 5.0]
+  learning_rate: 0.0001
+  final_learning_rate: 0.00003
+  log_std_max: -0.5                  # std ≈ 0.6 (was 0.0 → std=1.0)
+  ent_coef: 0.005                    # Low — don't fight the std clamp
+  final_ent_coef: 0.003
+  curriculum_start_stage: 0
+  curriculum_max_stage: 1
+  arm_penalty_stage_weights: [0.0, 0.0, 0.0, 0.0, 0.0]
+  reward_arm_posture_weight: 0.0
