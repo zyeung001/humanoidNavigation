@@ -28,6 +28,7 @@ from stable_baselines3.common.callbacks import CallbackList, BaseCallback
 from src.environments.standing_curriculum import make_standing_curriculum_env
 from src.agents.diagnostics import DiagnosticsCallback
 from src.training.schedules import lr_schedule, clip_schedule
+from src.training.metrics_logger import JsonlMetricsCallback, default_metrics_path
 
 
 def load_yaml(path: str):
@@ -286,10 +287,24 @@ def main():
                     print(f"✗ VecNormalize save failed: {e}")
             return ok
 
+    metrics_path = standing.get(
+        'metrics_jsonl_path',
+        default_metrics_path(
+            standing.get('metrics_dir', 'models/standing'),
+            standing.get('run_name'),
+        ),
+    )
+
     callbacks = CallbackList([
         EntropyScheduleCallback(initial_ent, final_ent, learn_timesteps, verbose=1),
         LogStdClampCallback(log_std_min=-2.0, log_std_max=0.5, clamp_freq=500, verbose=1),
-        SaveVecNormCallback(vecnorm_path, freq=int(standing.get('save_freq', 100_000)))
+        SaveVecNormCallback(vecnorm_path, freq=int(standing.get('save_freq', 100_000))),
+        JsonlMetricsCallback(
+            output_path=metrics_path,
+            log_freq=int(standing.get('metrics_log_freq', 5000)),
+            buffer_size=int(standing.get('metrics_buffer_size', 1000)),
+            verbose=1,
+        ),
     ])
 
     # Train
