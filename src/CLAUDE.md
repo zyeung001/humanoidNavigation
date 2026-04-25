@@ -24,8 +24,8 @@ scripts/       ←  all of the above
 Humanoid-v5 raw obs (350 dims)
   → StandingEnv/WalkingEnv processes to 365 dims
   → Append COM features (+6)
-  → [Walking only] Append command block (+9)
-  → Stack 4 frames → 1484 or 1493 dims
+  → [Walking only] Append command block (+11)
+  → Stack 4 frames → 1484 or 1495 dims
   → VecNormalize → normalized obs to PPO policy
   → PPO outputs 17-dim action
   → Action smoothing (EMA) → env.step()
