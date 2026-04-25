@@ -58,6 +58,7 @@ from src.training.callbacks import (
     init_wandb_run,
     finish_wandb_run
 )
+from src.training.metrics_logger import JsonlMetricsCallback, default_metrics_path
 from src.training.transfer_utils import (
     transfer_standing_to_walking,
 )
@@ -1149,7 +1150,16 @@ def main():
         SaveWithModelManagerCallback(
             model_manager=model_manager,
             freq=int(walking.get('save_freq', 250_000))
-        )
+        ),
+        JsonlMetricsCallback(
+            output_path=walking.get(
+                'metrics_jsonl_path',
+                default_metrics_path(model_manager.task_dir, walking.get('run_name'))
+            ),
+            log_freq=int(walking.get('metrics_log_freq', walking.get('wandb_log_freq', 5000))),
+            buffer_size=int(walking.get('metrics_buffer_size', 1000)),
+            verbose=1,
+        ),
     ]
 
     # Policy scaling: with 17 action dims, full-speed PPO updates overshoot the
