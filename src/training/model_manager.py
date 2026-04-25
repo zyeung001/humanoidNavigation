@@ -57,7 +57,7 @@ class ModelManager:
         self,
         task: str,
         base_dir: str = "models",
-        max_checkpoints_per_stage: int = 5,
+        max_checkpoints_per_stage: int = 3,
     ):
         """
         Initialize model manager.
@@ -142,7 +142,7 @@ class ModelManager:
         with open(self.latest_dir / "info.json", 'w') as f:
             json.dump(info, f, indent=2)
         
-        print(f"✓ Latest saved: {model_path}.zip")
+        print(f"[OK] Latest saved: {model_path}.zip")
     
     def save_checkpoint(
         self, 
@@ -185,7 +185,7 @@ class ModelManager:
         except (OSError, AttributeError) as e:
             logger.warning("Could not save vecnorm for checkpoint: %s", e)
 
-        print(f"✓ Checkpoint saved: {model_path}.zip")
+        print(f"[OK] Checkpoint saved: {model_path}.zip")
         
         # Cleanup old checkpoints
         self._cleanup_checkpoints(stage_dir)
@@ -258,7 +258,7 @@ class ModelManager:
         with open(self.final_dir / "info.json", 'w') as f:
             json.dump(info, f, indent=2)
         
-        print(f"✓ Final model saved: {model_path}.zip")
+        print(f"[OK] Final model saved: {model_path}.zip")
     
     def archive_config(self, config: Dict[str, Any], run_name: str = None):
         """
@@ -276,7 +276,7 @@ class ModelManager:
         with open(config_path, 'w') as f:
             yaml.dump(config, f, default_flow_style=False)
         
-        print(f"✓ Config archived: {config_path}")
+        print(f"[OK] Config archived: {config_path}")
     
     def _cleanup_checkpoints(self, stage_dir: Path):
         """Remove old checkpoints, keeping only the most recent N."""
