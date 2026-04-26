@@ -62,6 +62,28 @@ NAV_OBS_DIM = 1430
 BODY_DIM = 1424   # stacked body columns (identical between walking and nav)
 WP_DIM = 6        # waypoint block in nav
 
+# Walking command-block columns to copy into nav waypoint columns.
+# Walking layout: [vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual, yaw_actual,
+#                  err_vx, err_vy, err_speed, err_angle, err_yaw] at [1424:1435].
+# Nav layout: [dx0, dy0, dx1, dy1, dx2, dy2] at [1424:1430].
+# Bootstrap: dx0 ← vx_cmd, dy0 ← vy_cmd. The walking policy already maps
+# (vx_cmd, vy_cmd) → forward/sideways torques; reusing those weights makes
+# "goal in body-frame +x" feel like "command forward velocity," giving the
+# warm-started policy a meaningful starting gradient instead of "no command =
+# freeze and fall."
+WALKING_VX_CMD_COL = 1424   # walking col for vx_cmd
+WALKING_VY_CMD_COL = 1425   # walking col for vy_cmd
+NAV_DX0_COL = 1424          # nav col for dx0
+NAV_DY0_COL = 1425          # nav col for dy0
+# Lookahead waypoints (dx1, dy1, dx2, dy2) at [1426:1430] stay zero — no
+# clean walking analog (yaw_cmd at walking col 1426 is not a position delta).
+
+# VecNormalize variance for waypoint cols. Body-frame goal at fixed 5m and
+# random angle has |dx0|, |dy0| roughly uniform in [-5, 5], so var ≈ 5²/3 ≈ 8.
+# Setting var=10 keeps initial normalized waypoint signal in the same
+# magnitude band the walking policy expected from its [-1, 1] command inputs.
+WAYPOINT_INIT_VAR = 10.0
+
 
 def adapt_policy(model_path: str, output_path: str):
     """Slice walking input layer to 1430 dims (body kept, command dropped)."""
@@ -80,19 +102,25 @@ def adapt_policy(model_path: str, output_path: str):
     state_dict = model.policy.state_dict()
     adapted = 0
     for key, tensor in state_dict.items():
-        # 2D weight matrices with input dim == 1495 — slice columns.
+        # 2D weight matrices with input dim == 1495 — slice columns and
+        # bootstrap waypoint dx0/dy0 from walking vx_cmd/vy_cmd.
         if tensor.dim() == 2 and tensor.shape[1] == WALKING_OBS_DIM:
             new_t = torch.zeros(tensor.shape[0], NAV_OBS_DIM, dtype=tensor.dtype)
             new_t[:, :BODY_DIM] = tensor[:, :BODY_DIM]
-            # [BODY_DIM:NAV_OBS_DIM] left as zero — waypoint weights, learned.
+            new_t[:, NAV_DX0_COL] = tensor[:, WALKING_VX_CMD_COL]
+            new_t[:, NAV_DY0_COL] = tensor[:, WALKING_VY_CMD_COL]
+            # Lookahead waypoint cols [1426:1430] stay zero — learned from reward.
             state_dict[key] = new_t
             adapted += 1
             print(f"  Adapted {key}: {tuple(tensor.shape)} -> "
-                  f"{tuple(new_t.shape)}")
+                  f"{tuple(new_t.shape)}  "
+                  f"(bootstrapped dx0/dy0 from vx_cmd/vy_cmd)")
         # 1D tensors with size 1495 — same column slicing.
         elif tensor.dim() == 1 and tensor.shape[0] == WALKING_OBS_DIM:
             new_t = torch.zeros(NAV_OBS_DIM, dtype=tensor.dtype)
             new_t[:BODY_DIM] = tensor[:BODY_DIM]
+            new_t[NAV_DX0_COL] = tensor[WALKING_VX_CMD_COL]
+            new_t[NAV_DY0_COL] = tensor[WALKING_VY_CMD_COL]
             state_dict[key] = new_t
             adapted += 1
             print(f"  Adapted {key}: {tuple(tensor.shape)} -> "
@@ -152,9 +180,12 @@ def adapt_vecnorm(vecnorm_path: str, output_path: str):
     new_var = np.ones(NAV_OBS_DIM, dtype=old_var.dtype)
     new_mean[:BODY_DIM] = old_mean[:BODY_DIM]
     new_var[:BODY_DIM] = old_var[:BODY_DIM]
-    # [BODY_DIM:NAV_OBS_DIM] — fresh identity stats for waypoint block; the
-    # navigation env produces meters in body frame, so fresh normalization
-    # is appropriate.
+    # Waypoint cols [1424:1430]: mean=0, var=10. The body-frame waypoint
+    # signal is in meters (~5m goal), with var ≈ 5²/3 ≈ 8 under random goal
+    # angle. Setting var=10 keeps initial normalized magnitude in the same
+    # band the walking policy saw at its bootstrapped command columns
+    # (post-VecNormalize, walking commands were ~[-1, 1]).
+    new_var[BODY_DIM:NAV_OBS_DIM] = WAYPOINT_INIT_VAR
 
     obs_space = spaces.Box(low=-np.inf, high=np.inf,
                            shape=(NAV_OBS_DIM,), dtype=np.float32)
@@ -174,7 +205,7 @@ def adapt_vecnorm(vecnorm_path: str, output_path: str):
     new_vn.save(output_path)
     dummy_env.close()
     print(f"  Saved adapted VecNormalize to {output_path}")
-    print(f"  Body stats kept (first 1424 dims). Waypoint stats: "
+    print(f"  Body stats kept (first {BODY_DIM} dims). Waypoint stats: "
           f"mean={new_mean[BODY_DIM:].tolist()}, "
           f"var={new_var[BODY_DIM:].tolist()}")
 
@@ -197,7 +228,11 @@ def main():
     print(f"Adapting walking model: {WALKING_OBS_DIM} -> {NAV_OBS_DIM} obs dims")
     print(f"  Body columns [0:{BODY_DIM}] kept from walking")
     print(f"  Command/padding [{BODY_DIM}:{WALKING_OBS_DIM}] DROPPED")
-    print(f"  Waypoint block [{BODY_DIM}:{NAV_OBS_DIM}] zero-init (will be learned)")
+    print(f"  Waypoint block [{BODY_DIM}:{NAV_OBS_DIM}]:")
+    print(f"    dx0/dy0 (cols {NAV_DX0_COL},{NAV_DY0_COL}) bootstrapped from "
+          f"walking vx_cmd/vy_cmd")
+    print(f"    lookahead dx1/dy1/dx2/dy2 zero-init (learned)")
+    print(f"  VecNormalize waypoint var={WAYPOINT_INIT_VAR}")
     print("=" * 64)
 
     print("\n[1/2] Adapting policy weights...")

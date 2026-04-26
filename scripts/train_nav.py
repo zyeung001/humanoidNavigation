@@ -37,6 +37,7 @@ configure_mujoco_gl()
 
 import numpy as np  # noqa: E402
 from stable_baselines3 import PPO  # noqa: E402
+from stable_baselines3.common.callbacks import CheckpointCallback  # noqa: E402
 from stable_baselines3.common.monitor import Monitor  # noqa: E402
 from stable_baselines3.common.vec_env import (  # noqa: E402
     DummyVecEnv,
@@ -45,6 +46,16 @@ from stable_baselines3.common.vec_env import (  # noqa: E402
 )
 
 from src.environments.nav_rebuild_env import NavRebuildEnv  # noqa: E402
+from src.training.metrics_logger import JsonlMetricsCallback  # noqa: E402
+
+
+def _safe_getstate(self):
+    state = self.__dict__.copy()
+    state.pop("venv", None)
+    state.pop("class_attributes", None)
+    state.pop("returns", None)
+    return state
+VecNormalize.__getstate__ = _safe_getstate
 
 
 def _make_env_fn(rank: int, seed: int, env_kwargs: dict):
@@ -129,6 +140,10 @@ def main():
 
     print("\nLoading adapted PPO model...")
     model = PPO.load(args.model, env=vn, custom_objects=custom_objects)
+    # No TensorBoard: SummaryWriter holds a thread lock that crashes
+    # CheckpointCallback's pickle path. JsonlMetricsCallback captures the
+    # same train/* and rollout/* metrics into JSONL via SB3's logger.
+    model.tensorboard_log = None
     print(f"  obs space: {model.observation_space.shape}")
     if model.observation_space.shape[0] != 1430:
         raise RuntimeError(
@@ -176,12 +191,39 @@ def main():
         n_envs=vn.num_envs,
     )
 
+    # ---------- callbacks ----------
+    ckpt_dir = os.path.join(args.output_dir, "checkpoints")
+    os.makedirs(ckpt_dir, exist_ok=True)
+    metrics_path = os.path.join(args.output_dir, "metrics", "training.jsonl")
+
+    callbacks = [
+        CheckpointCallback(
+            save_freq=max(1, args.save_freq // max(1, args.n_envs)),
+            save_path=ckpt_dir,
+            name_prefix="model",
+            save_vecnormalize=True,
+            save_replay_buffer=False,
+            verbose=1,
+        ),
+        JsonlMetricsCallback(
+            output_path=metrics_path,
+            log_freq=5000,
+            buffer_size=1000,
+            verbose=1,
+        ),
+    ]
+
+    print(f"\nLogging:")
+    print(f"  JSONL:       {metrics_path}")
+    print(f"  Checkpoints: {ckpt_dir}  (every {args.save_freq} steps)")
+
     print("\nStarting training...")
     model.learn(
         total_timesteps=args.timesteps,
         log_interval=10,
         progress_bar=False,
         reset_num_timesteps=False,
+        callback=callbacks,
     )
 
     final_model = os.path.join(args.output_dir, "model_final.zip")

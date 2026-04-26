@@ -198,17 +198,12 @@ class NavRebuildEnv(gym.Wrapper):
 
         # Teleport humanoid to start. qpos[0:2] are world (x, y) when
         # exclude_current_positions_from_observation=False.
+        # Initial yaw stays at humanoid default (+x) — random init yaw is a
+        # Phase 4 robustness concern, not Phase 1. The walking warm-start
+        # never saw non-zero starting yaw.
         base = self.env.unwrapped
         base.data.qpos[0] = sx
         base.data.qpos[1] = sy
-        # Random initial heading so policy learns to handle any start orientation.
-        if self.open_arena:
-            yaw = float(self._rng.uniform(-np.pi, np.pi))
-            half = yaw * 0.5
-            base.data.qpos[3] = np.cos(half)
-            base.data.qpos[4] = 0.0
-            base.data.qpos[5] = 0.0
-            base.data.qpos[6] = np.sin(half)
         # Re-fetch obs after teleport so initial obs reflects new pose.
         obs = base._get_obs()
 
