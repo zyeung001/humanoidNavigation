@@ -47,6 +47,32 @@ from stable_baselines3.common.vec_env import (  # noqa: E402
 
 from src.environments.nav_rebuild_env import NavRebuildEnv  # noqa: E402
 from src.training.metrics_logger import JsonlMetricsCallback  # noqa: E402
+from src.training.transfer_callbacks import (  # noqa: E402
+    LogStdClampCallback,
+    ValueFunctionWarmupCallback,
+)
+
+
+class _SafeCheckpointCallback(CheckpointCallback):
+    """CheckpointCallback that strips VFWarmup's monkey-patched `train` from
+    model.__dict__ before save. The patched closure captures the callback
+    instance whose `parent.callbacks` chain reaches the JsonlMetricsCallback's
+    open append-mode file, which cloudpickle refuses to serialize. Restoring
+    after save keeps the extra-VF training intact across checkpoints."""
+
+    def _on_step(self) -> bool:
+        if self.n_calls % self.save_freq == 0:
+            patched_train = self.model.__dict__.pop("train", None)
+            patched_flag = self.model.__dict__.pop("_extra_vf_patched", None)
+            try:
+                ok = super()._on_step()
+            finally:
+                if patched_train is not None:
+                    self.model.__dict__["train"] = patched_train
+                if patched_flag is not None:
+                    self.model.__dict__["_extra_vf_patched"] = patched_flag
+            return ok
+        return super()._on_step()
 
 
 def _safe_getstate(self):
@@ -100,6 +126,17 @@ def main():
     p.add_argument("--max-episode-steps", type=int, default=1500)
     p.add_argument("--goal-dist", type=float, default=5.0,
                    help="Open-arena random goal distance from start (m).")
+    # ---- transfer-warmup hyperparameters (walking → nav) ----
+    p.add_argument("--vf-warmup-steps", type=int, default=250_000,
+                   help="Phase 1: policy frozen, VF-only training.")
+    p.add_argument("--vf-rampup-steps", type=int, default=500_000,
+                   help="Phase 2: policy updates ramped 0 -> max_scale.")
+    p.add_argument("--policy-max-scale", type=float, default=0.5,
+                   help="Phase 3: permanent scale on policy updates.")
+    p.add_argument("--extra-vf-epochs", type=int, default=7,
+                   help="Extra VF-only gradient steps per train() cycle.")
+    p.add_argument("--log-std-max", type=float, default=0.0,
+                   help="Upper clamp on policy log_std (std=1.0 at 0.0).")
     args = p.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -196,8 +233,24 @@ def main():
     os.makedirs(ckpt_dir, exist_ok=True)
     metrics_path = os.path.join(args.output_dir, "metrics", "training.jsonl")
 
+    # VFWarmupCallback FIRST — it monkey-patches model.train and freezes
+    # policy params during _on_training_start. Other callbacks can't depend
+    # on those side effects, but order matters for the patch sequence.
     callbacks = [
-        CheckpointCallback(
+        ValueFunctionWarmupCallback(
+            warmup_steps=args.vf_warmup_steps,
+            rampup_steps=args.vf_rampup_steps,
+            max_scale=args.policy_max_scale,
+            extra_vf_epochs=args.extra_vf_epochs,
+            verbose=1,
+        ),
+        LogStdClampCallback(
+            log_std_min=-2.0,
+            log_std_max=args.log_std_max,
+            clamp_freq=2000,
+            verbose=1,
+        ),
+        _SafeCheckpointCallback(
             save_freq=max(1, args.save_freq // max(1, args.n_envs)),
             save_path=ckpt_dir,
             name_prefix="model",
@@ -213,6 +266,12 @@ def main():
         ),
     ]
 
+    print(f"\nTransfer warmup:")
+    print(f"  VF-only:    0 .. {args.vf_warmup_steps:,}")
+    print(f"  Policy ramp: {args.vf_warmup_steps:,} .. "
+          f"{args.vf_warmup_steps + args.vf_rampup_steps:,} (0 -> "
+          f"{args.policy_max_scale})")
+    print(f"  Steady scale {args.policy_max_scale} thereafter")
     print(f"\nLogging:")
     print(f"  JSONL:       {metrics_path}")
     print(f"  Checkpoints: {ckpt_dir}  (every {args.save_freq} steps)")

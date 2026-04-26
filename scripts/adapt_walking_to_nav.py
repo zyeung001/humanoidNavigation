@@ -147,6 +147,36 @@ def adapt_policy(model_path: str, output_path: str):
     model.policy.load_state_dict(state_dict)
     print("  Weights loaded successfully", flush=True)
 
+    # ---------- Re-initialize value function ----------
+    # The walking value function predicts walking-task returns (ep_rew ~500
+    # under velocity-tracking reward). On nav obs the predictions are garbage
+    # (nav ep_rew ~-25 to ~+50) which gives garbage advantages and lets PPO
+    # actively destroy the policy. Same problem and fix as standing→walking
+    # transfer in src/training/transfer_utils.py.
+    import torch.nn as nn
+    vf_reinit = 0
+    with torch.no_grad():
+        for name, param in model.policy.named_parameters():
+            if "value" in name.lower() or "vf" in name.lower():
+                if "bias" in name.lower():
+                    nn.init.constant_(param, 0.0)
+                    vf_reinit += 1
+                elif param.dim() >= 2:
+                    nn.init.orthogonal_(param, gain=1.0)
+                    vf_reinit += 1
+    print(f"  Value function re-initialized: {vf_reinit} parameters")
+
+    # ---------- Clamp log_std ----------
+    # Walking model's log_std might be outside the safe band for nav. Clamp
+    # to [-1.0, 0.0] (std ∈ [0.37, 1.0]). Higher std with 17 action dims
+    # produces near-100% PPO clip fraction.
+    if hasattr(model.policy, "log_std"):
+        with torch.no_grad():
+            old_max = float(model.policy.log_std.max().item())
+            model.policy.log_std.clamp_(-1.0, 0.0)
+            new_max = float(model.policy.log_std.max().item())
+            print(f"  log_std clamped: max {old_max:.3f} -> {new_max:.3f}")
+
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     model.save(output_path)
     print(f"  Saved adapted model to {output_path}")
@@ -198,7 +228,10 @@ def adapt_vecnorm(vecnorm_path: str, output_path: str):
     new_vn.obs_rms.var = new_var
     new_vn.obs_rms.count = old_count
     new_vn.ret_rms.mean = ret_rms_mean
-    new_vn.ret_rms.var = ret_rms_var
+    # Reset return-running variance to a moderate value — walking returns were
+    # on a different scale than nav returns. Same fix as standing→walking
+    # transfer ("Reset ret_rms.var to 100.0 on transfer").
+    new_vn.ret_rms.var = np.asarray(100.0, dtype=np.asarray(ret_rms_var).dtype)
     new_vn.ret_rms.count = ret_rms_count
 
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
