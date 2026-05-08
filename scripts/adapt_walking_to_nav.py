@@ -30,19 +30,19 @@ Usage:
 
 import argparse
 import os
+import pickle
 import sys
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-import pickle
-
-import numpy as np
-import torch
-from gymnasium import spaces
-from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
+import torch.nn as nn  # noqa: E402
+from gymnasium import spaces  # noqa: E402
+from stable_baselines3 import PPO  # noqa: E402
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize  # noqa: E402
 
 
 # Patch SB3 VecNormalize.__getstate__ to use pop() instead of del — the
@@ -147,13 +147,9 @@ def adapt_policy(model_path: str, output_path: str, reinit_action_head: bool = F
     model.policy.load_state_dict(state_dict)
     print("  Weights loaded successfully", flush=True)
 
-    # ---------- Re-initialize value function ----------
-    # The walking value function predicts walking-task returns (ep_rew ~500
-    # under velocity-tracking reward). On nav obs the predictions are garbage
-    # (nav ep_rew ~-25 to ~+50) which gives garbage advantages and lets PPO
-    # actively destroy the policy. Same problem and fix as standing→walking
-    # transfer in src/training/transfer_utils.py.
-    import torch.nn as nn
+    # Re-initialize value function — walking VF predicts walking returns
+    # (~500), which produces garbage advantages on nav returns (~-25 to ~+50).
+    # Same fix as standing -> walking transfer in src/training/transfer_utils.py.
     vf_reinit = 0
     with torch.no_grad():
         for name, param in model.policy.named_parameters():
@@ -290,7 +286,7 @@ def main():
     print(f"  Waypoint block [{BODY_DIM}:{NAV_OBS_DIM}]:")
     print(f"    dx0/dy0 (cols {NAV_DX0_COL},{NAV_DY0_COL}) bootstrapped from "
           f"walking vx_cmd/vy_cmd")
-    print(f"    lookahead dx1/dy1/dx2/dy2 zero-init (learned)")
+    print("    lookahead dx1/dy1/dx2/dy2 zero-init (learned)")
     print(f"  VecNormalize waypoint var={WAYPOINT_INIT_VAR}")
     print("=" * 64)
 
@@ -303,7 +299,7 @@ def main():
 
     print("\n" + "=" * 64)
     print("Done. Train with:")
-    print(f"  python scripts/train_nav.py \\")
+    print("  python scripts/train_nav.py \\")
     print(f"      --model {args.output_model} \\")
     print(f"      --vecnorm {args.output_vecnorm} \\")
     print("       --timesteps 5000000")
