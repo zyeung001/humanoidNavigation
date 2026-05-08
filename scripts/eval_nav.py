@@ -38,6 +38,14 @@ from stable_baselines3 import PPO  # noqa: E402
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize  # noqa: E402
 
 from src.environments.nav_rebuild_env import NavRebuildEnv  # noqa: E402
+from src.maze.maze_maps import CORRIDOR, L_MAZE, U_MAZE, MEDIUM_MAZE  # noqa: E402
+
+MAZE_GRIDS = {
+    "corridor": CORRIDOR,
+    "L": L_MAZE,
+    "U": U_MAZE,
+    "medium": MEDIUM_MAZE,
+}
 
 
 def _safe_getstate(self):
@@ -99,24 +107,52 @@ def main():
     p.add_argument("--max-episode-steps", type=int, default=1500)
     p.add_argument("--goal-dist", type=float, default=5.0,
                    help="Open-arena random goal distance (m).")
+    p.add_argument("--maze-type", default="open",
+                   choices=["open", "procedural"] + list(MAZE_GRIDS.keys()),
+                   help="open = Phase 1 open arena (default). "
+                        "procedural = fresh random maze each episode. "
+                        "Others use the named fixed maze grid.")
+    p.add_argument("--proc-rows-min", type=int, default=2)
+    p.add_argument("--proc-rows-max", type=int, default=3)
+    p.add_argument("--proc-cols-min", type=int, default=2)
+    p.add_argument("--proc-cols-max", type=int, default=3)
+    p.add_argument("--proc-algorithm", default="dfs", choices=["dfs", "prims"])
     p.add_argument("--no-deterministic", action="store_true",
                    help="Sample actions stochastically (default: deterministic).")
     p.add_argument("--log", default=None,
                    help="Optional JSONL path for per-episode metrics.")
     args = p.parse_args()
 
-    env_kwargs = dict(
-        open_arena=True,
-        open_arena_goal_dist=args.goal_dist,
-        max_episode_steps=args.max_episode_steps,
-    )
+    if args.maze_type == "open":
+        env_kwargs = dict(
+            open_arena=True,
+            open_arena_goal_dist=args.goal_dist,
+            max_episode_steps=args.max_episode_steps,
+        )
+    elif args.maze_type == "procedural":
+        env_kwargs = dict(
+            open_arena=False,
+            procedural=True,
+            proc_rows_range=(args.proc_rows_min, args.proc_rows_max),
+            proc_cols_range=(args.proc_cols_min, args.proc_cols_max),
+            proc_algorithm=args.proc_algorithm,
+            max_episode_steps=args.max_episode_steps,
+        )
+    else:
+        env_kwargs = dict(
+            open_arena=False,
+            grid=MAZE_GRIDS[args.maze_type],
+            max_episode_steps=args.max_episode_steps,
+        )
 
     print("=" * 64)
-    print("Phase 1 navigation eval")
+    print(f"Navigation eval ({args.maze_type})")
     print(f"  model:       {args.model}")
     print(f"  vecnorm:     {args.vecnorm}")
     print(f"  episodes:    {args.episodes}")
-    print(f"  goal_dist:   {args.goal_dist} m")
+    print(f"  maze_type:   {args.maze_type}")
+    if args.maze_type == "open":
+        print(f"  goal_dist:   {args.goal_dist} m")
     print(f"  max_steps:   {args.max_episode_steps}")
     print(f"  determ:      {not args.no_deterministic}")
     print("=" * 64)

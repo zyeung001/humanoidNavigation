@@ -85,7 +85,7 @@ NAV_DY0_COL = 1425          # nav col for dy0
 WAYPOINT_INIT_VAR = 10.0
 
 
-def adapt_policy(model_path: str, output_path: str):
+def adapt_policy(model_path: str, output_path: str, reinit_action_head: bool = False):
     """Slice walking input layer to 1430 dims (body kept, command dropped)."""
     print(f"  Loading model from {model_path}...", flush=True)
     model = PPO.load(model_path, device="cpu", custom_objects={
@@ -165,6 +165,28 @@ def adapt_policy(model_path: str, output_path: str):
                     nn.init.orthogonal_(param, gain=1.0)
                     vf_reinit += 1
     print(f"  Value function re-initialized: {vf_reinit} parameters")
+
+    # ---------- Re-initialize action head (optional) ----------
+    # Diagnostic finding (4/26/2026): the warm-started policy on nav obs
+    # produces hidden activations of magnitude ~87 (vs walking's ~5-10),
+    # giving pre-clip action means up to ±67 that get clipped to ±0.4
+    # (Humanoid-v5 action bound) on every joint every step. The agent
+    # collapses in 50-100 steps without ever moving. Re-initializing the
+    # action head + log_std gives PPO a clean starting policy on top of
+    # the walking-trained body encoder.
+    if reinit_action_head:
+        ah_reinit = 0
+        with torch.no_grad():
+            for name, param in model.policy.named_parameters():
+                if "action_net" in name:
+                    if "bias" in name:
+                        nn.init.constant_(param, 0.0)
+                        ah_reinit += 1
+                    elif param.dim() >= 2:
+                        nn.init.orthogonal_(param, gain=0.01)
+                        ah_reinit += 1
+        print(f"  Action head re-initialized: {ah_reinit} parameters "
+              f"(orthogonal gain=0.01, bias=0)")
 
     # ---------- Clamp log_std ----------
     # Walking model's log_std might be outside the safe band for nav. Clamp
@@ -255,6 +277,10 @@ def main():
                    help="Output path for adapted model.")
     p.add_argument("--output-vecnorm", required=True,
                    help="Output path for adapted VecNormalize.")
+    p.add_argument("--reinit-action-head", action="store_true",
+                   help="Re-init the action head (orthogonal gain=0.01) and "
+                        "log_std. Use when warmstart produces saturated "
+                        "actions due to OOD activations on nav obs.")
     args = p.parse_args()
 
     print("=" * 64)
@@ -269,7 +295,8 @@ def main():
     print("=" * 64)
 
     print("\n[1/2] Adapting policy weights...")
-    adapt_policy(args.model, args.output_model)
+    adapt_policy(args.model, args.output_model,
+                 reinit_action_head=args.reinit_action_head)
 
     print("\n[2/2] Adapting VecNormalize stats...")
     adapt_vecnorm(args.vecnorm, args.output_vecnorm)

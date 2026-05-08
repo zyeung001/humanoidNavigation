@@ -20,6 +20,7 @@ from gymnasium.spaces import Box
 
 from src.maze.maze_maps import CORRIDOR
 from src.maze.maze_mjcf import MazeMJCFGenerator
+from src.maze.maze_generator import generate_maze_dfs, generate_maze_prims
 from src.maze.solver import solve as astar_solve
 
 
@@ -70,6 +71,10 @@ class NavRebuildEnv(gym.Wrapper):
         open_arena: bool = False,
         open_arena_size: float = 30.0,
         open_arena_goal_dist: float = 5.0,
+        # Goal angle range (radians) for open-arena sampling. (-pi, pi) gives
+        # uniform random direction. Narrower ranges (e.g., (-0.5, 0.5)) make
+        # an easier "forward goal" task for bootstrapping.
+        open_arena_angle_range: tuple = (-np.pi, np.pi),
         # Observation structure — mirrors walking_env so warm-start surgery
         # can transfer body weights at columns [0:1424] directly.
         history_len: int = 4,
@@ -80,8 +85,27 @@ class NavRebuildEnv(gym.Wrapper):
         time_penalty: float = 0.005,
         collision_penalty: float = 25.0,
         fall_penalty: float = 25.0,
+        # Heading-cosine reward: dense goal-conditioned signal that pays
+        # cos(angle between body heading and direction to next waypoint).
+        # WARNING: this is survival-shaped — pays every step regardless of
+        # progress, so a standing-and-facing agent farms it. v4 collapsed
+        # to that exploit. Prefer velocity_projection_weight below.
+        heading_cosine_weight: float = 0.0,
+        # Velocity-projection reward: dot(velocity_xy, goal_unit_vec)
+        # clipped to [0, vmax]. Standing -> 0 (closes reverse path).
+        # Backwards -> 0. Bounded per step. Replacement for heading_cosine.
+        velocity_projection_weight: float = 0.0,
+        velocity_projection_vmax: float = 1.0,
         # Termination thresholds (mirrors walking_env defaults).
         fall_height_threshold: float = 0.7,
+        # Procedural mode: regenerate a fresh random maze on every reset().
+        # Walls/start/goal/path all change per episode. Mutually exclusive
+        # with open_arena. Cost: tears down + rebuilds the underlying gym env
+        # on each reset (~50-200ms depending on maze size).
+        procedural: bool = False,
+        proc_rows_range: tuple = (2, 3),
+        proc_cols_range: tuple = (2, 3),
+        proc_algorithm: str = "dfs",  # "dfs" or "prims"
         config: Optional[dict] = None,
         render_mode: Optional[str] = None,
         seed: Optional[int] = None,
@@ -98,11 +122,31 @@ class NavRebuildEnv(gym.Wrapper):
         self.open_arena = bool(open_arena)
         self.open_arena_size = float(open_arena_size)
         self.open_arena_goal_dist = float(open_arena_goal_dist)
+        self.open_arena_angle_range = (
+            float(open_arena_angle_range[0]),
+            float(open_arena_angle_range[1]),
+        )
+        self.heading_cosine_weight = float(heading_cosine_weight)
+        self.velocity_projection_weight = float(velocity_projection_weight)
+        self.velocity_projection_vmax = float(velocity_projection_vmax)
+
+        self.procedural = bool(procedural)
+        self.proc_rows_range = (int(proc_rows_range[0]), int(proc_rows_range[1]))
+        self.proc_cols_range = (int(proc_cols_range[0]), int(proc_cols_range[1]))
+        self.proc_algorithm = str(proc_algorithm)
+        if self.procedural and self.open_arena:
+            raise ValueError("procedural=True is incompatible with open_arena=True")
+        self._render_mode = render_mode
+        self._wall_thickness = wall_thickness
+
+        self._rng = np.random.RandomState(seed)
         if self.open_arena:
             # No walls; we still pass a tiny stub grid into the maze generator
             # so the floor is enlarged. The grid here is unused for path
             # planning — paths are straight lines start→goal.
             self.grid = np.array([[0]], dtype=np.int32)
+        elif self.procedural:
+            self.grid = self._sample_procedural_grid()
         else:
             self.grid = grid.copy() if grid is not None else CORRIDOR.copy()
 
@@ -115,7 +159,6 @@ class NavRebuildEnv(gym.Wrapper):
         self.fall_height_threshold = fall_height_threshold
 
         self.cfg = cfg
-        self._rng = np.random.RandomState(seed)
 
         # Base humanoid env. In open-arena mode skip maze MJCF and use the
         # default humanoid XML directly.
@@ -179,6 +222,12 @@ class NavRebuildEnv(gym.Wrapper):
     def reset(self, *, seed: Optional[int] = None, options=None):
         if seed is not None:
             self._rng = np.random.RandomState(seed)
+
+        # Procedural mode: regenerate maze geometry before resetting underlying env.
+        if self.procedural:
+            self.grid = self._sample_procedural_grid()
+            self._rebuild_underlying_env()
+
         obs, info = self.env.reset(seed=seed)
 
         self.current_step = 0
@@ -253,6 +302,36 @@ class NavRebuildEnv(gym.Wrapper):
             wp_bonus += self.waypoint_bonus
             self.next_waypoint_idx += 1
 
+        # ---------- heading-cosine (dense, goal-conditioned) ----------
+        heading_reward = 0.0
+        if self.heading_cosine_weight > 0.0:
+            tgt_idx = min(self.next_waypoint_idx, len(self.path) - 1)
+            wx, wy = self.path[tgt_idx]
+            dx = wx - agent_pos[0]
+            dy = wy - agent_pos[1]
+            d = np.hypot(dx, dy)
+            if d > 1e-3:
+                gx, gy = dx / d, dy / d
+                heading = self._agent_heading()
+                hx, hy = np.cos(heading), np.sin(heading)
+                cos_align = float(hx * gx + hy * gy)
+                heading_reward = self.heading_cosine_weight * cos_align
+
+        # ---------- velocity-projection (dense, reverse-path-closed) ----------
+        vel_proj_reward = 0.0
+        if self.velocity_projection_weight > 0.0:
+            tgt_idx = min(self.next_waypoint_idx, len(self.path) - 1)
+            wx, wy = self.path[tgt_idx]
+            dx = wx - agent_pos[0]
+            dy = wy - agent_pos[1]
+            d = np.hypot(dx, dy)
+            if d > 1e-3:
+                ux, uy = dx / d, dy / d
+                vx, vy = float(self.env.unwrapped.data.qvel[0]), float(self.env.unwrapped.data.qvel[1])
+                v_along = vx * ux + vy * uy
+                v_clip = float(np.clip(v_along, 0.0, self.velocity_projection_vmax))
+                vel_proj_reward = self.velocity_projection_weight * v_clip
+
         # ---------- time penalty ----------
         time_pen = -self.time_penalty
 
@@ -288,6 +367,8 @@ class NavRebuildEnv(gym.Wrapper):
         total_reward = (
             progress_reward
             + wp_bonus
+            + heading_reward
+            + vel_proj_reward
             + time_pen
             + terminal_bonus
             + terminal_penalty
@@ -302,6 +383,8 @@ class NavRebuildEnv(gym.Wrapper):
             "nav_height": height,
             "reward/progress": progress_reward,
             "reward/waypoint": wp_bonus,
+            "reward/heading": heading_reward,
+            "reward/vel_proj": vel_proj_reward,
             "reward/time": time_pen,
             "reward/terminal_bonus": terminal_bonus,
             "reward/terminal_penalty": terminal_penalty,
@@ -317,6 +400,34 @@ class NavRebuildEnv(gym.Wrapper):
     # Helpers
     # ------------------------------------------------------------------
 
+    def _sample_procedural_grid(self) -> np.ndarray:
+        """Sample a fresh random maze grid using the configured algorithm."""
+        rows = int(self._rng.randint(self.proc_rows_range[0],
+                                     self.proc_rows_range[1] + 1))
+        cols = int(self._rng.randint(self.proc_cols_range[0],
+                                     self.proc_cols_range[1] + 1))
+        maze_seed = int(self._rng.randint(0, 2**31 - 1))
+        if self.proc_algorithm == "prims":
+            return generate_maze_prims(rows, cols, seed=maze_seed)
+        return generate_maze_dfs(rows, cols, seed=maze_seed)
+
+    def _rebuild_underlying_env(self) -> None:
+        """Tear down the wrapped Humanoid-v5 env and rebuild from a new MJCF.
+        Called when self.grid changes (procedural mode). Keeps the wrapper's
+        observation_space and other invariants intact."""
+        self.maze_xml_path = self.mjcf_gen.generate(self.grid)
+        try:
+            self.env.close()
+        except Exception:
+            pass
+        self.env = gym.make(
+            "Humanoid-v5",
+            xml_file=self.maze_xml_path,
+            render_mode=self._render_mode,
+            exclude_current_positions_from_observation=False,
+        )
+        self._wall_geom_ids = self._collect_wall_geom_ids()
+
     def _sample_open_arena_path(self) -> list:
         """Open-arena path: agent at origin, random goal at fixed distance.
 
@@ -324,7 +435,8 @@ class NavRebuildEnv(gym.Wrapper):
         ~5m away. Path is the straight line [start, goal].
         """
         start = (0.0, 0.0)
-        angle = float(self._rng.uniform(-np.pi, np.pi))
+        lo, hi = self.open_arena_angle_range
+        angle = float(self._rng.uniform(lo, hi))
         d = self.open_arena_goal_dist
         goal = (d * np.cos(angle), d * np.sin(angle))
         return [start, goal]
