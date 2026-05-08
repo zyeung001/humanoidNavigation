@@ -2,20 +2,24 @@
 Evaluation harness for navigation rebuild models.
 
 Runs N rollouts on NavRebuildEnv and reports:
-  - goal-reach rate (Phase 1 pass criterion: >80%)
+  - goal-reach rate (pass criterion: >=80%)
   - breakdown by termination cause (goal / collision / fall / truncated)
   - mean steps-to-goal on successful episodes
   - mean final distance to goal
   - mean cumulative reward
 
-Usage (Phase 1 open arena):
-    python scripts/eval_nav.py \\
-        --model runs/nav_phase1/model_final.zip \\
-        --vecnorm runs/nav_phase1/vecnorm_final.pkl \\
-        --episodes 50
+Supports four maze modes via --maze-type:
+  open         — Phase 1 open arena (default)
+  corridor / L / U / medium — fixed maze grids from src.maze.maze_maps
+  procedural   — fresh random maze each episode
 
-Per-episode JSONL log can be written with --log <path> for the reward-hack
-watchlist.
+Usage:
+    python scripts/eval_nav.py \\
+        --model runs/nav_phase3_v3/model_final.zip \\
+        --vecnorm runs/nav_phase3_v3/vecnorm_final.pkl \\
+        --maze-type corridor --episodes 50
+
+Per-episode JSONL log: --log <path>.
 """
 
 import argparse
@@ -219,7 +223,7 @@ def main():
     print("=" * 64)
     print(f"  Episodes:           {n}")
     print(f"  Goal-reach rate:    {goal_rate:.1%}  ({n_goal}/{n})")
-    print(f"  Termination breakdown:")
+    print("  Termination breakdown:")
     for cause in sorted(causes.keys(), key=lambda c: -causes[c]):
         print(f"    {cause:>12s}: {causes[cause]:3d}  ({causes[cause]/n:.1%})")
     print(f"  Mean steps (goal-reaching only): {mean_steps_success:.0f}")
@@ -228,7 +232,7 @@ def main():
     print()
     pass_threshold = 0.80
     verdict = "PASS" if goal_rate >= pass_threshold else "FAIL"
-    print(f"  Phase 1 pass criterion (>{pass_threshold:.0%}): {verdict}")
+    print(f"  Pass criterion (>={pass_threshold:.0%}): {verdict}")
     print("=" * 64)
 
     venv.close()

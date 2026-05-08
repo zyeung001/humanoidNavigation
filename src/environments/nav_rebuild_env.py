@@ -1,6 +1,5 @@
-# nav_rebuild_env.py
 """
-Phase 0 navigation rebuild environment.
+Navigation rebuild environment.
 
 End-to-end goal-conditioned navigation: maze geometry, A* path computed at
 reset, body-frame waypoint observations, progress-along-path reward.
@@ -201,7 +200,8 @@ class NavRebuildEnv(gym.Wrapper):
         self._termination_cause: Optional[str] = None
 
         # Per-frame body dim = humanoid raw obs + 6 COM features. Mirrors
-        # walking_env so warm-start can keep the same column layout.
+        # walking_env so the warm-start adapter can keep the same column
+        # layout at obs[0:1424].
         probe_obs, _ = self.env.reset()
         self._humanoid_obs_dim = int(np.asarray(probe_obs).shape[0])
         self._com_dim = 6
@@ -412,9 +412,7 @@ class NavRebuildEnv(gym.Wrapper):
         return generate_maze_dfs(rows, cols, seed=maze_seed)
 
     def _rebuild_underlying_env(self) -> None:
-        """Tear down the wrapped Humanoid-v5 env and rebuild from a new MJCF.
-        Called when self.grid changes (procedural mode). Keeps the wrapper's
-        observation_space and other invariants intact."""
+        """Rebuild the wrapped Humanoid-v5 env from the current grid (procedural)."""
         self.maze_xml_path = self.mjcf_gen.generate(self.grid)
         try:
             self.env.close()
@@ -499,9 +497,6 @@ class NavRebuildEnv(gym.Wrapper):
                 best_d = d
                 best_arc = arc
                 best_seg = i
-            # Early exit: if we just past midpoint of segment, later segments
-            # likely farther; but path geometry can fool this — be safe and
-            # keep scanning all forward segments.
 
         return best_arc, best_seg
 

@@ -1,30 +1,31 @@
 """
-Phase 1 navigation training: open arena, single random goal, warm-started.
+Navigation training entry point.
 
-Loads an adapted model from `scripts/adapt_walking_to_nav.py` (1430 obs)
-and continues training in `NavRebuildEnv(open_arena=True)`.
+Loads a model adapted by `scripts/adapt_walking_to_nav.py` (1430 obs) or a
+checkpoint from a prior nav run, and continues training in `NavRebuildEnv`.
 
-Pass criterion (per NAVIGATION_REBUILD_PLAN.md): >80% goal reach within
-timeout. Train for ~5M steps as a starting point and re-evaluate.
+Three environment modes (mutually exclusive at the top level):
+
+    open arena       --maze-types open  (default; Phase 1)
+    fixed maze(s)    --maze-types corridor,L,U   (cyclic across envs)
+    procedural       --procedural               (fresh random maze per reset)
+
+Procedural mode also supports `--mix-fixed corridor:1,L:1` to pin some envs
+to fixed maps (used in Phase 3 to recover specific maze skills).
 
 Usage:
     python scripts/train_nav.py \\
         --model models/nav_rebuild/warmstart_model.zip \\
         --vecnorm models/nav_rebuild/warmstart_vecnorm.pkl \\
-        --timesteps 5000000 \\
-        --n-envs 8
-
-For a smoke test (verifies pipeline only):
-    python scripts/train_nav.py \\
-        --model models/nav_rebuild/warmstart_model.zip \\
-        --vecnorm models/nav_rebuild/warmstart_vecnorm.pkl \\
-        --timesteps 4096 --n-envs 2 --output-dir runs/nav_smoke
+        --timesteps 5000000 --n-envs 8
 """
 
 import argparse
 import os
 import sys
+import types
 import warnings
+from collections import Counter
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -35,8 +36,8 @@ if PROJECT_ROOT not in sys.path:
 from src.utils import configure_mujoco_gl, get_subprocess_start_method  # noqa: E402
 configure_mujoco_gl()
 
-import numpy as np  # noqa: E402
 from stable_baselines3 import PPO  # noqa: E402
+from stable_baselines3.common.buffers import RolloutBuffer  # noqa: E402
 from stable_baselines3.common.callbacks import CheckpointCallback  # noqa: E402
 from stable_baselines3.common.monitor import Monitor  # noqa: E402
 from stable_baselines3.common.vec_env import (  # noqa: E402
@@ -62,12 +63,10 @@ MAZE_GRIDS = {
 
 
 class _SafeCheckpointCallback(CheckpointCallback):
-    """CheckpointCallback that strips VFWarmup's monkey-patched `train` from
-    model.__dict__ before save. The patched closure captures the callback
-    instance whose `parent.callbacks` chain reaches the JsonlMetricsCallback's
-    open append-mode file, which cloudpickle refuses to serialize. Restoring
-    after save keeps the extra-VF training intact across checkpoints."""
-
+    # VFWarmup monkey-patches model.train; that closure captures a callback
+    # whose parent chain reaches JsonlMetricsCallback's open file handle,
+    # which cloudpickle refuses to serialize. Strip the patch around save
+    # and restore it afterwards.
     def _on_step(self) -> bool:
         if self.n_calls % self.save_freq == 0:
             patched_train = self.model.__dict__.pop("train", None)
@@ -116,8 +115,94 @@ def make_vec_env(n_envs: int, seed: int, env_kwargs_per_rank, use_subproc: bool)
     return DummyVecEnv([_make_env_fn(i, seed, kwargs_fn(i)) for i in range(n_envs)])
 
 
+def _open_arena_kwargs(args, base_kwargs):
+    kw = dict(base_kwargs, open_arena=True, open_arena_goal_dist=args.goal_dist)
+    if args.goal_angle_range is not None:
+        half = float(args.goal_angle_range)
+        kw["open_arena_angle_range"] = (-half, half)
+    return kw
+
+
+def _parse_mix_fixed(spec_str: str, n_envs: int) -> dict:
+    """Parse '--mix-fixed corridor:1,L:1' into {rank: maze_name}."""
+    if not spec_str:
+        return {}
+    spec = {}
+    for tok in spec_str.split(","):
+        name, count = tok.split(":")
+        name = name.strip()
+        if name not in MAZE_GRIDS:
+            raise ValueError(
+                f"Unknown maze '{name}' in --mix-fixed. "
+                f"Valid: {', '.join(MAZE_GRIDS.keys())}"
+            )
+        spec[name] = int(count)
+    if sum(spec.values()) >= n_envs:
+        raise ValueError(
+            f"--mix-fixed total ({sum(spec.values())}) must be < n_envs "
+            f"({n_envs}); leave at least one env for procedural."
+        )
+    fixed_assignments, rank = {}, 0
+    for name, count in spec.items():
+        for _ in range(count):
+            fixed_assignments[rank] = name
+            rank += 1
+    return fixed_assignments
+
+
+def _build_env_kwargs_factory(args, base_kwargs, maze_list):
+    """Return (factory, mode_str). Factory is rank->kwargs or a single dict."""
+    if args.procedural:
+        proc_kwargs = dict(
+            base_kwargs,
+            open_arena=False,
+            procedural=True,
+            proc_rows_range=(args.proc_rows_min, args.proc_rows_max),
+            proc_cols_range=(args.proc_cols_min, args.proc_cols_max),
+            proc_algorithm=args.proc_algorithm,
+        )
+        fixed_assignments = _parse_mix_fixed(args.mix_fixed, args.n_envs)
+        if not fixed_assignments:
+            mode_str = (f"procedural ({args.proc_algorithm}), "
+                        f"rows {args.proc_rows_min}-{args.proc_rows_max}, "
+                        f"cols {args.proc_cols_min}-{args.proc_cols_max}")
+            return proc_kwargs, mode_str
+
+        def factory(rank: int):
+            if rank in fixed_assignments:
+                return dict(base_kwargs, open_arena=False,
+                            grid=MAZE_GRIDS[fixed_assignments[rank]])
+            return proc_kwargs
+
+        dist = Counter(fixed_assignments.values())
+        n_proc = args.n_envs - sum(dist.values())
+        mode_str = (
+            f"procedural ({args.proc_algorithm}, {n_proc} envs) + fixed: "
+            + ", ".join(f"{k}:{v}" for k, v in sorted(dist.items()))
+        )
+        return factory, mode_str
+
+    if maze_list == ["open"]:
+        return _open_arena_kwargs(args, base_kwargs), \
+               f"open-arena, goal_dist={args.goal_dist}m"
+
+    rank_to_maze = [maze_list[i % len(maze_list)] for i in range(args.n_envs)]
+
+    def factory(rank: int):
+        mt = rank_to_maze[rank]
+        if mt == "open":
+            return _open_arena_kwargs(args, base_kwargs)
+        return dict(base_kwargs, open_arena=False, grid=MAZE_GRIDS[mt])
+
+    dist = Counter(rank_to_maze)
+    mode_str = "fixed mazes — " + ", ".join(
+        f"{k}:{v}" for k, v in sorted(dist.items())
+    )
+    return factory, mode_str
+
+
 def main():
-    p = argparse.ArgumentParser(description="Phase 1 navigation training")
+    p = argparse.ArgumentParser(description="Navigation training")
     p.add_argument("--model", required=True, help="Adapted warm-start model (.zip)")
     p.add_argument("--vecnorm", required=True, help="Adapted VecNormalize stats (.pkl)")
     p.add_argument("--timesteps", type=int, default=5_000_000)
@@ -211,99 +296,7 @@ def main():
                 f"{', '.join(MAZE_GRIDS.keys())}"
             )
 
-    if args.procedural:
-        proc_kwargs = dict(
-            base_kwargs,
-            open_arena=False,
-            procedural=True,
-            proc_rows_range=(args.proc_rows_min, args.proc_rows_max),
-            proc_cols_range=(args.proc_cols_min, args.proc_cols_max),
-            proc_algorithm=args.proc_algorithm,
-        )
-        fixed_assignments = {}  # rank -> maze_name
-        if args.mix_fixed:
-            spec = {}
-            for tok in args.mix_fixed.split(","):
-                name, count = tok.split(":")
-                name = name.strip()
-                if name not in MAZE_GRIDS:
-                    raise ValueError(
-                        f"Unknown maze '{name}' in --mix-fixed. "
-                        f"Valid: {', '.join(MAZE_GRIDS.keys())}"
-                    )
-                spec[name] = int(count)
-            total_fixed = sum(spec.values())
-            if total_fixed >= args.n_envs:
-                raise ValueError(
-                    f"--mix-fixed total ({total_fixed}) must be < n_envs "
-                    f"({args.n_envs}); leave at least one env for procedural."
-                )
-            rank = 0
-            for name, count in spec.items():
-                for _ in range(count):
-                    fixed_assignments[rank] = name
-                    rank += 1
-        if fixed_assignments:
-            def env_kwargs_factory(rank: int):  # noqa: E306
-                if rank in fixed_assignments:
-                    return dict(
-                        base_kwargs,
-                        open_arena=False,
-                        grid=MAZE_GRIDS[fixed_assignments[rank]],
-                    )
-                return proc_kwargs
-            from collections import Counter
-            dist = Counter(fixed_assignments.values())
-            n_proc = args.n_envs - sum(dist.values())
-            mode_str = (
-                f"procedural ({args.proc_algorithm}, {n_proc} envs) + fixed: "
-                + ", ".join(f"{k}:{v}" for k, v in sorted(dist.items()))
-            )
-        else:
-            env_kwargs_factory = proc_kwargs
-            mode_str = (f"procedural ({args.proc_algorithm}), "
-                        f"rows {args.proc_rows_min}-{args.proc_rows_max}, "
-                        f"cols {args.proc_cols_min}-{args.proc_cols_max}")
-    elif maze_list == ["open"]:
-        open_kwargs = dict(
-            base_kwargs,
-            open_arena=True,
-            open_arena_goal_dist=args.goal_dist,
-        )
-        if args.goal_angle_range is not None:
-            open_kwargs["open_arena_angle_range"] = (
-                -float(args.goal_angle_range),
-                float(args.goal_angle_range),
-            )
-        env_kwargs_factory = open_kwargs
-        mode_str = f"open-arena, goal_dist={args.goal_dist}m"
-    else:
-        rank_to_maze = [maze_list[i % len(maze_list)] for i in range(args.n_envs)]
-
-        def env_kwargs_factory(rank: int):  # noqa: E306
-            mt = rank_to_maze[rank]
-            if mt == "open":
-                kw = dict(
-                    base_kwargs,
-                    open_arena=True,
-                    open_arena_goal_dist=args.goal_dist,
-                )
-                if args.goal_angle_range is not None:
-                    kw["open_arena_angle_range"] = (
-                        -float(args.goal_angle_range),
-                        float(args.goal_angle_range),
-                    )
-                return kw
-            return dict(
-                base_kwargs,
-                open_arena=False,
-                grid=MAZE_GRIDS[mt],
-            )
-        from collections import Counter
-        dist = Counter(rank_to_maze)
-        mode_str = "fixed mazes — " + ", ".join(
-            f"{k}:{v}" for k, v in sorted(dist.items())
-        )
+    env_kwargs_factory, mode_str = _build_env_kwargs_factory(args, base_kwargs, maze_list)
 
     print("=" * 64)
     print("Navigation training")
@@ -348,34 +341,23 @@ def main():
         )
 
     # The walking model may have been saved with a monkey-patched `train`
-    # method (extra-VF callback in train_walking.py). Restore the bound
-    # PPO.train so navigation training uses the standard update loop.
+    # (extra-VF callback in train_walking.py). Rebind to PPO.train so this
+    # script uses the standard update loop; VFWarmupCallback may patch again.
     if hasattr(model, "_extra_vf_patched"):
-        try:
-            del model._extra_vf_patched
-        except AttributeError:
-            pass
-    # Always rebind train to the standard PPO method (idempotent).
-    import types
-    standard_train = types.MethodType(PPO.train, model)
-    needs_restore = (
-        not hasattr(model.train, "__func__")
-        or model.train.__func__ is not PPO.train
-    )
-    if needs_restore:
-        model.train = standard_train
+        del model._extra_vf_patched
+    if (not hasattr(model.train, "__func__")
+            or model.train.__func__ is not PPO.train):
+        model.train = types.MethodType(PPO.train, model)
         print("  Restored standard PPO.train (was monkey-patched)")
 
-    # Force PPO hyperparams from CLI; custom_objects sometimes ignores n_steps
-    # / batch_size / n_epochs when loading from older checkpoints.
+    # custom_objects sometimes ignores n_steps/batch_size/n_epochs when loading
+    # older checkpoints. Force them from CLI and rebuild the rollout buffer.
     model.n_steps = args.n_steps
     model.batch_size = args.batch_size
     model.n_epochs = args.n_epochs
     model.gamma = args.gamma
     model.ent_coef = args.ent_coef
-    # Rebuild rollout buffer to match n_steps × n_envs.
     model._setup_lr_schedule()
-    from stable_baselines3.common.buffers import RolloutBuffer
     model.rollout_buffer = RolloutBuffer(
         model.n_steps,
         model.observation_space,
@@ -386,14 +368,12 @@ def main():
         n_envs=vn.num_envs,
     )
 
-    # ---------- callbacks ----------
     ckpt_dir = os.path.join(args.output_dir, "checkpoints")
     os.makedirs(ckpt_dir, exist_ok=True)
     metrics_path = os.path.join(args.output_dir, "metrics", "training.jsonl")
 
-    # VFWarmupCallback FIRST — it monkey-patches model.train and freezes
-    # policy params during _on_training_start. Other callbacks can't depend
-    # on those side effects, but order matters for the patch sequence.
+    # VFWarmupCallback first: it monkey-patches model.train and freezes the
+    # policy in _on_training_start. Order matters for the patch sequence.
     callbacks = [
         ValueFunctionWarmupCallback(
             warmup_steps=args.vf_warmup_steps,
@@ -424,13 +404,13 @@ def main():
         ),
     ]
 
-    print(f"\nTransfer warmup:")
+    print("\nTransfer warmup:")
     print(f"  VF-only:    0 .. {args.vf_warmup_steps:,}")
     print(f"  Policy ramp: {args.vf_warmup_steps:,} .. "
           f"{args.vf_warmup_steps + args.vf_rampup_steps:,} (0 -> "
           f"{args.policy_max_scale})")
     print(f"  Steady scale {args.policy_max_scale} thereafter")
-    print(f"\nLogging:")
+    print("\nLogging:")
     print(f"  JSONL:       {metrics_path}")
     print(f"  Checkpoints: {ckpt_dir}  (every {args.save_freq} steps)")
 
