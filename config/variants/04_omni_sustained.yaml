@@ -50,7 +50,6 @@ walking:
   max_yaw_rate: 0.5
   reward_yaw_bandwidth: 10.0
   yaw_wrong_dir_penalty: 1.5
-  turn_in_place_prob: 0.0          # TIP added in Stage 5
 
   # Reward tuning
   reward_tracking_weight: 5.0

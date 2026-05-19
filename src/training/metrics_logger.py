@@ -281,6 +281,24 @@ class JsonlMetricsCallback(BaseCallback):
                 np.clip(np.mean(self.speed_ratio_buffer), 0, 1)
             )
 
+        # Pull PPO/rollout values directly from SB3's logger state. Bypasses
+        # the dump→output_format→drain pipeline, which fired ~6× per 20M-step
+        # run and produced no PPO data in v1..v5 because the dump cadence
+        # (log_interval × n_steps × n_envs) almost never aligned with our
+        # 5000-step flush boundary. name_to_value persists between dumps and
+        # is overwritten with fresh values every train() iteration.
+        logger = getattr(self.model, "logger", None)
+        if logger is not None and hasattr(logger, "name_to_value"):
+            for key, value in logger.name_to_value.items():
+                if not isinstance(value, (int, float, np.floating, np.integer)):
+                    continue
+                if key.startswith("train/"):
+                    record[f"ppo/{key[len('train/'):]}"] = _to_jsonable(value)
+                elif key.startswith("rollout/") or key.startswith("time/"):
+                    record[key] = _to_jsonable(value)
+
+        # Keep the legacy output_format drain too — harmless and useful if a
+        # SB3 version routes values through it but not through name_to_value.
         if self._sb3_format is not None:
             record.update(self._sb3_format.drain())
 

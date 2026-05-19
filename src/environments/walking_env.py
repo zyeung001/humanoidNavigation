@@ -460,20 +460,66 @@ class WalkingEnv(gym.Wrapper):
         # Core tracking reward with Gaussian kernel
         velocity_tracking_reward = tracking_weight * np.exp(-tracking_bandwidth * vel_error**2)
 
-        # ========== PROGRESS BONUS (continuous, no threshold discontinuities) ==========
+        # ========== MOVEMENT GATE (anti standing-exploit) ==========
+        # CRITICAL (5/16/2026): the ungated Gaussian above pays ~90% of max
+        # for STANDING STILL at Stage-0 commands (cmd~0.1, actual=0 →
+        # err=0.1 → exp(-10·0.01)≈0.9 → ~4.5/step). PPO then converges to
+        # standing — observed across EVERY standing→walking run (ep_rew ~1300
+        # at 0% success, Stage 0 forever). The matching gate in
+        # core/rewards.py was dead code: this function recomputes its own
+        # tracking and never consumed reward_metrics.tracking.
+        #
+        # Fix: scale tracking by forward progress along the commanded
+        # direction (the proven nav vel_proj pattern). Standing → ~0 tracking,
+        # continuous in v_actual (no advantage-variance discontinuity). Only a
+        # genuine STOP command (speed ≤ STOP_CMD_EPS, far below the
+        # curriculum's slowest *move* command of ~0.05 m/s) is left ungated —
+        # staying still is then the correct behavior and should be rewarded.
+        STOP_CMD_EPS = 0.02
+        # Continuous upright factor: 1.0 when clearly vertical, →0 as the torso
+        # pitches toward horizontal. Gates the forward-progress rewards so a
+        # forward TOPPLE — which registers forward COM velocity for ~1s before
+        # termination — cannot out-earn standing. This is the 27M failure
+        # (5/16): the movement gate killed the standing exploit but the agent
+        # then learned to lunge-and-die (ep_len 137, vel_error worse) because
+        # falling forward still paid progress+partial-tracking. Continuous in
+        # up_z (a state the policy controls smoothly) → no advantage cliff.
+        upright_gate = float(np.clip((up_z - 0.5) / 0.3, 0.0, 1.0))
+        # Survival-conditional-on-tracking (restored 5/16, was deleted in the
+        # 3/12 17→6 simplification — see the docstring above, design point 3).
+        # WHY: gating tracking-for-standing was necessary but NOT sufficient. A
+        # standing transfer prior collects the survival floor (yaw+height+
+        # upright ≈ 2.25/step) over very long episodes (~400 steps) → ~1000
+        # episodic return for STANDING. The re-init VF locks onto that (EV
+        # 0.93); any walking attempt shortens the episode → negative advantage
+        # → policy pushed back to standing. Observed: 290k of ramp, 0% success,
+        # identical to the 27M failure. Fix: scale the survival floor by
+        # forward progress when a move is commanded — 30% unconditional (keeps
+        # a balance bootstrap so a learning walker doesn't destabilize) + 70%
+        # conditional on actually progressing. Standing under a move command →
+        # survival ×0.3 → standing episodic return collapses → VF stops valuing
+        # it → walking gets positive advantage. Continuous (no cliff). A STOP
+        # command leaves survival_factor=1.0 (standing is then correct).
+        survival_factor = 1.0
         progress_bonus = 0.0
-        if self.commanded_speed > 0.05:
+        if self.commanded_speed > STOP_CMD_EPS:
             # Project actual velocity onto commanded direction
-            if self.commanded_speed > 0:
-                direction_cmd = np.array([self.commanded_vx_world, self.commanded_vy_world]) / self.commanded_speed
-            else:
-                direction_cmd = np.array([1.0, 0.0])
-
+            direction_cmd = np.array(
+                [self.commanded_vx_world, self.commanded_vy_world]
+            ) / self.commanded_speed
             projected_speed = np.dot(v_actual, direction_cmd)
 
-            # Continuous progress bonus: smooth ratio, no thresholds
-            speed_ratio = np.clip(projected_speed / self.commanded_speed, -0.5, 1.5)
-            progress_bonus = 1.5 * speed_ratio
+            # Gate tracking by forward progress AND by staying upright.
+            direction_ratio = np.clip(projected_speed / self.commanded_speed, 0.0, 1.0)
+            velocity_tracking_reward *= direction_ratio * upright_gate
+            survival_factor = 0.3 + 0.7 * direction_ratio * upright_gate
+
+            # Progress bonus: only real upright forward locomotion, never a
+            # topple. speed_ratio clipped [0,1] (over-speed lunging not paid).
+            speed_ratio = np.clip(projected_speed / self.commanded_speed, 0.0, 1.0)
+            progress_bonus = 1.5 * speed_ratio * upright_gate
+        # else: stop command — leave velocity_tracking_reward ungated
+        #       (staying still is correct and should be rewarded).
 
         # ========== STANDING PENALTY (REMOVED — tracking reward handles this) ==========
         standing_penalty = 0.0
@@ -489,6 +535,9 @@ class WalkingEnv(gym.Wrapper):
         yaw_tracking_reward = 0.0
         if self.include_yaw_rate:
             yaw_tracking_reward = self.yaw_rate_weight * np.exp(-self.yaw_tracking_bandwidth * yaw_error**2)
+            # Part of the survival floor — gate it on tracking too, else a
+            # non-moving agent banks full yaw reward for "not turning".
+            yaw_tracking_reward *= survival_factor
 
         # ========== FEET AIR TIME REWARD (enables rotation) ==========
         # Robot must lift feet to rotate — friction prevents rotation with feet planted.
@@ -510,13 +559,6 @@ class WalkingEnv(gym.Wrapper):
                         feet_air_time_reward += self.feet_air_time_weight * air_bonus
                 self.feet_contact_prev[i] = in_contact
 
-        # ========== ANTI-DRIFT PENALTY (during turn-in-place) ==========
-        # When only yaw is commanded (vel~0), penalize any linear velocity.
-        # Prevents agent from drifting instead of rotating in place.
-        anti_drift_penalty = 0.0
-        if self.commanded_speed < 0.05 and abs(self.commanded_yaw_rate) > 0.05:
-            anti_drift_penalty = -1.0 * min(actual_speed, 0.5)
-        
         # ========== HEIGHT REWARD (halved — survival must not compete with tracking) ==========
         base_height_reward = 0.0
         if height < 1.0:
@@ -529,7 +571,7 @@ class WalkingEnv(gym.Wrapper):
             base_height_reward = 0.5
         else:
             base_height_reward = 0.4 - 0.25 * np.clip((height - 1.5) / 0.2, 0.0, 1.0)
-        height_reward = base_height_reward * self.height_reward_scale
+        height_reward = base_height_reward * self.height_reward_scale * survival_factor
 
         # ========== UPRIGHT REWARD (halved — survival must not compete with tracking) ==========
         upright_error = 1.0 - max(up_z, 0.0)  # 0 when upright, 1 when horizontal
@@ -539,7 +581,7 @@ class WalkingEnv(gym.Wrapper):
             base_upright = 0.15 * np.exp(-6.0 * upright_error**2)
         else:
             base_upright = 0.0
-        upright_reward = base_upright * self.height_reward_scale
+        upright_reward = base_upright * self.height_reward_scale * survival_factor
 
         # ========== ZEROED COMPONENTS (kept for WandB logging compatibility) ==========
         stability_reward = 0.0    # Penalizes angular momentum — walking REQUIRES this
@@ -628,7 +670,6 @@ class WalkingEnv(gym.Wrapper):
             # PENALTIES
             control_cost +              # Small action regularization
             arm_posture_penalty +       # Curriculum-gated (0 in Stage 0)
-            anti_drift_penalty +        # Penalize drift during turn-in-place
 
             # ZEROED (kept for WandB compatibility)
             standing_penalty +          # 0.0
@@ -675,7 +716,6 @@ class WalkingEnv(gym.Wrapper):
             'sustained_bonus': sustained_bonus,
             'consistency_bonus': consistency_bonus,
             'feet_air_time': feet_air_time_reward,
-            'anti_drift': anti_drift_penalty,
             'termination_penalty': termination_penalty,
             'total': total_reward,
         }

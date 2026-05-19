@@ -218,6 +218,7 @@ models/**/*.zip
 models/**/*.pkl
 models/**/info.json
 models/walking/checkpoints/
+models/**/metrics/
 models/configs/*.yaml
 
 # Stray legacy outputs at models/ root

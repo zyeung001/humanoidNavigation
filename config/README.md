@@ -18,9 +18,6 @@ Stage 3: Yaw control    (config/variants/03_yaw.yaml)
 Stage 4: Omnidirectional + sustained turning   (config/variants/04_omni_sustained.yaml)
    |
    v
-Stage 5: Turn-in-place  (config/variants/05_tip.yaml)
-   |
-   v
 Maze navigation         (scripts/run_maze_nav.py)
 ```
 
@@ -115,32 +112,9 @@ python scripts/train_walking.py \
 
 ---
 
-## Stage 5 — Turn-in-place (TIP)
-
-Train the agent to rotate in place when commanded `vx=0, vy=0, |yaw|>0`.
-Required for sharp maze corners.
-
-```bash
-python scripts/train_walking.py \
-    --model models/walking/best/model.zip \
-    --vecnorm models/walking/best/vecnorm.pkl \
-    --override config/variants/05_tip.yaml \
-    --timesteps 5000000
-```
-
-**Inputs:** Stage 4 model.
-**Output:** Same path — final navigation-ready policy.
-**Success:**
-- Clean rotation when commanded `(0, 0, 0.5)`
-- L-maze full traversal without wall collision
-- `velocity_error < 0.15` (slight regression from Stage 4 is expected — TIP
-  trades a little walking quality for stop-and-turn capability)
-
----
-
 ## Running maze navigation
 
-Once Stage 5 is done:
+Once Stage 4 is done:
 
 ```bash
 python scripts/run_maze_nav.py \
@@ -161,8 +135,6 @@ See `src/maze/CLAUDE.md` for the navigation controller's parameters.
   Without it, Gaussian yaw reward has zero gradient beyond err=0.5 rad/s.
 - **Stage 4 height decay:** Confirm `reward_height_weight=1.0` and
   `command_switch_interval=[2, 15]`.
-- **Stage 5 vel_error spike:** Expected — TIP introduces (0,0,yaw) command pattern.
-  If spike is large (>0.3), drop `turn_in_place_prob` to 0.10 and retrain.
 
 Don't tweak parameters mid-stage. If a stage fails, restart from the previous
 stage's checkpoint with the override that addresses the specific failure.

@@ -178,33 +178,36 @@ class WalkingCurriculumEnv(WalkingEnv):
             max_yaw = getattr(self, 'max_yaw_rate', 1.0)
             yaw_scales = [0.3, 0.5, 0.75, 1.0]  # Per-stage yaw scaling
             yaw_scale = yaw_scales[min(current_stage, len(yaw_scales) - 1)]
-            self.command_generator.update_curriculum_ranges([
-                (0.0, self.max_commanded_speed),
-                (-self.max_commanded_speed * 0.5, self.max_commanded_speed * 0.5),
-                (-max_yaw * yaw_scale, max_yaw * yaw_scale)
-            ])
+            if current_stage == 0:
+                # Stage 0 = PURE forward walking. Root cause of every
+                # stuck-at-Stage-0 run (5/16): with vx∈[0,max] (incl. ~0),
+                # lateral, yaw, and stop commands, "stand still" is
+                # the correct response to a large fraction of commands → the
+                # agent rationally never learns to walk. No reward gate can
+                # fix a curriculum that keeps commanding stop/turn at the
+                # stage walking must be discovered. Memory rule: learn pure
+                # forward walking FIRST, fine-tune yaw onto a walker.
+                # Force a clear nonzero forward command every step so the
+                # ONLY way to earn reward is to walk forward.
+                self.command_generator.update_curriculum_ranges([
+                    (0.6 * self.max_commanded_speed, self.max_commanded_speed),
+                    (0.0, 0.0),
+                    (0.0, 0.0),
+                ])
+                if hasattr(self.command_generator, 'set_stop_probability'):
+                    self.command_generator.set_stop_probability(0.0)
+            else:
+                self.command_generator.update_curriculum_ranges([
+                    (0.0, self.max_commanded_speed),
+                    (-self.max_commanded_speed * 0.5, self.max_commanded_speed * 0.5),
+                    (-max_yaw * yaw_scale, max_yaw * yaw_scale)
+                ])
         
         # Mix standing and walking commands based on curriculum stage
         standing_prob = self.standing_probability[current_stage]
-        # Turn-in-place probability: configurable, default 20%
-        # 5% was too low — agent saw ~250 TIP episodes in 3M steps, not enough to learn.
-        # 15% was tried before with sparse air time + pure Gaussian — destabilized VF.
-        # Now with continuous air time + denser yaw signal, 20% should be safe.
-        tip_prob = float(self.cfg.get('turn_in_place_prob', 0.20))
-        turn_in_place_prob = tip_prob if current_stage >= 0 else 0.0
         if np.random.random() < standing_prob:
             # Force standing command with yaw_rate = 0
             self.fixed_command = (0.0, 0.0, 0.0)
-        elif np.random.random() < turn_in_place_prob:
-            # Turn in place: zero speed, non-zero yaw — essential for maze navigation
-            max_yaw = getattr(self, 'max_yaw_rate', 1.0)
-            yaw_scales = [0.3, 0.5, 0.75, 1.0]  # Match command generator stage scaling
-            yaw_scale = yaw_scales[min(current_stage, len(yaw_scales) - 1)]
-            yaw_rate = np.random.uniform(-max_yaw, max_yaw) * yaw_scale
-            # Avoid near-zero yaw (not useful training signal)
-            if abs(yaw_rate) < 0.1:
-                yaw_rate = 0.1 * (1.0 if yaw_rate >= 0 else -1.0)
-            self.fixed_command = (0.0, 0.0, yaw_rate)
         elif self.direction_diversity:
             # Direction diversity also uses command generator now (same reasoning).
             # Command generator handles direction variety with within-episode resampling.

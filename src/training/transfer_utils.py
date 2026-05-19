@@ -246,6 +246,7 @@ class PolicyTransfer:
         init_strategy: str = "xavier",
         device: str = "cuda",
         command_weight_scale: float = 5.0,
+        reinit_action_head: bool = False,
     ):
         """
         Initialize policy transfer.
@@ -268,6 +269,7 @@ class PolicyTransfer:
         self.init_strategy = init_strategy
         self.device = device
         self.command_weight_scale = command_weight_scale
+        self.reinit_action_head = reinit_action_head
 
         # Dimension info (NEW structure: body stacked + command block once)
         self.standing_dim = 1484  # Body features × 4 frames
@@ -341,6 +343,28 @@ class PolicyTransfer:
 
         stats['value_fn_reinit'] = reinit_count
         print(f"  Value function re-initialized: {reinit_count} parameters")
+
+        # The action head is an exact-shape layer, so transfer() above copied
+        # the STANDING action mapping verbatim. On the shifted walking obs
+        # distribution that mapping saturates and the conservative policy
+        # scale can't climb out — the documented standing-prior trap (same
+        # disease as nav warmstart action saturation). Re-initializing the
+        # action head gives PPO a clean policy on top of the transferred
+        # (good) body encoder + re-init VF.
+        if self.reinit_action_head:
+            ah_reinit = 0
+            with torch.no_grad():
+                for name, param in self.walking_model.policy.named_parameters():
+                    if "action_net" in name:
+                        if "bias" in name:
+                            nn.init.constant_(param, 0.0)
+                            ah_reinit += 1
+                        elif param.dim() >= 2:
+                            nn.init.orthogonal_(param, gain=0.01)
+                            ah_reinit += 1
+            stats['action_head_reinit'] = ah_reinit
+            print(f"  Action head re-initialized: {ah_reinit} parameters "
+                  f"(orthogonal gain=0.01, bias=0)")
 
         # FIX: Reset log_std to sane value - standing model often has corrupted/exploded log_std
         # If log_std is too high, actions become pure noise and KL explodes to millions
@@ -561,6 +585,7 @@ def transfer_standing_to_walking(
     device: str = "cuda",
     init_strategy: str = "velocity",  # FIX: Use velocity weights as template (not xavier)
     warmup_steps: int = 10000,
+    reinit_action_head: bool = False,
 ) -> Tuple[PPO, VecNormalize]:
     """
     Complete transfer from standing to walking model.
@@ -636,6 +661,7 @@ def transfer_standing_to_walking(
         init_strategy=init_strategy,
         device=device,
         command_weight_scale=5.0,
+        reinit_action_head=reinit_action_head,
     )
     stats = transfer.transfer()
     

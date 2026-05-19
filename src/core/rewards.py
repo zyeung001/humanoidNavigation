@@ -176,25 +176,46 @@ class RewardCalculator:
         metrics.velocity_error_y = abs(vel_error_vec[1]) if len(vel_error_vec) > 1 else 0.0
         
         # Gaussian kernel: exp(-β * ||error||²)
-        R_tracking = self.weights.tracking * np.exp(
+        R_tracking_raw = self.weights.tracking * np.exp(
             -self.tracking_bandwidth * velocity_error**2
         )
-        metrics.tracking = R_tracking
-        
-        # ========== DIRECTION BONUS (when speed commanded) ==========
+
+        # ========== MOVEMENT GATE (anti standing-exploit) ==========
+        # Bug fixed 2026-05-14: at low commanded speed the Gaussian alone gives
+        # ~90% of max tracking reward for STANDING STILL (cmd=0.1, actual=0 →
+        # error=0.1 → exp(-10·0.01)=0.9). PPO then converges to standing and
+        # never walks — observed across every standing→walking run. The success
+        # gate in walking_curriculum rejected this for *advancement* but the
+        # *reward* still paid for it. See CLAUDE.md "Standing exploit".
+        #
+        # Fix: scale tracking by forward progress along the commanded direction
+        # (the proven nav vel_proj pattern). Standing → ~0 tracking. Continuous
+        # in v_actual, so no advantage-variance discontinuity. Only a genuine
+        # STOP command (speed_cmd ≤ STOP_CMD_EPS) is left ungated.
+        #
+        # CRITICAL (5/16/2026): STOP_CMD_EPS must be far below the curriculum's
+        # slowest *move* command. The walking command generator samples Stage-0
+        # commands uniformly in [0, ~0.15] m/s, so a 0.1 threshold treated nearly
+        # every Stage-0 command as "stop" → gate never fired → standing exploit
+        # persisted (ep_rew ~814 at 0% success). 0.02 m/s is below any
+        # intentional locomotion command but above numerical zero.
+        STOP_CMD_EPS = 0.02
         speed_cmd = np.linalg.norm(v_target)
         R_direction = 0.0
-        
-        if speed_cmd > 0.1:
+
+        if speed_cmd > STOP_CMD_EPS:
             # Normalize target to get direction
             direction_cmd = v_target / speed_cmd
-            
+
             # Project actual velocity onto commanded direction
             projected_speed = np.dot(v_actual, direction_cmd)
-            
+
             # Reward for moving in correct direction
             direction_ratio = np.clip(projected_speed / speed_cmd, 0.0, 1.0)
             R_direction = self.weights.direction_bonus * direction_ratio
+
+            # Gate tracking by achieved forward progress.
+            R_tracking = R_tracking_raw * direction_ratio
             
             # Calculate angular error
             speed_actual = np.linalg.norm(v_actual)
@@ -204,7 +225,12 @@ class RewardCalculator:
                 metrics.direction_error = np.arccos(cos_angle)
             else:
                 metrics.direction_error = np.pi  # Max error if not moving
-        
+        else:
+            # Stop command: staying still IS correct — reward the raw Gaussian
+            # (low velocity_error) without the movement gate.
+            R_tracking = R_tracking_raw
+
+        metrics.tracking = R_tracking
         metrics.direction_bonus = R_direction
         
         # ========== HEIGHT REWARD ==========

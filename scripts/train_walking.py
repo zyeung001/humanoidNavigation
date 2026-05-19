@@ -698,6 +698,10 @@ def main():
                         help='Reset VecNormalize statistics (fresh start)')
     parser.add_argument('--from-standing', action='store_true',
                         help='Initialize from standing model (handles obs dimension mismatch)')
+    parser.add_argument('--reinit-action-head', action='store_true',
+                        help='Re-init the action head (orthogonal gain=0.01) after transfer. '
+                             'Breaks the standing-action-manifold trap when the policy stays '
+                             'flat at Stage 0 (saturated actions on the shifted walking obs).')
     parser.add_argument('--debug', action='store_true',
                         help='Use DummyVecEnv for easier debugging (no multiprocessing)')
     parser.add_argument('--n-envs', type=int, default=None,
@@ -912,7 +916,11 @@ def main():
     resume = args.model is not None
     
     # ========== INITIALIZE MODEL MANAGER ==========
-    model_manager = ModelManager(task="walking", base_dir="models")
+    # Set HN_MODELS_DIR (e.g. D:\hn_models) to store all checkpoints, the final/
+    # latest/best models, archived configs and metrics off the C: drive.
+    models_base_dir = os.environ.get("HN_MODELS_DIR", "models")
+    model_manager = ModelManager(task="walking", base_dir=models_base_dir)
+    print(f"[ModelManager] Saving all training output under: {os.path.abspath(models_base_dir)}")
     model_manager.archive_config(walking, run_name=f"walking_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
     
     # ========== INITIALIZE WANDB (if enabled) ==========
@@ -978,6 +986,7 @@ def main():
                 device=device,
                 init_strategy=args.init_strategy,
                 warmup_steps=warmup_steps,
+                reinit_action_head=args.reinit_action_head,
             )
             
             vecnorm_loaded = True  # We handled it in transfer
