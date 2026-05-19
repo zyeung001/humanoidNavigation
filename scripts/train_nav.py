@@ -248,6 +248,59 @@ def main():
                    help="Path arc-length progress weight.")
     p.add_argument("--goal-bonus", type=float, default=50.0,
                    help="Terminal goal-reached bonus.")
+    p.add_argument("--collision-penalty", type=float, default=25.0,
+                   help="Terminal collision penalty (positive number, applied "
+                        "as -value). Default 25.0. Reducing this loosens the "
+                        "wall-aversion trained into v1..v5; recommended 5-10 "
+                        "for fine-tuning runs that need to learn corners.")
+    p.add_argument("--fall-penalty", type=float, default=25.0,
+                   help="Terminal fall penalty (positive number, applied as "
+                        "-value). Default 25.0.")
+    p.add_argument("--upright-bonus-weight", type=float, default=0.0,
+                   help="Per-step Gaussian reward on torso height "
+                        "(centered on --height-target, width --height-sigma). "
+                        "Default 0 (off) matches v1-v7b. Use ~1.0 to keep an "
+                        "upright walking gait through nav training; without "
+                        "it the policy drifts to a ~0.83m crawling gait.")
+    p.add_argument("--height-target", type=float, default=1.40,
+                   help="Target torso height for upright bonus (m).")
+    p.add_argument("--height-sigma", type=float, default=0.20,
+                   help="Gaussian width for upright bonus (m).")
+    p.add_argument("--upright-bonus-start", type=float, default=None,
+                   help="Starting upright-bonus weight for the ramp. Ramps "
+                        "linearly to --upright-bonus-weight over "
+                        "--upright-ramp-steps. Default None = no ramp "
+                        "(constant --upright-bonus-weight). v8 failed with a "
+                        "strong flat bonus from step 0; ramp from a small "
+                        "value (e.g. 0.2) so navigation establishes first.")
+    p.add_argument("--upright-ramp-steps", type=int, default=0,
+                   help="PER-ENV steps to ramp upright weight start->full. "
+                        "0 = no ramp. Total training steps to full = "
+                        "this * --n-envs.")
+    p.add_argument("--fall-height-threshold", type=float, default=0.7,
+                   help="Torso height below which episode terminates with "
+                        "fall_penalty. v1-v7b used 0.7 (too lenient — let "
+                        "crawl gaits survive). Raise to 1.0+ to force "
+                        "upright posture.")
+    p.add_argument("--arm-posture-weight", type=float, default=0.0,
+                   help="Penalty weight for arm joints (qpos[18:24]) "
+                        "deviating from sides pose. Default 0 (off) = v1-v8 "
+                        "behavior. ~0.3-0.5 keeps arms at sides without "
+                        "fighting walking gradient.")
+    p.add_argument("--arm-deadzone", type=float, default=0.3,
+                   help="Allowed |q - ref| before arm penalty kicks in (rad).")
+    p.add_argument("--arm-penalty-cap", type=float, default=1.0,
+                   help="Max magnitude of arm penalty per step (clip floor).")
+    p.add_argument("--action-rate-weight", type=float, default=0.0,
+                   help="Smoothness penalty: -w * ||a_t - a_{t-1}||². Default "
+                        "0 (off). ~0.001 suppresses jitter without freezing "
+                        "the policy.")
+    p.add_argument("--control-cost-weight", type=float, default=0.0,
+                   help="Quadratic control cost: -w * ||a||². Default 0 (off). "
+                        "walking_env uses 3e-4.")
+    p.add_argument("--time-penalty", type=float, default=0.005,
+                   help="Per-step time penalty (positive number, applied as "
+                        "-value). Default 0.005.")
     # ---- transfer-warmup hyperparameters (walking → nav) ----
     p.add_argument("--vf-warmup-steps", type=int, default=250_000,
                    help="Phase 1: policy frozen, VF-only training.")
@@ -286,6 +339,20 @@ def main():
         velocity_projection_vmax=args.vel_proj_vmax,
         progress_weight=args.progress_weight,
         goal_bonus=args.goal_bonus,
+        collision_penalty=args.collision_penalty,
+        fall_penalty=args.fall_penalty,
+        fall_height_threshold=args.fall_height_threshold,
+        upright_bonus_weight=args.upright_bonus_weight,
+        height_target=args.height_target,
+        height_sigma=args.height_sigma,
+        upright_bonus_start=args.upright_bonus_start,
+        upright_ramp_steps=args.upright_ramp_steps,
+        arm_posture_weight=args.arm_posture_weight,
+        arm_deadzone=args.arm_deadzone,
+        arm_penalty_cap=args.arm_penalty_cap,
+        action_rate_weight=args.action_rate_weight,
+        control_cost_weight=args.control_cost_weight,
+        time_penalty=args.time_penalty,
     )
 
     maze_list = [m.strip() for m in args.maze_types.split(",") if m.strip()]
@@ -410,14 +477,25 @@ def main():
           f"{args.vf_warmup_steps + args.vf_rampup_steps:,} (0 -> "
           f"{args.policy_max_scale})")
     print(f"  Steady scale {args.policy_max_scale} thereafter")
+    if args.upright_ramp_steps > 0:
+        _us = args.upright_bonus_start
+        _us = _us if _us is not None else args.upright_bonus_weight
+        print("\nUpright-bonus ramp:")
+        print(f"  weight {_us} -> {args.upright_bonus_weight} over "
+              f"{args.upright_ramp_steps:,} per-env steps "
+              f"(~{args.upright_ramp_steps * args.n_envs:,} total), "
+              f"then hold. fall_height_threshold={args.fall_height_threshold}")
     print("\nLogging:")
     print(f"  JSONL:       {metrics_path}")
     print(f"  Checkpoints: {ckpt_dir}  (every {args.save_freq} steps)")
 
     print("\nStarting training...")
+    # log_interval=1 forces SB3 to dump every iteration so PPO health
+    # (approx_kl, clip_fraction, explained_variance, ...) populates
+    # name_to_value reliably. JsonlMetricsCallback reads that dict directly.
     model.learn(
         total_timesteps=args.timesteps,
-        log_interval=10,
+        log_interval=1,
         progress_bar=False,
         reset_num_timesteps=False,
         callback=callbacks,

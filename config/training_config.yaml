@@ -179,7 +179,12 @@ walking:
 
   # Speed curriculum stages (m/s) - sized for ~2ft (0.6m) humanoid sim-to-real
   # Froude scaling: sim 1.5 m/s ≈ real 1.0 m/s for 0.6m robot
-  curriculum_max_speed_stages: [0.15, 0.3, 0.45, 0.45, 0.6]  # Stage 3 stays at 0.45 — add robustness before speed
+  curriculum_max_speed_stages: [0.15, 0.3, 0.6, 1.0]  # b91a244 VERBATIM (the committed working
+                                                      # walker). Stage-0=0.15 m/s: low enough for PPO
+                                                      # to discover forward gait from the standing
+                                                      # prior. The 9b3d2b6 "0.3 is the working speed"
+                                                      # note was the falsified contamination thesis;
+                                                      # b91a244 (the actual working model) used 0.15.
 
   # Arm penalty gating: weight per curriculum stage (ramps smoothly between stages)
   arm_penalty_stage_weights: [0.0, 0.5, 0.7, 0.7, 1.0]  # Stage 3 keeps 0.7 — don't change arm penalty during robustness training
@@ -187,15 +192,18 @@ walking:
   
   # ========== VELOCITY COMMAND GENERATOR  ==========
   use_command_generator: true        # Use VelocityCommandGenerator
-  command_switch_interval: [3.0, 8.0]    # SOTA: 2-6s. Was 10-20s — too long, agent only
-                                         # saw one command per episode. Now resamples 2-5x
-                                         # per episode, giving yaw practice in EVERY episode.
+  command_switch_interval: [10.0, 20.0]  # RESTORED (9b3d2b6): long stable commands so Stage-0
+                                         # can actually learn to track. The [3,8] churn was a
+                                         # yaw-era change; yaw/TIP is deferred to later stages now.
   stop_probability: 0.0              # NO stop commands - don't reward standing
   
   # ========== YAW RATE TRACKING  ==========
   include_yaw_rate: true             # Enable yaw rate tracking in observation/reward
   max_yaw_rate: 1.0                  # rad/s maximum commanded yaw rate
-  yaw_rate_weight: 3.0               # Increased from 1.5: must be competitive with tracking (5.0).
+  yaw_rate_weight: 1.5               # Lowered 3.0→1.5 (5/16): at Stage-0 yaw_cmd≈0, a non-turning
+                                     # agent banks ~full yaw reward regardless of behavior — a large
+                                     # behavior-independent floor that dilutes the tracking gradient.
+                                     # (Originally 1.5: must be competitive with tracking 5.0.)
                                      # At 1.5, agent earned 3x more from walking straight than turning.
                                      # 3.0 makes yaw ~60% of tracking weight — strong enough to matter.
   reward_yaw_bandwidth: 10.0         # Gaussian sharpness for yaw tracking: exp(-bw * err²).
@@ -215,9 +223,6 @@ walking:
   curriculum_advance_after: 30    # Episodes before considering advancement
   warmup_episodes: 0              # NO warmup leniency - enforce strict criteria
   curriculum_success_rate: 0.50   # Success rate needed to advance
-
-  # Turn-in-place episode probability (fraction of episodes with vel=0, yaw≠0)
-  turn_in_place_prob: 0.20           # 20% TIP. Was 5% — too few episodes to learn turning.
 
   # Direction diversity - DISABLED: policy walks forward only, yaw handles turning
   direction_diversity: false
@@ -248,15 +253,30 @@ walking:
   # ========== FIX: RELAXED TERMINATION FOR WALKING ==========
   # Issue: Height drops during natural gait shouldn't terminate
   # Solution: Lower threshold, longer grace period, extended early protection
-  termination_height_threshold: 0.60      # LOWERED: Allow natural gait oscillation (0.70 was too strict)
+  # With --reinit-action-head the agent starts collapsed; a long protection
+  # window + low threshold turned into a "crawl incubator" (ep_len pinned to
+  # exactly early_termination_protection at height ~0.47, farming the survival
+  # floor). Collapse must stop paying fast so PPO uses the transferred body
+  # encoder's standing posture instead. Same principle as the nav crawl fix.
+  # b91a244 VERBATIM. The 0.85 / 30 / 40 "crawl incubator" tightening was a
+  # nav-era change; combined with raised Stage-0 speed it killed episodes at
+  # ~99 steps before forward gait could be discovered (the observed Stage-0
+  # trap). b91a244's longer protection window IS the proven setting.
+  termination_height_threshold: 0.60      # b91a244 verbatim
   termination_grace_period: 100           # Steps to track before terminating
-  termination_height_recovery_window: 80  # Full gait cycle (~0.8s at 100Hz)
-  early_termination_protection: 150       # Protect first 1.5s (~2 gait cycles)
+  termination_height_recovery_window: 80  # b91a244 verbatim
+  early_termination_protection: 150       # b91a244 verbatim — time-on-task to find gait
   
   # ========== REWARD FUNCTION ==========
   target_height: 1.40
   height_error_threshold: 0.15
   height_stability_threshold: 0.20
+
+  # Transfer runs inherit balance from the standing prior, so keep this at 1.0
+  # — a higher survival scale recreates the floor that competes with tracking
+  # (memory: tracking must dominate survival). The 1.5 from-scratch experiment
+  # was abandoned (from-scratch falsified 5/16: plateaued shaky non-walker).
+  height_reward_scale: 1.0
 
   reward_caps:
     max_height_maintenance_penalty: 0.8   # FIX: Reduced from 8.0 (10x)
@@ -267,28 +287,41 @@ walking:
 
   # Training schedule
   total_timesteps: 30_000_000
-  learning_rate: 0.000005         # 5e-6: known-good for standing→walking transfer with policy_max_scale=0.5.
-  final_learning_rate: 0.000003   # 3e-6: gentle decay.
+  # ===== PORTED VERBATIM FROM COMMIT b91a244 (5/16/2026) =====
+  # b91a244 = "Added walking model" (3/13/2026), the commit that demonstrably
+  # committed a working walker. Its CODE can't run here (March loader segfaults
+  # on Python 3.13 / numpy 2.x), so we run the Py3.13-safe CURRENT code with
+  # b91a244's EXACT proven walking hyperparameters. The 9b3d2b6/contamination
+  # "restore" (3e-4/256/10/0.05) was the false thesis that failed 3× — those
+  # were the STANDING section's values, never the walking recipe. Do not "restore".
+  learning_rate: 0.000005         # b91a244 verbatim. 3e-5 caused 95.8% clip; 5e-6 fits clip boundary.
+  final_learning_rate: 0.000003   # b91a244 verbatim.
 
   # PPO algorithm parameters
   n_steps: 2048
-  batch_size: 24576              # Full buffer (12 envs × 2048 steps). 1 minibatch/epoch → 3 total gradient steps.
-                                 # Previous: 2048 → 12 minibatches × 3 epochs = 36 steps → 95.8% clip fraction (no signal).
-                                 # Now: 1 × 3 = 3 steps → policy barely moves → clip fraction drops → optimizer gets real gradient.
-  n_epochs: 3                    # With full-batch: 3 gradient steps per cycle (not 36).
+  batch_size: 24576              # b91a244 verbatim. Full buffer (12 envs × 2048): 1 minibatch/epoch.
+  n_epochs: 3                    # b91a244 verbatim. Full-batch → 3 grad steps/cycle (not 36).
   # target_kl not used: VFWarmup callback provides stability during transfer.
-  # target_kl stops ALL learning (policy AND value) — VFWarmup is the real mechanism.
 
   gamma: 0.995
   gae_lambda: 0.95
 
   # Policy optimization
-  clip_range: 0.3                    # FIX: 0.2 too tight for 17-dim action space — 98.5% clip fraction. 0.3 lets more gradient through.
-  final_clip_range: 0.3              # No decay.
+  clip_range: 0.3                    # b91a244 verbatim. 0.2 too tight for 17-dim (98.5% clip).
+  final_clip_range: 0.3              # b91a244 verbatim. No decay.
 
   # Entropy regularization
-  ent_coef: 0.005                # Low: let policy converge before encouraging exploration
-  final_ent_coef: 0.003          # Minimal final entropy
+  ent_coef: 0.005                # b91a244 verbatim. Low: converge before exploring.
+  final_ent_coef: 0.003          # b91a244 verbatim.
+
+  # 0.0 for from-standing transfer (std=1.0). The 5/16 hypothesis that std=1.65
+  # was safe once policy-scaling was removed was FALSIFIED by the 5M run on
+  # 5/16: policy_max_scale=1.0 (no scaling) + log_std_max=0.5 → std=1.65 →
+  # approx_kl=34922, clip=0.9, policy destroyed every update, height 1.40→1.23,
+  # 0% success flat for 5M steps. The KL explosion is the 17-dim × high-std
+  # interaction, NOT a scaling artifact. train_walking.py:1144 agrees:
+  # 0.0 for transfer, 0.5 only for true from-scratch fresh training.
+  log_std_max: 0.0
   
   # Value function
   vf_coef: 0.5
@@ -297,12 +330,29 @@ walking:
   max_grad_norm: 0.5
 
   # Value function warmup (standing → walking transfer)
-  vf_warmup_steps: 250000        # Phase 1: policy frozen, VF trains
-  vf_rampup_steps: 500000        # Phase 2: policy scale ramps 0→max_scale over 500k steps
-  policy_max_scale: 0.5          # For --from-standing transfer. With 17 action dims, full-speed
-                                 # updates overshoot clip boundary at ANY LR. 0.5 = 50% of each
-                                 # optimizer step is applied. VF always gets full updates.
-                                 # 0.3 was too conservative with full-batch — optimizer gets real signal now.
+  vf_warmup_steps: 250000        # b91a244 verbatim (Phase 1: policy frozen, VF trains).
+  vf_rampup_steps: 500000        # b91a244 verbatim (Phase 2: scale 0→max over 500k).
+  policy_max_scale: 0.5          # 5/16 (3rd run): policy_max_scale=1.0 + VF-warmup STILL
+                                 # gave clip=0.9 / pg_loss +0.26 / KL~1e6 at steady (516k,
+                                 # EV=0.93). Signature invariant across log_std, warmup,
+                                 # scaling-off → confirms MEMORY.md root cause #6: 17-dim
+                                 # action space is a STRUCTURAL clip problem, permanent
+                                 # policy scaling REQUIRED (no LR/config fix exists). The
+                                 # 9b3d2b6/contamination "no-scaling works" thesis failed 3×
+                                 # today. Reverting to the most-evidenced working mechanism:
+                                 # VF-warmup (Phase 1) + permanent 0.5 scaling (Phase 3).
+                                 # NOTE prior comment kept for history:
+                                 # 0/0/1.0 + log_std_max=0.0 gave approx_kl=1.4M, clip=0.9,
+                                 # standing-prior trap (ep_len 258, 0% walk, EV=0.90). Cause:
+                                 # --from-standing RE-INITS the value function → garbage
+                                 # advantages on early updates → 960 grad-steps/rollout hurls
+                                 # the policy into the clip-saturated standing basin. Phase 1
+                                 # (freeze policy, train VF to accuracy) is the documented cure
+                                 # for exactly this and is SEPARATE from the permanent 0.5
+                                 # policy scaling that genuinely crippled learning. Keep
+                                 # policy_max_scale=1.0 → policy trains FULL speed after the
+                                 # 250k warmup + 250k ramp. This is the original transfer path
+                                 # that produced the first walker, minus only the crippling part.
   resume_policy_scale: 1.0       # For resuming from a walking model (not standing transfer).
                                  # No scaling needed — clip_fraction=0 at 0.8 means massive headroom.
                                  # 0.8 and 0.5 both produced frozen policy (zero clipping).
@@ -340,7 +390,7 @@ walking:
   eval_freq: 100_000
   
   # Checkpointing
-  save_freq: 250_000
+  save_freq: 10_000_000  # 2026-05-14: every 10M (was 250k) — storage budget, 30M run = 3 saves
   checkpoint_dir: data/checkpoints/walking
   checkpoint_prefix: walking
   
@@ -376,11 +426,11 @@ walking:
   # Penalties (keep small)
   reward_action_penalty: 0.0003   # FIX: Reduced from 0.003 (10x)
   reward_jerk_penalty: 0.0        # Zeroed: penalizes gait changes, conflicts with walking
-  reward_arm_posture_weight: 0.0  # ZERO during yaw training. Arm penalty was -5.0/step,
-                                 # drowning yaw signal. Learn yaw first, fix arms after.
-                                 # Resume from arms-down model — arms will drift but that's OK.
+  reward_arm_posture_weight: 0.5  # Restored 2026-05-14 for walking rebuild. Curriculum stage
+                                 # weights (line 185) multiply this base. Effective max ~0.5
+                                 # at stage 4, well under tracking (5.0).
   arm_posture_deadzone: 0.3       # Radians — deviations within deadzone are FREE (allows natural arm swing)
-  arm_penalty_cap: 1.5            # Irrelevant while weight=0. Restore with weight when fixing arms.
+  arm_penalty_cap: 1.5            # Per-step cap. If arms saturate at -cap every step (dead gradient), raise to 2.5.
 
   # Consistency reward
   reward_consistency_weight: 0.0  # Zeroed: noisy, creates conflicting advantages

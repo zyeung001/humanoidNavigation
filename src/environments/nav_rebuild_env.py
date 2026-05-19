@@ -97,6 +97,40 @@ class NavRebuildEnv(gym.Wrapper):
         velocity_projection_vmax: float = 1.0,
         # Termination thresholds (mirrors walking_env defaults).
         fall_height_threshold: float = 0.7,
+        # Upright/gait reward: Gaussian centered on `height_target` with width
+        # `height_sigma`. Pays per step. Default weight 0 = off (back-compat
+        # with v1-v7b training). Set ~1.0 to keep an upright gait through nav
+        # training; with the default 0.7m fall threshold, nav training drifts
+        # to a crawling gait at ~0.83m torso height because nothing in the
+        # reward function preserves the warm-start walking gait. See
+        # nav_phase3_v7b_gait_collapse memory.
+        upright_bonus_weight: float = 0.0,
+        height_target: float = 1.40,
+        height_sigma: float = 0.20,
+        # Upright-bonus ramp (crawl fix). v8 collapsed because a strong upright
+        # bonus flat from step 0 made standing locally optimal before the
+        # policy learned to navigate (progress_mean stuck at 0.09). Ramp the
+        # weight linearly from `upright_bonus_start` -> `upright_bonus_weight`
+        # over the first `upright_ramp_steps` PER-ENV steps, then hold. This
+        # lets navigation establish under a gentle gait nudge, then tightens
+        # the gait constraint. `upright_ramp_steps=0` => no ramp (back-compat:
+        # constant `upright_bonus_weight`). NOTE: steps are per-env, so total
+        # training steps to full weight = upright_ramp_steps * n_envs.
+        upright_bonus_start: Optional[float] = None,
+        upright_ramp_steps: int = 0,
+        # Arm posture penalty (mirrors walking_env). Keeps arms at sides
+        # during nav training; without it the walking warm-start's arm pose
+        # drifts and the agent flails. qpos[18:24] are the 6 arm joints.
+        # Penalty: weight * ||max(|q - ref| - deadzone, 0)||², clipped to cap.
+        # Default weight=0 keeps back-compat with v1-v8.
+        arm_posture_weight: float = 0.0,
+        arm_deadzone: float = 0.3,
+        arm_penalty_cap: float = 1.0,
+        # Action-rate (smoothness) penalty. -w * ||a_t - a_{t-1}||². Helps
+        # suppress the high-frequency jitter v8 showed. Default 0 = off.
+        action_rate_weight: float = 0.0,
+        # Quadratic control cost (matches walking_env's tiny 3e-4 constant).
+        control_cost_weight: float = 0.0,
         # Procedural mode: regenerate a fresh random maze on every reset().
         # Walls/start/goal/path all change per episode. Mutually exclusive
         # with open_arena. Cost: tears down + rebuilds the underlying gym env
@@ -155,7 +189,30 @@ class NavRebuildEnv(gym.Wrapper):
         self.time_penalty = time_penalty
         self.collision_penalty = collision_penalty
         self.fall_penalty = fall_penalty
-        self.fall_height_threshold = fall_height_threshold
+        self.fall_height_threshold = float(fall_height_threshold)
+        self.upright_bonus_weight = float(upright_bonus_weight)
+        self.height_target = float(height_target)
+        self.height_sigma = max(1e-3, float(height_sigma))
+        self.upright_bonus_start = (
+            float(upright_bonus_start)
+            if upright_bonus_start is not None
+            else self.upright_bonus_weight
+        )
+        self.upright_ramp_steps = max(0, int(upright_ramp_steps))
+        # Cumulative per-env step counter for the upright ramp. Persists
+        # across episodes (NOT reset in reset()).
+        self._total_steps = 0
+        self.arm_posture_weight = float(arm_posture_weight)
+        self.arm_deadzone = float(arm_deadzone)
+        self.arm_penalty_cap = float(arm_penalty_cap)
+        self.action_rate_weight = float(action_rate_weight)
+        self.control_cost_weight = float(control_cost_weight)
+        # Reference arm-at-sides pose copied from walking_env (qpos[18:24]).
+        self._arm_joint_slice = slice(18, 24)
+        self._arm_ref_angles = np.array(
+            [0.81, -0.97, -0.85, -0.81, 0.97, -0.85], dtype=np.float32
+        )
+        self._prev_action: Optional[np.ndarray] = None
 
         self.cfg = cfg
 
@@ -233,6 +290,7 @@ class NavRebuildEnv(gym.Wrapper):
         self.current_step = 0
         self._termination_cause = None
         self._obs_history = []
+        self._prev_action = None
 
         # Sample start/goal and build the path.
         if self.open_arena:
@@ -280,6 +338,7 @@ class NavRebuildEnv(gym.Wrapper):
     def step(self, action):
         obs, _base_reward, _base_term, _base_trunc, info = self.env.step(action)
         self.current_step += 1
+        self._total_steps += 1
 
         agent_pos = self._agent_xy()
         height = float(self.env.unwrapped.data.qpos[2])
@@ -332,6 +391,52 @@ class NavRebuildEnv(gym.Wrapper):
                 v_clip = float(np.clip(v_along, 0.0, self.velocity_projection_vmax))
                 vel_proj_reward = self.velocity_projection_weight * v_clip
 
+        # ---------- upright/gait bonus ----------
+        # Gaussian on torso height. Pays max `upright_bonus_weight` at
+        # `height_target`; falls off with width `height_sigma`. Default
+        # weight=0 disables (back-compat). Active value = w * exp(-((h-t)/s)^2).
+        if self.upright_ramp_steps > 0:
+            frac = min(1.0, self._total_steps / self.upright_ramp_steps)
+            upright_w = (
+                self.upright_bonus_start
+                + frac * (self.upright_bonus_weight - self.upright_bonus_start)
+            )
+        else:
+            upright_w = self.upright_bonus_weight
+        upright_reward = 0.0
+        if upright_w > 0.0:
+            z = (height - self.height_target) / self.height_sigma
+            upright_reward = upright_w * float(np.exp(-(z * z)))
+
+        # ---------- arm-posture penalty (keeps arms at sides) ----------
+        arm_posture_penalty = 0.0
+        if self.arm_posture_weight > 0.0:
+            arm_qpos = np.asarray(
+                self.env.unwrapped.data.qpos[self._arm_joint_slice],
+                dtype=np.float32,
+            )
+            arm_dev = np.abs(arm_qpos - self._arm_ref_angles)
+            penalized = np.maximum(arm_dev - self.arm_deadzone, 0.0)
+            raw = -self.arm_posture_weight * float(np.sum(penalized * penalized))
+            arm_posture_penalty = max(raw, -self.arm_penalty_cap)
+
+        # ---------- action-rate (smoothness) penalty ----------
+        action_rate_penalty = 0.0
+        action_arr = np.asarray(action, dtype=np.float32).ravel()
+        if self.action_rate_weight > 0.0 and self._prev_action is not None:
+            diff = action_arr - self._prev_action
+            action_rate_penalty = (
+                -self.action_rate_weight * float(np.sum(diff * diff))
+            )
+        self._prev_action = action_arr
+
+        # ---------- quadratic control cost ----------
+        control_cost = 0.0
+        if self.control_cost_weight > 0.0:
+            control_cost = -self.control_cost_weight * float(
+                np.sum(action_arr * action_arr)
+            )
+
         # ---------- time penalty ----------
         time_pen = -self.time_penalty
 
@@ -369,6 +474,10 @@ class NavRebuildEnv(gym.Wrapper):
             + wp_bonus
             + heading_reward
             + vel_proj_reward
+            + upright_reward
+            + arm_posture_penalty
+            + action_rate_penalty
+            + control_cost
             + time_pen
             + terminal_bonus
             + terminal_penalty
@@ -381,10 +490,15 @@ class NavRebuildEnv(gym.Wrapper):
             "nav_dist_to_goal": dist_to_goal,
             "nav_next_waypoint": self.next_waypoint_idx,
             "nav_height": height,
+            "upright_weight": upright_w,
             "reward/progress": progress_reward,
             "reward/waypoint": wp_bonus,
             "reward/heading": heading_reward,
             "reward/vel_proj": vel_proj_reward,
+            "reward/upright": upright_reward,
+            "reward/arm_posture": arm_posture_penalty,
+            "reward/action_rate": action_rate_penalty,
+            "reward/control_cost": control_cost,
             "reward/time": time_pen,
             "reward/terminal_bonus": terminal_bonus,
             "reward/terminal_penalty": terminal_penalty,

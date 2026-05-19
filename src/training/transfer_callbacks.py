@@ -60,20 +60,40 @@ class ValueFunctionWarmupCallback(BaseCallback):
         self._saved_state = None
 
     def _on_training_start(self) -> None:
+        # Track all non-value-function param names regardless of mode; needed
+        # for the per-rollout interpolation in Phase 2/3.
         for name, param in self.model.policy.named_parameters():
             is_value = "vf" in name or "value" in name
             if not is_value:
                 self._policy_param_names.add(name)
-                param.requires_grad = False
-        self._phase = "frozen"
+
         n_total = sum(1 for _ in self.model.policy.parameters())
-        print(f"  [VFWarmup] Frozen {len(self._policy_param_names)}/{n_total} "
-              f"params (policy network)")
-        print(f"  [VFWarmup] Phase 1: Value-only training for "
-              f"{self.warmup_steps:,} steps")
-        print(f"  [VFWarmup] Phase 2: Policy ramp 0->{self.max_scale:.1f} over "
-              f"{self.rampup_steps:,} steps")
-        print(f"  [VFWarmup] Phase 3: Permanent scaling at {self.max_scale:.1f}")
+
+        if self.warmup_steps == 0 and self.rampup_steps == 0:
+            # Skip Phase 1+2 entirely. Go straight to permanent scaling. Used
+            # when resuming from an already-trained checkpoint (e.g. v1 nav)
+            # where re-doing 750k of warmup wastes training and resets policy
+            # Adam state at the ramp→steady transition.
+            self._saved_state = {}
+            for name, param in self.model.policy.named_parameters():
+                if name in self._policy_param_names and "log_std" not in name:
+                    self._saved_state[name] = param.data.clone()
+            self._phase = "steady"
+            print(f"  [VFWarmup] SKIP warmup (steps=0). "
+                  f"Steady scale={self.max_scale:.2f} from start.")
+        else:
+            for name, param in self.model.policy.named_parameters():
+                if name in self._policy_param_names:
+                    param.requires_grad = False
+            self._phase = "frozen"
+            print(f"  [VFWarmup] Frozen {len(self._policy_param_names)}/"
+                  f"{n_total} params (policy network)")
+            print(f"  [VFWarmup] Phase 1: Value-only training for "
+                  f"{self.warmup_steps:,} steps")
+            print(f"  [VFWarmup] Phase 2: Policy ramp 0->{self.max_scale:.1f} "
+                  f"over {self.rampup_steps:,} steps")
+            print(f"  [VFWarmup] Phase 3: Permanent scaling at "
+                  f"{self.max_scale:.1f}")
 
         if self.extra_vf_epochs > 0 and not getattr(self.model, "_extra_vf_patched", False):
             _ppo_train = type(self.model).train
