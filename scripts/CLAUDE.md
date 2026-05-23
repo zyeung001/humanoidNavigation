@@ -40,6 +40,23 @@ Key args: `--from-standing` (enable transfer), `--model`, `--vecnorm`, `--timest
 
 Adds `CommandStatsProtectorCallback` (re-pins command stats every 10k steps) and `WalkingMetricsCallback` (curriculum progress every 50 episodes). Uses `WalkingCurriculumEnv` with 3 stages.
 
+## Model Surgery
+
+### `expand_obs_dims.py`
+
+Expands a saved walking model from 1493 obs dims (9-dim command block) to 1495 (11-dim) by inserting `yaw_actual` and `err_yaw` into the command block. Operates on both the policy weights (zero-initialized new columns) and the VecNormalize stats (identity stats for new dims).
+
+```bash
+python scripts/expand_obs_dims.py \
+    --model models/walking/final/final_walking_model.zip \
+    --vecnorm models/walking/final/vecnorm_walking.pkl \
+    --output-model models/walking/final/expanded_walking_model.zip \
+    --output-vecnorm models/walking/final/expanded_vecnorm.pkl
+```
+
+New command block layout after expansion:
+`[vx_cmd, vy_cmd, yaw_cmd, vx_actual, vy_actual, yaw_actual, err_vx, err_vy, err_speed, err_angle, err_yaw]`
+
 ## Evaluation
 
 ### `evaluate.py`

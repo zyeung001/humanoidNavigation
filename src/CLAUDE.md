@@ -38,3 +38,6 @@ Humanoid-v5 raw obs (350 dims)
 - [environments/CLAUDE.md](environments/CLAUDE.md) — Observation/action spaces, curriculum, termination
 - [core/CLAUDE.md](core/CLAUDE.md) — Reward math, command generator
 - [training/CLAUDE.md](training/CLAUDE.md) — Transfer learning, model management, safety callbacks
+- [agents/CLAUDE.md](agents/CLAUDE.md) — StandingAgent, StandingCallback, DiagnosticsCallback
+- [utils/CLAUDE.md](utils/CLAUDE.md) — Visualization, WandB callbacks, platform helpers
+- [maze/CLAUDE.md](maze/CLAUDE.md) — Procedural maze generation, A* solver, pure pursuit navigation

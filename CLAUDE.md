@@ -19,8 +19,8 @@ Standing (5M steps)  →  Transfer Learning  →  Walking (30M steps)  →  Maze
 | `src/core/` | Reward calculator + command generator | [CLAUDE.md](src/core/CLAUDE.md) |
 | `src/training/` | Transfer learning, model management, callbacks | [CLAUDE.md](src/training/CLAUDE.md) |
 | `src/maze/` | Procedural maze generation + navigation | [CLAUDE.md](src/maze/CLAUDE.md) |
-| `src/agents/` | High-level agent wrappers + diagnostics | — |
-| `src/utils/` | Visualization utilities | — |
+| `src/agents/` | High-level agent wrappers + diagnostics | [CLAUDE.md](src/agents/CLAUDE.md) |
+| `src/utils/` | Visualization + WandB utilities | [CLAUDE.md](src/utils/CLAUDE.md) |
 | `scripts/` | Training, evaluation, debug entry points | [CLAUDE.md](scripts/CLAUDE.md) |
 | `config/` | Single YAML config for all tasks | [CLAUDE.md](config/CLAUDE.md) |
 | `models/` | Trained weights + VecNormalize stats | — |
