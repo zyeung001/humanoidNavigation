@@ -1,0 +1,39 @@
+# Ablation pilot: BASELINE condition.
+#
+# Override of config/training_config.yaml -> walking section. Use with:
+#   py -3.13 scripts/train_walking.py \
+#       --config config/training_config.yaml \
+#       --override config/ablation/heading_torso.yaml \
+#       --from-standing --model models/best_standing_model.zip \
+#       --standing-vecnorm models/vecnorm.pkl
+#
+# This is the BASELINE for the waist-twist paper: torso-based yaw reward (the
+# legacy signal). Train this first, then heading_pelvis.yaml with same seed,
+# then compare WTR.
+walking:
+  # Force standard Humanoid-v5 (training_config.yaml points at a custom xml
+  # that lives on the other training machine).
+  xml_file: null
+
+  # The toggle under study.
+  heading_source: torso
+
+  # Pilot run: shorter than the documented 30M to validate the hypothesis fast.
+  # If WTR clearly differs from the treatment, scale up to multi-seed x 30M.
+  total_timesteps: 10000000
+
+  # Distinct paths so this run does not collide with the existing walking model.
+  seed: 1
+  log_dir: data/logs/ablation/baseline_torso_seed1
+  checkpoint_dir: data/checkpoints/ablation/baseline_torso_seed1
+  checkpoint_prefix: baseline_torso
+  best_model_path: models/ablation/baseline_torso_best
+  final_model_path: models/ablation/baseline_torso_final
+  vecnormalize_path: models/ablation/baseline_torso_vecnorm.pkl
+
+  # Disable wandb -- the package isn't installed locally.
+  use_wandb: false
+
+  # Suppress video saving during training to reduce disk + GPU load while
+  # the user is also working on the physical robot.
+  video_freq: 0

@@ -9,6 +9,7 @@ Integrates VelocityCommandGenerator for proper command sampling
 """
 
 import logging
+
 import gymnasium as gym
 import numpy as np
 from typing import Optional
@@ -18,8 +19,10 @@ logger = logging.getLogger(__name__)
 
 # Import modular reward calculator
 from src.core.rewards import RewardCalculator, RewardWeights
-# Import velocity command generator 
+# Import velocity command generator
 from src.core.command_generator import VelocityCommandGenerator
+# Model introspection (custom MJCF support)
+from .model_spec import introspect_model, is_custom_xml
 
 
 class WalkingEnv(gym.Wrapper):
@@ -46,9 +49,26 @@ class WalkingEnv(gym.Wrapper):
             exclude_current_positions_from_observation=False,  # Adds +2 dims (x,y)
         )
         if xml_file is not None:
+            # Gymnasium's expand_model_path rejects bare relative paths.
+            xml_file = os.path.abspath(xml_file)
             make_kwargs['xml_file'] = xml_file
         env = gym.make(env_id, **make_kwargs)
         super().__init__(env)
+
+        # Introspect when a custom xml is loaded; derive obs dim, standing
+        # height, scaling factor, and the correct foot body ids.
+        self.model_spec = introspect_model(xml_file) if is_custom_xml(xml_file) else None
+        self._is_custom = self.model_spec is not None
+        if self._is_custom:
+            ms = self.model_spec
+            self.height_scale = ms.standing_com_z / 1.40
+            self.nominal_qpos_z = ms.standing_qpos_z
+            print(f"  Custom model: {ms.xml_file}")
+            print(f"    standing_com_z={ms.standing_com_z:.3f}m  qpos_z={ms.standing_qpos_z:+.3f}m")
+            print(f"    height_scale={self.height_scale:.3f}  feet={ms.foot_body_ids}  obs_dim={ms.actual_obs_dim}")
+        else:
+            self.height_scale = 1.0
+            self.nominal_qpos_z = 1.40
         
         # Configuration
         self.cfg = config or {}
@@ -80,7 +100,9 @@ class WalkingEnv(gym.Wrapper):
         self.feet_air_time_weight = float(self.cfg.get('feet_air_time_weight', 1.0))
         self.feet_air_time = np.zeros(2)  # [right_foot, left_foot] air duration
         self.feet_contact_prev = np.ones(2, dtype=bool)  # Previous contact state
-        self.foot_body_ids = [6, 9]  # right_foot=body6, left_foot=body9
+        # Foot body ids. Default = standard Humanoid-v5 layout; custom MJCFs
+        # have a different body order so we use the introspected ids.
+        self.foot_body_ids = self.model_spec.foot_body_ids if self._is_custom else [6, 9]
         self.min_air_time = 0.15  # Humanoid-v5 gait has ~0.1-0.3s foot air time.
                                   # SOTA uses 0.4s but that's for quadrupeds/larger humanoids.
                                   # 0.15s filters shuffling while matching this humanoid's gait.
@@ -89,6 +111,13 @@ class WalkingEnv(gym.Wrapper):
         # Arm posture penalty (prevent chicken-wing arms, allow natural swing)
         self.arm_posture_weight = float(self.cfg.get('reward_arm_posture_weight', 0.0))
         self.arm_joint_indices = slice(18, 24)  # qpos indices for 6 arm joints
+        if self._is_custom and self.arm_posture_weight > 0.0:
+            # The slice above assumes the standard-humanoid joint ordering;
+            # custom MJCFs have scrambled joint order, so the penalty would
+            # target the wrong joints. Disable until joint mapping is wired up.
+            print("  WARNING: arm posture penalty disabled for custom MJCF "
+                  "(joint indices would be wrong); set reward_arm_posture_weight=0")
+            self.arm_posture_weight = 0.0
         # FIX: np.zeros was WRONG — at qpos=0 arms point forward (0.18m ahead of shoulder)
         # These angles place arms hanging straight down at sides (verified via FK)
         self.arm_ref_angles = np.array([0.81, -0.97, -0.85, -0.81, 0.97, -0.85], dtype=np.float32)
@@ -134,6 +163,20 @@ class WalkingEnv(gym.Wrapper):
         self.max_yaw_rate = float(self.cfg.get('max_yaw_rate', 1.0))  # rad/s
         self.yaw_rate_weight = float(self.cfg.get('yaw_rate_weight', 3.0))
         self.yaw_tracking_bandwidth = float(self.cfg.get('reward_yaw_bandwidth', 10.0))
+
+        # Source body for yaw-rate measurement. 'torso' (default) is the legacy
+        # signal: qvel[5], which is the freejoint angular velocity. The freejoint
+        # is attached to the torso, so this rewards the agent for matching yaw
+        # rate at the chest -- which the agent can satisfy by twisting at the
+        # waist while leaving the lower body inert (the waist-twist hack).
+        # 'pelvis' uses the pelvis body's world-frame angular velocity, computed
+        # via mujoco.mj_objectVelocity. Same numeric range, but the agent must
+        # rotate the lower body to satisfy the reward.
+        self.heading_source = str(self.cfg.get('heading_source', 'torso')).lower()
+        if self.heading_source not in ('torso', 'pelvis'):
+            print(f"WARNING: heading_source={self.heading_source!r} not in (torso, pelvis); falling back to 'torso'")
+            self.heading_source = 'torso'
+        self._heading_body_id = None  # resolved lazily on first use (model attr available after super init)
         
         # Current commanded velocity (set in reset)
         self.commanded_vx_world = 0.0
@@ -200,11 +243,14 @@ class WalkingEnv(gym.Wrapper):
         self.include_com = bool(self.cfg.get('obs_include_com', False))
         self.feature_norm = bool(self.cfg.get('obs_feature_norm', False))
 
-        # Humanoid-v5 base observation_space.shape[0] = 350
+        # See standing_env: Humanoid-v5 reports a smaller observation_space
+        # than it actually returns; the +15 is the correction for the default
+        # capsule model. Custom MJCFs match their reported space exactly.
         base_obs_from_space = int(env.observation_space.shape[0])
-
-        # Actual observations have 15 MORE dimensions than observation_space reports
-        base_obs_dim = base_obs_from_space + 15  # Actual observations are 365 dims
+        if self._is_custom:
+            base_obs_dim = self.model_spec.actual_obs_dim
+        else:
+            base_obs_dim = base_obs_from_space + 15  # Actual observations are 365 dims
 
         # ========== NEW OBSERVATION STRUCTURE ==========
         # FIX: Command signal was invisible (buried in history, crushed by normalization)
@@ -250,10 +296,22 @@ class WalkingEnv(gym.Wrapper):
         print(f"  Max commanded speed: {self.max_commanded_speed}")
         print(f"  Action smoothing tau: {self.action_smoothing_tau}")
     
-    def reset(self, seed: Optional[int] = None): 
+    def _get_height(self) -> float:
+        """Height signal in the legacy 1.40m regime.
+
+        Default humanoid: returns qpos[2] directly (the freejoint z).
+        Custom model: returns subtree-COM z scaled by 1.40/standing_com_z so a
+        standing robot reads ~1.40 regardless of its real size and the reward
+        function's literal thresholds keep their meaning.
+        """
+        if self._is_custom:
+            return float(self.env.unwrapped.data.subtree_com[0][2]) / self.height_scale
+        return float(self.env.unwrapped.data.qpos[2])
+
+    def reset(self, seed: Optional[int] = None):
         observation, info = self.env.reset(seed=seed)
-        
-        default_height = self.env.unwrapped.data.qpos[2]
+
+        default_height = self._get_height()
         
         self.current_step = 0
         self.prev_height = default_height
@@ -340,8 +398,9 @@ class WalkingEnv(gym.Wrapper):
                 size=self._orig_geom_friction.shape[0]
             )
         
-        # Random height initialization for recovery training
-        if self.random_height_init and np.random.random() < self.random_height_prob:
+        # Random height initialization for recovery training. Skip for custom
+        # models: the [0.6, 1.6] clip assumes a 1.40 m capsule humanoid.
+        if (not self._is_custom) and self.random_height_init and np.random.random() < self.random_height_prob:
             perturb = np.random.uniform(self.random_height_range[0], self.random_height_range[1])
             new_height = default_height + perturb
             # Clamp to reasonable range
@@ -424,7 +483,8 @@ class WalkingEnv(gym.Wrapper):
         4. Progress bonus for ANY movement in right direction
         """
         # ========== STATE EXTRACTION ==========
-        height = self.env.unwrapped.data.qpos[2]
+        # _get_height(): qpos[2] for default humanoid, scaled COM-z for custom.
+        height = self._get_height()
         quat = self.env.unwrapped.data.qpos[3:7]  # [w, x, y, z] quaternion
         linear_vel = self.env.unwrapped.data.qvel[0:3]  # World-frame COM velocity
         angular_vel = self.env.unwrapped.data.qvel[3:6]
@@ -528,9 +588,9 @@ class WalkingEnv(gym.Wrapper):
         # Gaussian yaw tracking: exp(-bandwidth * error²)
         # Bandwidth is configurable via reward_yaw_bandwidth (default 10.0).
         # At 10.0: error=0.15 → 80% reward, error=0.3 → 41% reward.
-        # Old hardcoded 4.0 was too soft — agent retained 91% reward at
-        # 0.15 rad/s error, giving almost no gradient to learn turning.
-        actual_yaw_rate = angular_vel[2]
+        # Source body is governed by self.heading_source ('torso' legacy vs
+        # 'pelvis' for the lower-body-heading ablation).
+        actual_yaw_rate = self._get_actual_yaw_rate()
         yaw_error = abs(actual_yaw_rate - self.commanded_yaw_rate)
         yaw_tracking_reward = 0.0
         if self.include_yaw_rate:
@@ -757,6 +817,44 @@ class WalkingEnv(gym.Wrapper):
 
     # ======== Action and Observation Processing ========
 
+    def _get_actual_yaw_rate(self) -> float:
+        """World-frame yaw rate of the configured source body (torso or pelvis).
+
+        torso (default): qvel[5] -- the freejoint angular-velocity z component,
+        which equals torso world-frame yaw rate since the freejoint is attached
+        to the torso.
+
+        pelvis: world-frame angular velocity z of the pelvis body, computed via
+        mujoco.mj_objectVelocity (flag=0 -> world frame). Tests whether the lower
+        body is actually rotating, not just the chest.
+        """
+        if self.heading_source == 'torso':
+            return float(self.env.unwrapped.data.qvel[5])
+
+        # Pelvis path. Resolve body id on first use.
+        if self._heading_body_id is None:
+            model = self.env.unwrapped.model
+            for i in range(model.nbody):
+                if model.body(i).name == 'pelvis':
+                    self._heading_body_id = i
+                    break
+            if self._heading_body_id is None:
+                print("WARNING: 'pelvis' body not found; falling back to torso yaw rate")
+                self.heading_source = 'torso'
+                return float(self.env.unwrapped.data.qvel[5])
+
+        import mujoco as _mj
+        vel6 = np.zeros(6)
+        _mj.mj_objectVelocity(
+            self.env.unwrapped.model,
+            self.env.unwrapped.data,
+            _mj.mjtObj.mjOBJ_BODY,
+            int(self._heading_body_id),
+            vel6,
+            0,  # 0 = world frame
+        )
+        return float(vel6[2])
+
     def _process_action(self, action: np.ndarray) -> np.ndarray:
         """Process actions with optional smoothing, symmetry, and PD control."""
         if self.enable_action_symmetry:
@@ -868,9 +966,9 @@ class WalkingEnv(gym.Wrapper):
         max_speed = max(self.max_commanded_speed, 1.0)  # Avoid division by zero
         max_yaw = max(self.max_yaw_rate, 1.0)
 
-        # Yaw rate feedback (actual + error)
-        angular_vel = self.env.unwrapped.data.qvel[3:6]
-        yaw_actual = angular_vel[2]  # Rotation around z-axis
+        # Yaw rate feedback (actual + error). Source is governed by heading_source
+        # so the policy's obs is consistent with what it is being rewarded on.
+        yaw_actual = self._get_actual_yaw_rate()
         err_yaw = self.commanded_yaw_rate - yaw_actual
 
         command_block = np.array([
@@ -915,12 +1013,12 @@ class WalkingEnv(gym.Wrapper):
             (linear_vel[1] - self.commanded_vy_world)**2
         )
         
-        # Yaw rate error (angular velocity around Z axis)
-        actual_yaw_rate = angular_vel[2]  # Rotation around z-axis
+        # Yaw rate error (angular velocity around Z axis) -- uses heading_source.
+        actual_yaw_rate = self._get_actual_yaw_rate()
         yaw_rate_error = abs(actual_yaw_rate - self.commanded_yaw_rate)
         
         info = {
-            'height': self.env.unwrapped.data.qpos[2],
+            'height': self._get_height(),
             'distance_from_origin': dist,
             'x_position': root_x,
             'y_position': root_y,
