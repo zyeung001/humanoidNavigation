@@ -22,6 +22,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 import numpy as np
+import yaml
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
@@ -85,7 +86,7 @@ def run_evaluation(
         results.append(result)
         
         if verbose:
-            status = "✓" if result['success'] else "✗"
+            status = "OK  " if result['success'] else "FAIL"
             print(f"  Episode {ep+1:2d}: {status} len={result['length']:4d}, "
                   f"reward={result['reward']:7.1f}, height={result['avg_height']:.3f}")
     
@@ -100,38 +101,27 @@ def record_video(
     max_steps: int = 500,
     fps: int = 30
 ):
-    """Record evaluation video."""
+    """Record evaluation video. Expects a VecEnv (DummyVecEnv, optionally VecNormalize-wrapped)."""
     try:
         import cv2
     except ImportError:
         print("OpenCV not installed. Cannot record video.")
         return
-    
+
     frames = []
-    
+
     for ep in range(n_episodes):
-        obs = env.reset()[0]  # Unwrap observation
-        
+        obs = env.reset()
+
         for step in range(max_steps):
             action, _ = model.predict(obs, deterministic=True)
-            
-            # Handle VecEnv
-            if hasattr(env, 'env_method'):
-                # VecEnv
-                obs, reward, done, info = env.step(action)
-                frame = env.render()
-            else:
-                # Regular env
-                obs, reward, terminated, truncated, info = env.step(action)
-                frame = env.render()
-                done = terminated or truncated
-            
+            obs, reward, done, info = env.step(action)
+            frame = env.render()
             if frame is not None:
                 frames.append(frame)
-            
-            if (done[0] if hasattr(done, '__len__') else done):
+            if done[0]:
                 break
-        
+
         print(f"  Episode {ep+1}: {len(frames)} frames")
     
     if frames:
@@ -143,7 +133,7 @@ def record_video(
             out.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
         
         out.release()
-        print(f"✓ Video saved: {output_path}")
+        print(f"Video saved: {output_path}")
     else:
         print("No frames captured")
 
@@ -159,9 +149,16 @@ def main():
     parser.add_argument('--output', type=str, default=None, help='Video output path')
     parser.add_argument('--vx', type=float, default=None, help='Walking: commanded vx')
     parser.add_argument('--vy', type=float, default=None, help='Walking: commanded vy')
+    parser.add_argument('--config', type=str, default=None,
+                        help='Path to YAML config (e.g. config/real_humanoid_config.yaml). '
+                             'When set, the task section is merged into eval config so xml_file '
+                             'and other env settings match training.')
+    parser.add_argument('--override', type=str, default=None,
+                        help='Optional second YAML whose task section overrides --config '
+                             '(matches train_walking.py semantics, e.g. ablation overrides).')
     args = parser.parse_args()
 
-    # Build config
+    # Build config: defaults first, then overlay YAML section if provided.
     config = {
         'obs_history': 4,
         'obs_include_com': True,
@@ -170,6 +167,32 @@ def main():
         'action_smoothing_tau': 0.2,
         'max_episode_steps': args.max_steps,
     }
+    if args.config:
+        with open(args.config, 'r') as f:
+            yaml_cfg = yaml.safe_load(f)
+        section = yaml_cfg.get(args.task, {})
+        if not section:
+            print(f"WARNING: no '{args.task}' section in {args.config}; using defaults")
+        else:
+            config.update(section)
+            # max_steps CLI flag should still win for eval episode length
+            config['max_episode_steps'] = args.max_steps
+            print(f"Loaded {args.task} config from {args.config}")
+            if 'xml_file' in section:
+                print(f"  xml_file: {section['xml_file']}")
+
+    if args.override:
+        with open(args.override, 'r') as f:
+            ov_cfg = yaml.safe_load(f) or {}
+        ov_section = ov_cfg.get(args.task, {}) or {}
+        if ov_section:
+            config.update(ov_section)
+            config['max_episode_steps'] = args.max_steps
+            print(f"Applied override from {args.override}")
+            if 'xml_file' in ov_section:
+                print(f"  xml_file -> {ov_section['xml_file']}")
+            if 'heading_source' in ov_section:
+                print(f"  heading_source -> {ov_section['heading_source']}")
     
     # Walking-specific
     if args.task == 'walking':
@@ -222,16 +245,22 @@ def main():
     if args.record:
         output_path = args.output or f"data/videos/{args.task}_eval.mp4"
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        
+
         print("\nRecording video...")
-        
-        # Recreate env with rendering
-        env = make_eval_env(args.task, config, render_mode="rgb_array")
-        record_video(model, env, output_path, n_episodes=1, max_steps=args.max_steps)
-        env.close()
+
+        # Rebuild env with rendering AND the same VecNormalize stats used in eval.
+        # Without VecNormalize the policy sees unnormalized obs and falls within ~80 steps.
+        render_env = make_eval_env(args.task, config, render_mode="rgb_array")
+        render_vec = DummyVecEnv([lambda: render_env])
+        if args.vecnorm and os.path.exists(args.vecnorm):
+            render_vec = VecNormalize.load(args.vecnorm, render_vec)
+            render_vec.training = False
+            render_vec.norm_reward = False
+        record_video(model, render_vec, output_path, n_episodes=1, max_steps=args.max_steps)
+        render_vec.close()
 
     vec_env.close()
-    print("\n✓ Evaluation complete")
+    print("\nEvaluation complete")
 
 
 if __name__ == "__main__":

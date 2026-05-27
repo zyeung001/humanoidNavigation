@@ -2,31 +2,58 @@
 
 
 import logging
+
 import gymnasium as gym
 import numpy as np
 from typing import Optional
 from gymnasium.spaces import Box
+
+from .model_spec import introspect_model, is_custom_xml
 
 logger = logging.getLogger(__name__)
 
 
 class StandingEnv(gym.Wrapper):
 
-    
+
     def __init__(self, render_mode: Optional[str] = None, config=None):
         env_id = "Humanoid-v5"
         print(f"Using {env_id} for standing task")
-        
-        # Create base environment
-        env = gym.make(
-            env_id, 
+
+        # Custom MJCF support. When xml_file is unset, the standard Humanoid-v5
+        # model is used and the rest of the env behaves byte-identically to the
+        # legacy path (so concurrent std-humanoid training is unaffected).
+        cfg_local = config or {}
+        xml_file = cfg_local.get('xml_file', None)
+        make_kwargs = dict(
             render_mode=render_mode,
-            exclude_current_positions_from_observation=False  # Adds +2 dims (x,y)
+            exclude_current_positions_from_observation=False,  # Adds +2 dims (x,y)
         )
+        if xml_file is not None:
+            # Gymnasium's expand_model_path rejects bare relative paths.
+            xml_file = os.path.abspath(xml_file)
+            make_kwargs['xml_file'] = xml_file
+        env = gym.make(env_id, **make_kwargs)
         super().__init__(env)
-        
+
+        # Introspect when a custom xml is loaded; derive obs dim / standing
+        # height / scaling so the reward function's literals tuned for the
+        # 1.40 m Humanoid-v5 keep working on a robot of any size.
+        self.model_spec = introspect_model(xml_file) if is_custom_xml(xml_file) else None
+        self._is_custom = self.model_spec is not None
+        if self._is_custom:
+            ms = self.model_spec
+            self.height_scale = ms.standing_com_z / 1.40   # maps real COM-z into the legacy 0..1.6 regime
+            self.nominal_qpos_z = ms.standing_qpos_z
+            print(f"  Custom model: {ms.xml_file}")
+            print(f"    standing_com_z={ms.standing_com_z:.3f}m  qpos_z={ms.standing_qpos_z:+.3f}m")
+            print(f"    height_scale={self.height_scale:.3f}  feet={ms.foot_body_ids}  obs_dim={ms.actual_obs_dim}")
+        else:
+            self.height_scale = 1.0
+            self.nominal_qpos_z = 1.40
+
         # Configuration
-        self.cfg = config or {}
+        self.cfg = cfg_local
         self.base_target_height = 1.4
         self.max_episode_steps = self.cfg.get('max_episode_steps', 5000)
         self.current_step = 0
@@ -68,11 +95,15 @@ class StandingEnv(gym.Wrapper):
         self.include_com = bool(self.cfg.get('obs_include_com', False))
         self.feature_norm = bool(self.cfg.get('obs_feature_norm', False))
         
-        # Humanoid-v5 base observation_space.shape[0] = 350
-        base_obs_from_space = int(env.observation_space.shape[0])  
-        
-        # Actual observations have 15 MORE dimensions than observation_space reports
-        base_obs_dim = base_obs_from_space + 15  # Actual observations are 365 dims
+        # Humanoid-v5 reports a smaller observation_space than it actually
+        # returns (the +15 below is the historical correction for the default
+        # capsule model). Custom MJCFs don't have this discrepancy — measure
+        # the actual stepped obs dim instead of trusting the magic number.
+        base_obs_from_space = int(env.observation_space.shape[0])
+        if self._is_custom:
+            base_obs_dim = self.model_spec.actual_obs_dim
+        else:
+            base_obs_dim = base_obs_from_space + 15  # Actual observations are 365 dims
         
         # Calculate dimension after all processing steps
         extra_dim = 6 if self.include_com else 0  # COM pos (3) + COM vel (3)
@@ -108,11 +139,25 @@ class StandingEnv(gym.Wrapper):
         print(f"  Recovery bonus scale: {self.recovery_bonus_scale}")
         print(f"  Termination penalty (constant): {self.termination_penalty_constant}")
     
-    def reset(self, seed: Optional[int] = None): 
+    def _get_height(self) -> float:
+        """Height signal in the legacy 1.40m regime.
+
+        Default humanoid: returns qpos[2] directly (the freejoint z).
+        Custom model: returns subtree-COM z scaled by 1.40/standing_com_z, so a
+        standing robot reads ~1.40 regardless of its real size and the reward
+        function's hardcoded thresholds (0.75, 1.0, 1.2, 1.40, 1.6, 2.0) keep
+        their meaning. The COM is also robust to fusion2urdf's scattered body
+        frame origins, where qpos[2] would be an arbitrary number.
+        """
+        if self._is_custom:
+            return float(self.env.unwrapped.data.subtree_com[0][2]) / self.height_scale
+        return float(self.env.unwrapped.data.qpos[2])
+
+    def reset(self, seed: Optional[int] = None):
         observation, info = self.env.reset(seed=seed)
-        
-        default_height = self.env.unwrapped.data.qpos[2]
-        
+
+        default_height = self._get_height()
+
         self.current_step = 0
         self.prev_height = default_height
         self.target_height = self.base_target_height
@@ -136,19 +181,21 @@ class StandingEnv(gym.Wrapper):
                 size=self.env.unwrapped.model.geom_friction.shape[0]
             )
         
-        # Random height initialization for recovery training
-        if self.random_height_init and np.random.random() < self.random_height_prob:
+        # Random height initialization for recovery training. Skip for custom
+        # models: the legacy [0.6, 1.6] clip assumes a 1.40 m-target capsule
+        # humanoid and would push a smaller robot through the floor or ceiling.
+        if (not self._is_custom) and self.random_height_init and np.random.random() < self.random_height_prob:
             perturb = np.random.uniform(self.random_height_range[0], self.random_height_range[1])
             new_height = default_height + perturb
             # Clamp to reasonable range
             new_height = np.clip(new_height, 0.6, 1.6)
             self.env.unwrapped.data.qpos[2] = new_height
             self.prev_height = new_height
-            
+
             # Also add small velocity perturbation
             vel_perturb = np.random.uniform(-0.1, 0.1, size=self.env.unwrapped.data.qvel.shape)
             self.env.unwrapped.data.qvel[:] += vel_perturb
-            
+
             # Re-get observation after perturbation
             observation = self.env.unwrapped._get_obs()
         
@@ -182,7 +229,10 @@ class StandingEnv(gym.Wrapper):
         
     def _compute_task_reward(self, obs, base_reward, info, action):
         # ========== STATE EXTRACTION ==========
-        height = self.env.unwrapped.data.qpos[2]
+        # _get_height() returns qpos[2] for the default humanoid (legacy
+        # behavior) and a scaled subtree-COM z for custom models, so all of
+        # the literal thresholds below stay calibrated.
+        height = self._get_height()
         root_x, root_y = self.env.unwrapped.data.qpos[0:2]
         quat = self.env.unwrapped.data.qpos[3:7]  # [w, x, y, z] quaternion
         
@@ -414,7 +464,7 @@ class StandingEnv(gym.Wrapper):
         root_x, root_y = self.env.unwrapped.data.qpos[0:2]
         dist = np.sqrt(root_x**2 + root_y**2)
         return {
-            'height': self.env.unwrapped.data.qpos[2],
+            'height': self._get_height(),
             'distance_from_origin': dist,
             'x_position': root_x,
             'y_position': root_y,

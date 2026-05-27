@@ -1,7 +1,10 @@
 
 standing:
   # ========== ENVIRONMENT CONFIGURATION ==========
-  
+
+  # Custom MuJoCo model (relative to project root). Uses Humanoid-v5 default if unset.
+  xml_file: models/custom_humanoid.xml
+
   # Basic settings
   seed: 42
   n_envs: 12  # Parallel environments
@@ -146,7 +149,10 @@ standing:
 
 walking:
   # ========== ENVIRONMENT CONFIGURATION ==========
-  
+
+  # Custom MuJoCo model (relative to project root). Uses Humanoid-v5 default if unset.
+  xml_file: models/custom_humanoid.xml
+
   # Basic settings
   seed: 42
   n_envs: 12  

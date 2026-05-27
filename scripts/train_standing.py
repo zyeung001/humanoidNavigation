@@ -125,9 +125,12 @@ def main():
     parser.add_argument('--vecnorm', type=str, default=None, help='Path to load VecNormalize from')
     parser.add_argument('--timesteps', type=int, default=None, help='Total timesteps for training (final total)')
     parser.add_argument('--reset-vecnorm', action='store_true', help='Reset VecNormalize statistics (fresh start)')
+    parser.add_argument('--config', type=str, default='config/training_config.yaml',
+                        help='Path to YAML config (default: config/training_config.yaml)')
     args = parser.parse_args()
 
-    cfg = load_yaml('config/training_config.yaml')
+    print(f"Loading config: {args.config}")
+    cfg = load_yaml(args.config)
     standing = cfg.get('standing', {}).copy()
 
     # Overrides / advanced defaults
