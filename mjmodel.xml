@@ -1,0 +1,129 @@
+<mujoco model="custom_humanoid">
+  <!--
+    17-DOF biped, ~0.73m tall (0.52x scale)
+    Servo ID order matches physical robot:
+      Waist:     yaw(1)  pitch(2)  roll(3)
+      Right leg: hip_roll(4) hip_yaw(5) hip_pitch(6) knee(7)
+      Left leg:  hip_roll(8) hip_yaw(9) hip_pitch(10) knee(11)
+      Right arm: shoulder(12) elbow(13) wrist(14)
+      Left arm:  shoulder(15) elbow(16) wrist(17)
+
+    Coordinate frame: Z up, X forward, Y left (right = -Y)
+    Pelvis at z=0.44 puts feet exactly on the z=0 ground plane.
+
+    Things likely to need tuning after first visual check:
+      - Knee bend direction (range "0 1.57" = bends backward; swap to "-1.57 0" if inverted)
+      - Shoulder/elbow/wrist axes (1-DOF per joint is a simplification)
+      - Link lengths and mass distribution
+      - Gear values for real servo torque matching
+  -->
+  <compiler angle="radian"/>
+
+  <option timestep="0.005" tolerance="1e-10" iterations="50"/>
+
+  <default>
+    <joint limited="true" armature="0.01" damping="0.5"/>
+    <geom friction="0.8 0.1 0.01"/>
+    <site size="0.01 0.005 0.005" rgba="0.9 0.1 0.1 1"/>
+    <general ctrllimited="true" ctrlrange="-1 1" gear="100 0 0 0 0 0"/>
+  </default>
+
+  <worldbody>
+    <geom name="floor" size="10 10 0.1" type="plane" rgba="0.9 0.9 0.9 1"/>
+    <light pos="0 0 5" dir="0 0 -1" type="directional" diffuse="0.8 0.8 0.8" specular="0.2 0.2 0.2"/>
+    <body name="pelvis" pos="0 0 0.44">
+      <joint name="root" type="free" armature="0" damping="0"/>
+      <geom name="pelvis" size="0.05 0.065" quat="0.707107 0.707107 0 0" type="capsule" mass="0.3" rgba="0.7 0.5 0.3 1"/>
+      <body name="torso" pos="0 0 0.08">
+        <joint name="waist_yaw" pos="0 0 0" axis="0 0 1" range="-0.52 0.52" damping="5"/>
+        <joint name="waist_pitch" pos="0 0 0" axis="0 1 0" range="-0.52 0.52" damping="5"/>
+        <joint name="waist_roll" pos="0 0 0" axis="1 0 0" range="-0.52 0.52" damping="5"/>
+        <geom name="torso" size="0.065 0.07" pos="0 0 0.07" quat="0 1 0 0" type="capsule" mass="0.5" rgba="0.7 0.5 0.3 1"/>
+        <site name="imu_site" pos="0 0 0.07"/>
+        <body name="head" pos="0 0 0.19">
+          <geom name="head" size="0.065" mass="0.05" rgba="0.8 0.6 0.4 1"/>
+        </body>
+        <body name="right_upper_arm" pos="0 -0.12 0.13">
+          <joint name="right_shoulder" pos="0 0 0" axis="0 1 0" range="-0.52 0.52" damping="1"/>
+          <geom name="right_upper_arm" size="0.025 0.07" pos="0 0 -0.07" type="capsule" mass="0.04" rgba="0.7 0.5 0.3 1"/>
+          <body name="right_lower_arm" pos="0 0 -0.14">
+            <joint name="right_elbow" pos="0 0 0" axis="0 1 0" range="0 1.57" damping="1"/>
+            <geom name="right_lower_arm" size="0.022 0.06" pos="0 0 -0.06" type="capsule" mass="0.03" rgba="0.7 0.5 0.3 1"/>
+            <body name="right_hand" pos="0 0 -0.12">
+              <joint name="right_wrist" pos="0 0 0" axis="1 0 0" range="-0.52 0.52"/>
+              <geom name="right_hand" size="0.025" mass="0.02" rgba="0.7 0.5 0.3 1"/>
+            </body>
+          </body>
+        </body>
+        <body name="left_upper_arm" pos="0 0.12 0.13">
+          <joint name="left_shoulder" pos="0 0 0" axis="0 1 0" range="-0.52 0.52" damping="1"/>
+          <geom name="left_upper_arm" size="0.025 0.07" pos="0 0 -0.07" type="capsule" mass="0.04" rgba="0.7 0.5 0.3 1"/>
+          <body name="left_lower_arm" pos="0 0 -0.14">
+            <joint name="left_elbow" pos="0 0 0" axis="0 1 0" range="0 1.57" damping="1"/>
+            <geom name="left_lower_arm" size="0.022 0.06" pos="0 0 -0.06" type="capsule" mass="0.03" rgba="0.7 0.5 0.3 1"/>
+            <body name="left_hand" pos="0 0 -0.12">
+              <joint name="left_wrist" pos="0 0 0" axis="1 0 0" range="-0.52 0.52"/>
+              <geom name="left_hand" size="0.025" mass="0.02" rgba="0.7 0.5 0.3 1"/>
+            </body>
+          </body>
+        </body>
+      </body>
+      <body name="right_thigh" pos="0 -0.075 -0.04">
+        <joint name="right_hip_roll" pos="0 0 0" axis="1 0 0" range="-0.52 0.52" damping="5"/>
+        <joint name="right_hip_yaw" pos="0 0 0" axis="0 0 1" range="-0.52 0.52" damping="5"/>
+        <joint name="right_hip_pitch" pos="0 0 0" axis="0 1 0" range="-0.52 0.52" damping="5"/>
+        <geom name="right_thigh" size="0.04 0.085" pos="0 0 -0.085" type="capsule" mass="0.12" rgba="0.7 0.5 0.3 1"/>
+        <body name="right_shin" pos="0 0 -0.17">
+          <joint name="right_knee" pos="0 0 0" axis="0 1 0" range="0 1.57" damping="5"/>
+          <geom name="right_shin" size="0.03 0.08" pos="0 0 -0.08" type="capsule" mass="0.08" rgba="0.7 0.5 0.3 1"/>
+          <body name="right_foot" pos="0 0 -0.16">
+            <geom name="right_foot" size="0.07 0.04 0.02" pos="0.02 0 -0.02" type="box" mass="0.05" rgba="0.3 0.3 0.3 1"/>
+            <site name="right_foot_fsr" pos="0.02 0 -0.02"/>
+          </body>
+        </body>
+      </body>
+      <body name="left_thigh" pos="0 0.075 -0.04">
+        <joint name="left_hip_roll" pos="0 0 0" axis="1 0 0" range="-0.52 0.52" damping="5"/>
+        <joint name="left_hip_yaw" pos="0 0 0" axis="0 0 1" range="-0.52 0.52" damping="5"/>
+        <joint name="left_hip_pitch" pos="0 0 0" axis="0 1 0" range="-0.52 0.52" damping="5"/>
+        <geom name="left_thigh" size="0.04 0.085" pos="0 0 -0.085" type="capsule" mass="0.12" rgba="0.7 0.5 0.3 1"/>
+        <body name="left_shin" pos="0 0 -0.17">
+          <joint name="left_knee" pos="0 0 0" axis="0 1 0" range="0 1.57" damping="5"/>
+          <geom name="left_shin" size="0.03 0.08" pos="0 0 -0.08" type="capsule" mass="0.08" rgba="0.7 0.5 0.3 1"/>
+          <body name="left_foot" pos="0 0 -0.16">
+            <geom name="left_foot" size="0.07 0.04 0.02" pos="0.02 0 -0.02" type="box" mass="0.05" rgba="0.3 0.3 0.3 1"/>
+            <site name="left_foot_fsr" pos="0.02 0 -0.02"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <general name="waist_yaw" joint="waist_yaw"/>
+    <general name="waist_pitch" joint="waist_pitch"/>
+    <general name="waist_roll" joint="waist_roll"/>
+    <general name="right_hip_roll" joint="right_hip_roll"/>
+    <general name="right_hip_yaw" joint="right_hip_yaw"/>
+    <general name="right_hip_pitch" joint="right_hip_pitch"/>
+    <general name="right_knee" joint="right_knee"/>
+    <general name="left_hip_roll" joint="left_hip_roll"/>
+    <general name="left_hip_yaw" joint="left_hip_yaw"/>
+    <general name="left_hip_pitch" joint="left_hip_pitch"/>
+    <general name="left_knee" joint="left_knee"/>
+    <general name="right_shoulder" joint="right_shoulder" gear="50 0 0 0 0 0"/>
+    <general name="right_elbow" joint="right_elbow" gear="50 0 0 0 0 0"/>
+    <general name="right_wrist" joint="right_wrist" gear="30 0 0 0 0 0"/>
+    <general name="left_shoulder" joint="left_shoulder" gear="50 0 0 0 0 0"/>
+    <general name="left_elbow" joint="left_elbow" gear="50 0 0 0 0 0"/>
+    <general name="left_wrist" joint="left_wrist" gear="30 0 0 0 0 0"/>
+  </actuator>
+
+  <sensor>
+    <accelerometer site="imu_site" name="imu_acc"/>
+    <gyro site="imu_site" name="imu_gyro"/>
+    <framequat objtype="body" objname="torso" name="torso_quat"/>
+    <touch site="right_foot_fsr" name="right_foot_contact"/>
+    <touch site="left_foot_fsr" name="left_foot_contact"/>
+  </sensor>
+</mujoco>

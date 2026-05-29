@@ -1,0 +1,247 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="HumanoidReal">
+  <compiler angle="radian" balanceinertia="true" discardvisual="false" />
+  <asset>
+    <mesh name="base_link" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/base_link.stl" scale="0.001 0.001 0.001" />
+    <mesh name="mount_2" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/mount_2.stl" scale="0.001 0.001 0.001" />
+    <mesh name="mount_6" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/mount_6.stl" scale="0.001 0.001 0.001" />
+    <mesh name="mount_3" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/mount_3.stl" scale="0.001 0.001 0.001" />
+    <mesh name="mount_1" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/mount_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="mount_4" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/mount_4.stl" scale="0.001 0.001 0.001" />
+    <mesh name="mount_5" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/mount_5.stl" scale="0.001 0.001 0.001" />
+    <mesh name="0003_9" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/0003_9.stl" scale="0.001 0.001 0.001" />
+    <mesh name="0003_8" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/0003_8.stl" scale="0.001 0.001 0.001" />
+    <mesh name="0003_7" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/0003_7.stl" scale="0.001 0.001 0.001" />
+    <mesh name="0003_2" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/0003_2.stl" scale="0.001 0.001 0.001" />
+    <mesh name="0003_6" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/0003_6.stl" scale="0.001 0.001 0.001" />
+    <mesh name="0003_4" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/0003_4.stl" scale="0.001 0.001 0.001" />
+    <mesh name="0003_1" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/0003_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="0003_10" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/0003_10.stl" scale="0.001 0.001 0.001" />
+    <mesh name="0003_11" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/0003_11.stl" scale="0.001 0.001 0.001" />
+    <mesh name="0003_5" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/0003_5.stl" scale="0.001 0.001 0.001" />
+    <mesh name="0003_3" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/0003_3.stl" scale="0.001 0.001 0.001" />
+    <mesh name="0004_1" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/0004_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="0004_3" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/0004_3.stl" scale="0.001 0.001 0.001" />
+    <mesh name="rightXZprint_1" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/rightXZprint_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="rightXZprint_2" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/rightXZprint_2.stl" scale="0.001 0.001 0.001" />
+    <mesh name="0004_7" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/0004_7.stl" scale="0.001 0.001 0.001" />
+    <mesh name="0004_6" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/0004_6.stl" scale="0.001 0.001 0.001" />
+    <mesh name="rightZYprint_1" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/rightZYprint_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="LeftZYprint_1" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/LeftZYprint_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="0004_10" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/0004_10.stl" scale="0.001 0.001 0.001" />
+    <mesh name="0004_8" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/0004_8.stl" scale="0.001 0.001 0.001" />
+    <mesh name="thigh_2" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/thigh_2.stl" scale="0.001 0.001 0.001" />
+    <mesh name="thigh_1" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/thigh_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="0004_9" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/0004_9.stl" scale="0.001 0.001 0.001" />
+    <mesh name="0004_2" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/0004_2.stl" scale="0.001 0.001 0.001" />
+    <mesh name="rightshin_1" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/rightshin_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="rightshin_2" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/rightshin_2.stl" scale="0.001 0.001 0.001" />
+    <mesh name="rightfoot_2" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/rightfoot_2.stl" scale="0.001 0.001 0.001" />
+    <mesh name="rightfoot_1" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/rightfoot_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="0004_11" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/0004_11.stl" scale="0.001 0.001 0.001" />
+    <mesh name="XYWaist_1" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/XYWaist_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="0004_4" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/0004_4.stl" scale="0.001 0.001 0.001" />
+    <mesh name="YZWaist_1" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/YZWaist_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="0004_5" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/0004_5.stl" scale="0.001 0.001 0.001" />
+    <mesh name="shoulderLeft_1" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/shoulderLeft_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="shoulderRight_1" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/shoulderRight_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="Component22_1" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/Component22_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="SCS0009_6" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/SCS0009_6.stl" scale="0.001 0.001 0.001" />
+    <mesh name="SCS0009_5" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/SCS0009_5.stl" scale="0.001 0.001 0.001" />
+    <mesh name="rightShoulderConnector_1" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/rightShoulderConnector_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="shoulderConnector_1" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/shoulderConnector_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="SCS0009_1" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/SCS0009_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="SCS0009_4" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/SCS0009_4.stl" scale="0.001 0.001 0.001" />
+    <mesh name="upperArm_2" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/upperArm_2.stl" scale="0.001 0.001 0.001" />
+    <mesh name="upperArm_1" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/upperArm_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="elbowConnector_1" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/elbowConnector_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="rightElbowConnector_1" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/rightElbowConnector_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="SCS0009_3" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/SCS0009_3.stl" scale="0.001 0.001 0.001" />
+    <mesh name="SCS0009_2" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/SCS0009_2.stl" scale="0.001 0.001 0.001" />
+    <mesh name="forearm_1" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/forearm_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="forearm_2" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/forearm_2.stl" scale="0.001 0.001 0.001" />
+    <mesh name="Servo_SC15_7" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/Servo_SC15_7.stl" scale="0.001 0.001 0.001" />
+    <mesh name="Servo_SC15_1" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/Servo_SC15_1.stl" scale="0.001 0.001 0.001" />
+    <mesh name="Servo_SC15_2" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/Servo_SC15_2.stl" scale="0.001 0.001 0.001" />
+    <mesh name="Servo_SC15_10" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/Servo_SC15_10.stl" scale="0.001 0.001 0.001" />
+    <mesh name="Servo_SC15_3" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/Servo_SC15_3.stl" scale="0.001 0.001 0.001" />
+    <mesh name="Servo_SC15_9" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/Servo_SC15_9.stl" scale="0.001 0.001 0.001" />
+    <mesh name="Servo_SC15_11" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/Servo_SC15_11.stl" scale="0.001 0.001 0.001" />
+    <mesh name="Servo_SC15_4" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/Servo_SC15_4.stl" scale="0.001 0.001 0.001" />
+    <mesh name="Servo_SC15_8" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/Servo_SC15_8.stl" scale="0.001 0.001 0.001" />
+    <mesh name="Servo_SC15_6" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/Servo_SC15_6.stl" scale="0.001 0.001 0.001" />
+    <mesh name="Servo_SC15_5" content_type="model/stl" file="C:/Users/zachc/humanoidnavigation/models/humanoid_meshes/Servo_SC15_5.stl" scale="0.001 0.001 0.001" />
+  </asset>
+  <worldbody>
+    <light directional="true" diffuse=".8 .8 .8" pos="0 0 5" dir="0 0 -1" />
+    <geom name="floor" type="plane" size="10 10 0.1" rgba=".9 .9 .9 1" condim="3" />
+    <body name="base_link" pos="0 0 -0.0130">
+      <inertial pos="0.481618 0.193097 0.356775" quat="0.543686 0.298455 -0.345269 0.704358" mass="0.200499" diaginertia="0.0309232 0.0308464 0.00020091" />
+      <joint name="base_joint" type="free" />
+      <geom type="mesh" mesh="base_link" />
+      <geom type="mesh" mesh="0004_1" />
+      <geom type="mesh" mesh="Servo_SC15_7" />
+      <geom type="mesh" mesh="0004_3" />
+      <geom type="mesh" mesh="Servo_SC15_8" />
+      <geom type="mesh" mesh="0004_11" />
+      <geom type="mesh" mesh="Servo_SC15_3" />
+      <body name="0003_9" pos="0.540429 -0.527466 0.983811">
+        <inertial pos="0.0148492 0.500882 -0.54944" quat="0.991892 -0.127068 -0.00171582 -0.000367112" mass="0.0776808" diaginertia="4.44904e-05 4.12446e-05 2.0246e-05" />
+        <joint name="Revolute 18" pos="0 0 0" axis="1 0 0" range="-1.5708 0.349066" actuatorfrcrange="-100 100" />
+        <geom pos="-0.540429 0.527466 -0.983811" quat="1 0 0 0" type="mesh" mesh="0003_9" />
+        <geom pos="-0.540429 0.527466 -0.983811" quat="1 0 0 0" type="mesh" mesh="rightXZprint_2" />
+        <geom pos="-0.540429 0.527466 -0.983811" type="mesh" mesh="0004_6" />
+        <geom pos="-0.540429 0.527466 -0.983811" quat="1 0 0 0" type="mesh" mesh="Servo_SC15_6" />
+        <body name="0003_11" pos="-0.437997 1.05685 -0.548399">
+          <inertial pos="0.530841 0.25706 0.0966409" quat="0.910221 0.410127 -0.0211356 -0.0533511" mass="0.206952" diaginertia="0.0281425 0.0200444 0.00818359" />
+          <joint name="Revolute 26" pos="0 0 0" axis="0 -0.013033 -0.999915" range="-1.5708 0.959931" actuatorfrcrange="-100 100" />
+          <geom pos="-0.102432 -0.529383 -0.435412" type="mesh" mesh="0003_11" />
+          <geom pos="-0.102432 -0.529383 -0.435412" quat="1 0 0 0" type="mesh" mesh="LeftZYprint_1" />
+          <geom pos="-0.102432 -0.529383 -0.435412" quat="1 0 0 0" type="mesh" mesh="0004_10" />
+          <geom pos="-0.102432 -0.529383 -0.435412" quat="1 0 0 0" type="mesh" mesh="Servo_SC15_11" />
+          <body name="0003_4" pos="-0.091932 -0.549871 0.341287">
+            <inertial pos="0.544708 0.41571 -0.0975922" quat="0.437954 0.898971 0.00574336 -0.00370171" mass="0.0794069" diaginertia="0.00475974 0.00473815 2.86529e-05" />
+            <joint name="Revolute 23" pos="0 0 0" axis="0 -0.999915 0.013033" range="-1.5708 0.349066" actuatorfrcrange="-100 100" />
+            <geom pos="-0.0105 0.020488 -0.776699" quat="1 0 0 0" type="mesh" mesh="0003_4" />
+            <geom pos="-0.0105 0.020488 -0.776699" type="mesh" mesh="thigh_1" />
+            <geom pos="-0.0105 0.020488 -0.776699" quat="1 0 0 0" type="mesh" mesh="0004_2" />
+            <geom pos="-0.0105 0.020488 -0.776699" type="mesh" mesh="Servo_SC15_10" />
+            <body name="0003_2" pos="0.80407 -0.037649 -1.06229">
+              <inertial pos="-0.228964 -0.0080811 0.376915" quat="0.941699 -0.241379 -0.0788377 0.220734" mass="0.0225885" diaginertia="0.00214848 0.00212628 3.14236e-05" />
+              <joint name="Revolute 21" pos="0 0 0" axis="0 0.999915 -0.013033" range="-1.5708 1.5708" actuatorfrcrange="-100 100" />
+              <geom pos="-0.81457 0.058137 0.28559" quat="1 0 0 0" type="mesh" mesh="0003_2" />
+              <geom pos="-0.81457 0.058137 0.28559" type="mesh" mesh="rightshin_2" />
+              <geom pos="-0.81457 0.058137 0.28559" quat="1 0 0 0" type="mesh" mesh="rightfoot_2" />
+            </body>
+          </body>
+        </body>
+      </body>
+      <body name="0003_1" pos="0.395242 0.737653 0.965035">
+        <inertial pos="0.160436 -0.566698 -0.533239" quat="0.993212 0.116302 0.00171549 -0.000449514" mass="0.0776808" diaginertia="4.44904e-05 4.12934e-05 2.01971e-05" />
+        <joint name="Revolute 24" pos="0 0 0" axis="-1 0 0" range="-1.5708 0.174533" actuatorfrcrange="-100 100" />
+        <geom pos="-0.395242 -0.737653 -0.965035" quat="1 0 0 0" type="mesh" mesh="0003_1" />
+        <geom pos="-0.395242 -0.737653 -0.965035" quat="1 0 0 0" type="mesh" mesh="rightXZprint_1" />
+        <geom pos="-0.395242 -0.737653 -0.965035" type="mesh" mesh="0004_7" />
+        <geom pos="-0.395242 -0.737653 -0.965035" quat="1 0 0 0" type="mesh" mesh="Servo_SC15_9" />
+        <body name="0003_3" pos="0.610997 -1.12513 -0.692973">
+          <inertial pos="-0.507144 -0.298489 0.00112947" quat="0.957137 0.275842 0.0796882 -0.0380839" mass="0.206952" diaginertia="0.0283107 0.0191458 0.00924416" />
+          <joint name="Revolute 28" pos="0 0 0" axis="0 -0.013033 -0.999915" range="-0.959931 1.5708" actuatorfrcrange="-100 100" />
+          <geom pos="-1.00624 0.38748 -0.272062" type="mesh" mesh="0003_3" />
+          <geom pos="-1.00624 0.38748 -0.272062" quat="1 0 0 0" type="mesh" mesh="rightZYprint_1" />
+          <geom pos="-1.00624 0.38748 -0.272062" quat="1 0 0 0" type="mesh" mesh="0004_8" />
+          <geom pos="-1.00624 0.38748 -0.272062" quat="1 0 0 0" type="mesh" mesh="Servo_SC15_4" />
+          <body name="0003_10" pos="-0.995739 0.366978 0.502481">
+            <inertial pos="0.545108 0.445869 0.0376527" quat="0.963971 -0.265977 0.00183866 0.00364933" mass="0.0794069" diaginertia="0.00498594 0.00496414 2.88625e-05" />
+            <joint name="Revolute 25" pos="0 0 0" axis="0 -0.999915 0.013033" range="-1.5708 0.349066" actuatorfrcrange="-100 100" />
+            <geom pos="-0.0105 0.020502 -0.774543" quat="1 0 0 0" type="mesh" mesh="0003_10" />
+            <geom pos="-0.0105 0.020502 -0.774543" type="mesh" mesh="thigh_2" />
+            <geom pos="-0.0105 0.020502 -0.774543" quat="1 0 0 0" type="mesh" mesh="0004_9" />
+            <geom pos="-0.0105 0.020502 -0.774543" type="mesh" mesh="Servo_SC15_5" />
+            <body name="0003_5" pos="0.802314 0.293125 -1.06485">
+              <inertial pos="-0.203577 -0.151055 0.379422" quat="0.853623 -0.213775 -0.143052 0.45295" mass="0.0225885" diaginertia="0.0021657 0.00214945 3.35582e-05" />
+              <joint name="Revolute 27" pos="0 0 0" axis="0 0.999915 -0.013033" range="-1.5708 1.5708" actuatorfrcrange="-100 100" />
+              <geom pos="-0.812814 -0.272623 0.290302" quat="1 0 0 0" type="mesh" mesh="0003_5" />
+              <geom pos="-0.812814 -0.272623 0.290302" type="mesh" mesh="rightshin_1" />
+              <geom pos="-0.812814 -0.272623 0.290302" quat="1 0 0 0" type="mesh" mesh="rightfoot_1" />
+            </body>
+          </body>
+        </body>
+      </body>
+      <body name="0003_6" pos="0.482752 -0.417042 1.07481">
+        <inertial pos="-0.440156 0.338014 0.219654" quat="0.726158 0.0551329 -0.310334 0.611022" mass="0.125775" diaginertia="0.0211852 0.0190135 0.00654241" />
+        <joint name="Revolute 22" pos="0 0 0" axis="-1 0 0" range="-0.610865 0.610865" actuatorfrcrange="-100 100" />
+        <geom pos="-0.482752 0.417042 -1.07481" quat="1 0 0 0" type="mesh" mesh="0003_6" />
+        <geom pos="-0.482752 0.417042 -1.07481" quat="1 0 0 0" type="mesh" mesh="XYWaist_1" />
+        <geom pos="-0.482752 0.417042 -1.07481" quat="1 0 0 0" type="mesh" mesh="0004_4" />
+        <geom pos="-0.482752 0.417042 -1.07481" quat="1 0 0 0" type="mesh" mesh="Servo_SC15_1" />
+        <body name="0003_7" pos="-0.472252 0.395027 0.010165">
+          <inertial pos="0.0698712 0.451998 -0.486711" quat="0.658099 0.587779 0.41265 0.226145" mass="0.0775978" diaginertia="0.0103212 0.0103066 3.24931e-05" />
+          <joint name="Revolute 20" pos="0 0 0" axis="0 -0.999979 0.006517" range="-0.349066 1.5708" actuatorfrcrange="-100 100" />
+          <geom pos="-0.0105 0.022015 -1.08498" quat="1 0 0 0" type="mesh" mesh="0003_7" />
+          <geom pos="-0.0105 0.022015 -1.08498" quat="1 0 0 0" type="mesh" mesh="YZWaist_1" />
+          <geom pos="-0.0105 0.022015 -1.08498" quat="1 0 0 0" type="mesh" mesh="0004_5" />
+          <geom pos="-0.0105 0.022015 -1.08498" quat="1 0 0 0" type="mesh" mesh="Servo_SC15_2" />
+          <body name="0003_8" pos="0 0.677737 -0.408133">
+            <inertial pos="0.538007 -0.33686 -0.171996" quat="0.908128 0.417975 0.0146499 -0.0196299" mass="0.0651469" diaginertia="0.0115314 0.0111516 0.000422624" />
+            <joint name="Revolute 19" pos="0 0 0" axis="0 0.006517 0.999979" range="-1.5708 1.5708" actuatorfrcrange="-100 100" />
+            <geom pos="-0.0105 -0.655722 -0.676846" quat="1 0 0 0" type="mesh" mesh="0003_8" />
+            <geom pos="-0.0105 -0.655722 -0.676846" quat="1 0 0 0" type="mesh" mesh="Component22_1" />
+            <geom pos="-0.0105 -0.655722 -0.676846" quat="1 0 0 0" type="mesh" mesh="shoulderLeft_1" />
+            <geom pos="-0.0105 -0.655722 -0.676846" quat="1 0 0 0" type="mesh" mesh="SCS0009_5" />
+            <geom pos="-0.0105 -0.655722 -0.676846" quat="1 0 0 0" type="mesh" mesh="shoulderRight_1" />
+            <geom pos="-0.0105 -0.655722 -0.676846" quat="1 0 0 0" type="mesh" mesh="SCS0009_6" />
+            <body name="mount_6" pos="0.54596 -0.420605 0.079674">
+              <inertial pos="0.00403391 -0.00747342 -0.0338062" quat="0.637265 -0.0677827 -0.0840572 0.763042" mass="0.0111502" diaginertia="3.29439e-06 3.2913e-06 3.00309e-06" />
+              <joint name="Revolute 2" pos="0 0 0" axis="0 0.999979 -0.006517" range="-2.0944 2.0944" actuatorfrcrange="-100 100" />
+              <geom pos="-0.55646 -0.235117 -0.75652" quat="1 0 0 0" type="mesh" mesh="mount_6" />
+              <geom pos="-0.55646 -0.235117 -0.75652" quat="1 0 0 0" type="mesh" mesh="rightShoulderConnector_1" />
+              <geom pos="-0.55646 -0.235117 -0.75652" quat="1 0 0 0" type="mesh" mesh="SCS0009_1" />
+              <body name="mount_5" pos="-0.01447 -0.002339 -0.035059">
+                <inertial pos="0.0181213 0.00644949 -0.104354" quat="0.976975 0.065312 -0.045547 -0.197937" mass="0.0143067" diaginertia="1.77695e-05 1.7721e-05 4.06718e-06" />
+                <joint name="Revolute 6" pos="0 0 0" axis="-1 0 0" range="-1.5708 0.436332" actuatorfrcrange="-100 100" />
+                <geom pos="-0.54199 -0.232778 -0.721461" quat="1 0 0 0" type="mesh" mesh="mount_5" />
+                <geom pos="-0.54199 -0.232778 -0.721461" quat="1 0 0 0" type="mesh" mesh="upperArm_2" />
+                <geom pos="-0.54199 -0.232778 -0.721461" quat="1 0 0 0" type="mesh" mesh="rightElbowConnector_1" />
+                <geom pos="-0.54199 -0.232778 -0.721461" quat="1 0 0 0" type="mesh" mesh="SCS0009_2" />
+                <body name="mount_2" pos="0.015106 -0.01 -0.12041">
+                  <inertial pos="-0.00241679 0.0133872 -0.085359" quat="0.999941 0.00972624 0.00413589 0.00256836" mass="0.00475984" diaginertia="1.40643e-05 1.30558e-05 2.01338e-06" />
+                  <joint name="Revolute 1" pos="0 0 0" axis="0 -1 0" range="0 2.0944" actuatorfrcrange="-100 100" />
+                  <geom pos="-0.557096 -0.222778 -0.601051" quat="1 0 0 0" type="mesh" mesh="mount_2" />
+                  <geom pos="-0.557096 -0.222778 -0.601051" type="mesh" mesh="forearm_1" />
+                </body>
+              </body>
+            </body>
+            <body name="mount_1" pos="0.54596 -0.737898 0.081742">
+              <inertial pos="0.00403391 0.0070318 -0.0338768" quat="0.762474 -0.0891127 -0.0636972 0.63768" mass="0.0111502" diaginertia="3.29371e-06 3.29061e-06 3.0031e-06" />
+              <joint name="Revolute 4" pos="0 0 0" axis="0 -0.999979 0.006517" range="-2.0944 2.0944" actuatorfrcrange="-100 100" />
+              <geom pos="-0.55646 0.082176 -0.758588" quat="1 0 0 0" type="mesh" mesh="mount_1" />
+              <geom pos="-0.55646 0.082176 -0.758588" quat="1 0 0 0" type="mesh" mesh="shoulderConnector_1" />
+              <geom pos="-0.55646 0.082176 -0.758588" quat="1 0 0 0" type="mesh" mesh="SCS0009_4" />
+              <body name="mount_4" pos="-0.01447 0.001881 -0.035087">
+                <inertial pos="0.0181213 -0.00664679 -0.104258" quat="0.963372 -0.0642004 -0.0426143 0.256861" mass="0.0143067" diaginertia="1.76909e-05 1.7654e-05 4.0522e-06" />
+                <joint name="Revolute 5" pos="0 0 0" axis="-1 0 0" range="-2.00713 0" actuatorfrcrange="-100 100" />
+                <geom pos="-0.54199 0.080295 -0.723501" quat="1 0 0 0" type="mesh" mesh="mount_4" />
+                <geom pos="-0.54199 0.080295 -0.723501" quat="1 0 0 0" type="mesh" mesh="upperArm_1" />
+                <geom pos="-0.54199 0.080295 -0.723501" quat="1 0 0 0" type="mesh" mesh="elbowConnector_1" />
+                <geom pos="-0.54199 0.080295 -0.723501" quat="1 0 0 0" type="mesh" mesh="SCS0009_3" />
+                <body name="mount_3" pos="0.015106 0.01003 -0.12055">
+                  <inertial pos="-0.00241679 -0.014454 -0.0851785" quat="0.999921 -0.0114417 0.0041258 -0.00301027" mass="0.00475984" diaginertia="1.40641e-05 1.30513e-05 2.01758e-06" />
+                  <joint name="Revolute 3" pos="0 0 0" axis="0 0.999915 -0.013033" range="-2.0944 0" actuatorfrcrange="-100 100" />
+                  <geom pos="-0.557096 0.070265 -0.602951" quat="1 0 0 0" type="mesh" mesh="mount_3" />
+                  <geom pos="-0.557096 0.070265 -0.602951" type="mesh" mesh="forearm_2" />
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <option timestep="0.005" gravity="0 0 -9.81" iterations="50" solver="Newton" tolerance="1e-10" />
+  <default>
+    <joint damping="1.0" armature="0.01" />
+    <geom contype="1" conaffinity="1" condim="3" friction="0.8 0.1 0.01" />
+  </default>
+  <actuator>
+    <motor name="Revolute 18" joint="Revolute 18" ctrllimited="true" ctrlrange="-1 1" gear="50" />
+    <motor name="Revolute 26" joint="Revolute 26" ctrllimited="true" ctrlrange="-1 1" gear="50" />
+    <motor name="Revolute 23" joint="Revolute 23" ctrllimited="true" ctrlrange="-1 1" gear="50" />
+    <motor name="Revolute 21" joint="Revolute 21" ctrllimited="true" ctrlrange="-1 1" gear="50" />
+    <motor name="Revolute 24" joint="Revolute 24" ctrllimited="true" ctrlrange="-1 1" gear="50" />
+    <motor name="Revolute 28" joint="Revolute 28" ctrllimited="true" ctrlrange="-1 1" gear="50" />
+    <motor name="Revolute 25" joint="Revolute 25" ctrllimited="true" ctrlrange="-1 1" gear="50" />
+    <motor name="Revolute 27" joint="Revolute 27" ctrllimited="true" ctrlrange="-1 1" gear="50" />
+    <motor name="Revolute 22" joint="Revolute 22" ctrllimited="true" ctrlrange="-1 1" gear="50" />
+    <motor name="Revolute 20" joint="Revolute 20" ctrllimited="true" ctrlrange="-1 1" gear="50" />
+    <motor name="Revolute 19" joint="Revolute 19" ctrllimited="true" ctrlrange="-1 1" gear="50" />
+    <motor name="Revolute 2" joint="Revolute 2" ctrllimited="true" ctrlrange="-1 1" gear="50" />
+    <motor name="Revolute 6" joint="Revolute 6" ctrllimited="true" ctrlrange="-1 1" gear="50" />
+    <motor name="Revolute 1" joint="Revolute 1" ctrllimited="true" ctrlrange="-1 1" gear="50" />
+    <motor name="Revolute 4" joint="Revolute 4" ctrllimited="true" ctrlrange="-1 1" gear="50" />
+    <motor name="Revolute 5" joint="Revolute 5" ctrllimited="true" ctrlrange="-1 1" gear="50" />
+    <motor name="Revolute 3" joint="Revolute 3" ctrllimited="true" ctrlrange="-1 1" gear="50" />
+  </actuator>
+  <keyframe>
+    <key name="home" qpos="0 0 -0.013 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" />
+  </keyframe>
+</mujoco>
