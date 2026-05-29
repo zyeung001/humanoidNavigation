@@ -1,0 +1,130 @@
+# Config for the real (Fusion-exported) humanoid robot. Use with:
+#   python scripts/train_standing.py --config config/real_humanoid_config.yaml
+#
+# Kept separate from training_config.yaml so the in-flight standard-humanoid
+# training (yaw phase 2) is unaffected. Checkpoint/vecnorm paths are also
+# distinct from the standard pipeline.
+
+standing:
+  # ========== ENVIRONMENT ==========
+  xml_file: models/humanoid_real.xml   # 18 bodies, 17 actuators, ~0.72 m tall, 1.30 kg
+
+  seed: 42
+  n_envs: 12
+  device: cuda
+
+  max_episode_steps: 5000              # shorter than std (10000): smaller robot, faster dynamics
+
+  # ========== OBSERVATION PROCESSING ==========
+  # Real-robot obs dim is 460 (vs std 365). With history×4 + COM(6): 1864.
+  # The standing_env introspection handles the dim difference automatically.
+  obs_history: 4
+  obs_include_com: true
+  obs_feature_norm: true
+
+  # ========== ACTION ==========
+  action_smoothing: true
+  action_smoothing_tau: 0.5
+  action_symmetry: false
+  pd_assist: false
+
+  # ========== CURRICULUM ==========
+  # Targets stay in the legacy 1.40-regime; _get_height() returns scaled COM-z
+  # for custom models, so [0.80..1.40] maps to real COM [0.30..0.53] m.
+  curriculum_start_stage: 0
+  curriculum_max_stage: 5
+  curriculum_advance_after: 20
+  curriculum_success_rate: 0.60
+
+  # ========== DOMAIN RANDOMIZATION ==========
+  # Off initially. The Fusion-exported masses are validated against the real
+  # 3 lb robot but the inertias are Fusion defaults — enable rand only after
+  # the base controller is stable, so we know the unrandomized model trains.
+  domain_rand: false
+  rand_mass_range: [0.97, 1.03]
+  rand_friction_range: [0.97, 1.03]
+
+  # ========== REWARD ==========
+  # Same scaled regime as the std pipeline; height_scale handles the conversion.
+  target_height: 1.40
+  height_error_threshold: 0.08
+  height_stability_threshold: 0.15
+
+  reward_caps:
+    max_height_maintenance_penalty: 15.0
+    recovery_bonus_scale: 50.0
+    termination_penalty_constant: 50.0
+
+  # ========== PPO HYPERPARAMETERS ==========
+  total_timesteps: 5_000_000
+  learning_rate: 0.0003
+  final_learning_rate: 0.00005
+
+  n_steps: 2048
+  batch_size: 256
+  n_epochs: 10
+
+  gamma: 0.995
+  gae_lambda: 0.95
+
+  clip_range: 0.2
+  final_clip_range: 0.1
+
+  ent_coef: 0.02
+  final_ent_coef: 0.005
+
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+
+  # ========== VECNORMALIZE ==========
+  normalize: true
+  vecnormalize_clip_obs: 50.0
+  vecnormalize_clip_reward: 50.0
+
+  # ========== NETWORK ==========
+  policy_kwargs:
+    net_arch:
+      - pi: [512, 512, 256]
+        vf: [512, 512, 256]
+    activation_fn: SiLU
+    ortho_init: true
+
+  # ========== LOGGING / CHECKPOINTING ==========
+  # Distinct paths so the standard-humanoid run is untouched.
+  verbose: 1
+  log_dir: data/logs/real_standing
+  use_tensorboard: true
+
+  n_eval_episodes: 5
+  eval_freq: 100_000
+
+  save_freq: 250_000
+  checkpoint_dir: data/checkpoints/real_standing
+  checkpoint_prefix: real_standing
+
+  best_model_path: models/best_real_standing_model
+  final_model_path: models/final_real_standing_model
+  vecnormalize_path: models/vecnorm_real_standing.pkl
+
+  target_reward_threshold: 5000
+  early_stop:
+    patience: 5
+
+  # Random height init disabled for custom models inside the env (the legacy
+  # [0.6, 1.6] clip would push the robot through the ceiling). Re-enable here
+  # is a no-op until a scaled version is wired in.
+  random_height_init: false
+  random_height_prob: 0.0
+  random_height_range: [-0.3, 0.1]
+
+  use_wandb: false
+  wandb_project: humanoid_real_standing
+  wandb_log_freq: 10000
+  video_freq: 500000
+  episode_print_freq: 1000
+
+
+# Walking config is intentionally omitted until standing converges on the real
+# robot. Add a `walking:` section here later and train with:
+#   python scripts/train_walking.py --config config/real_humanoid_config.yaml \
+#     --from-standing --model models/best_real_standing_model.zip

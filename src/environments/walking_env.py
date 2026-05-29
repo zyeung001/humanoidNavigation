@@ -9,6 +9,7 @@ Integrates VelocityCommandGenerator for proper command sampling
 """
 
 import logging
+import os
 
 import gymnasium as gym
 import numpy as np
@@ -487,7 +488,6 @@ class WalkingEnv(gym.Wrapper):
         height = self._get_height()
         quat = self.env.unwrapped.data.qpos[3:7]  # [w, x, y, z] quaternion
         linear_vel = self.env.unwrapped.data.qvel[0:3]  # World-frame COM velocity
-        angular_vel = self.env.unwrapped.data.qvel[3:6]
 
         com_vel_x, com_vel_y = linear_vel[0], linear_vel[1]
         actual_speed = np.sqrt(com_vel_x**2 + com_vel_y**2)
@@ -1005,8 +1005,7 @@ class WalkingEnv(gym.Wrapper):
         dist = np.sqrt(root_x**2 + root_y**2)
         
         linear_vel = self.env.unwrapped.data.qvel[0:3]
-        angular_vel = self.env.unwrapped.data.qvel[3:6]
-        
+
         # Velocity error (vx, vy)
         vel_error = np.sqrt(
             (linear_vel[0] - self.commanded_vx_world)**2 +
