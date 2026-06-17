@@ -1,0 +1,296 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="HumanoidReal">
+  <compiler angle="radian" meshdir="humanoid_meshes_obj" autolimits="true" />
+  <default>
+    <joint damping="1.0" armature="0.05" />
+    <default class="visual">
+      <geom group="2" type="mesh" contype="0" conaffinity="0" density="0" />
+    </default>
+    <default class="collision">
+      <geom group="3" condim="3" friction="0.8 0.1 0.01" solref="0.01 1" solimp="0.95 0.99 0.001" rgba="0.8 0.3 0.3 0.4" />
+    </default>
+  </default>
+  <asset>
+    <mesh name="0003_1" file="0003_1.obj" scale="0.001 0.001 0.001" />
+    <mesh name="0003_10" file="0003_10.obj" scale="0.001 0.001 0.001" />
+    <mesh name="0003_11" file="0003_11.obj" scale="0.001 0.001 0.001" />
+    <mesh name="0003_2" file="0003_2.obj" scale="0.001 0.001 0.001" />
+    <mesh name="0003_3" file="0003_3.obj" scale="0.001 0.001 0.001" />
+    <mesh name="0003_4" file="0003_4.obj" scale="0.001 0.001 0.001" />
+    <mesh name="0003_5" file="0003_5.obj" scale="0.001 0.001 0.001" />
+    <mesh name="0003_6" file="0003_6.obj" scale="0.001 0.001 0.001" />
+    <mesh name="0003_7" file="0003_7.obj" scale="0.001 0.001 0.001" />
+    <mesh name="0003_8" file="0003_8.obj" scale="0.001 0.001 0.001" />
+    <mesh name="0003_9" file="0003_9.obj" scale="0.001 0.001 0.001" />
+    <mesh name="0004_1" file="0004_1.obj" scale="0.001 0.001 0.001" />
+    <mesh name="0004_10" file="0004_10.obj" scale="0.001 0.001 0.001" />
+    <mesh name="0004_11" file="0004_11.obj" scale="0.001 0.001 0.001" />
+    <mesh name="0004_2" file="0004_2.obj" scale="0.001 0.001 0.001" />
+    <mesh name="0004_3" file="0004_3.obj" scale="0.001 0.001 0.001" />
+    <mesh name="0004_4" file="0004_4.obj" scale="0.001 0.001 0.001" />
+    <mesh name="0004_5" file="0004_5.obj" scale="0.001 0.001 0.001" />
+    <mesh name="0004_6" file="0004_6.obj" scale="0.001 0.001 0.001" />
+    <mesh name="0004_7" file="0004_7.obj" scale="0.001 0.001 0.001" />
+    <mesh name="0004_8" file="0004_8.obj" scale="0.001 0.001 0.001" />
+    <mesh name="0004_9" file="0004_9.obj" scale="0.001 0.001 0.001" />
+    <mesh name="Component22_1" file="Component22_1.obj" scale="0.001 0.001 0.001" />
+    <mesh name="LeftZYprint_1" file="LeftZYprint_1.obj" scale="0.001 0.001 0.001" />
+    <mesh name="SCS0009_1" file="SCS0009_1.obj" scale="0.001 0.001 0.001" />
+    <mesh name="SCS0009_2" file="SCS0009_2.obj" scale="0.001 0.001 0.001" />
+    <mesh name="SCS0009_3" file="SCS0009_3.obj" scale="0.001 0.001 0.001" />
+    <mesh name="SCS0009_4" file="SCS0009_4.obj" scale="0.001 0.001 0.001" />
+    <mesh name="SCS0009_5" file="SCS0009_5.obj" scale="0.001 0.001 0.001" />
+    <mesh name="SCS0009_6" file="SCS0009_6.obj" scale="0.001 0.001 0.001" />
+    <mesh name="Servo_SC15_1" file="Servo_SC15_1.obj" scale="0.001 0.001 0.001" />
+    <mesh name="Servo_SC15_10" file="Servo_SC15_10.obj" scale="0.001 0.001 0.001" />
+    <mesh name="Servo_SC15_11" file="Servo_SC15_11.obj" scale="0.001 0.001 0.001" />
+    <mesh name="Servo_SC15_2" file="Servo_SC15_2.obj" scale="0.001 0.001 0.001" />
+    <mesh name="Servo_SC15_3" file="Servo_SC15_3.obj" scale="0.001 0.001 0.001" />
+    <mesh name="Servo_SC15_4" file="Servo_SC15_4.obj" scale="0.001 0.001 0.001" />
+    <mesh name="Servo_SC15_5" file="Servo_SC15_5.obj" scale="0.001 0.001 0.001" />
+    <mesh name="Servo_SC15_6" file="Servo_SC15_6.obj" scale="0.001 0.001 0.001" />
+    <mesh name="Servo_SC15_7" file="Servo_SC15_7.obj" scale="0.001 0.001 0.001" />
+    <mesh name="Servo_SC15_8" file="Servo_SC15_8.obj" scale="0.001 0.001 0.001" />
+    <mesh name="Servo_SC15_9" file="Servo_SC15_9.obj" scale="0.001 0.001 0.001" />
+    <mesh name="XYWaist_1" file="XYWaist_1.obj" scale="0.001 0.001 0.001" />
+    <mesh name="YZWaist_1" file="YZWaist_1.obj" scale="0.001 0.001 0.001" />
+    <mesh name="base_link" file="base_link.obj" scale="0.001 0.001 0.001" />
+    <mesh name="elbowConnector_1" file="elbowConnector_1.obj" scale="0.001 0.001 0.001" />
+    <mesh name="forearm_1" file="forearm_1.obj" scale="0.001 0.001 0.001" />
+    <mesh name="forearm_2" file="forearm_2.obj" scale="0.001 0.001 0.001" />
+    <mesh name="mount_1" file="mount_1.obj" scale="0.001 0.001 0.001" />
+    <mesh name="mount_2" file="mount_2.obj" scale="0.001 0.001 0.001" />
+    <mesh name="mount_3" file="mount_3.obj" scale="0.001 0.001 0.001" />
+    <mesh name="mount_4" file="mount_4.obj" scale="0.001 0.001 0.001" />
+    <mesh name="mount_5" file="mount_5.obj" scale="0.001 0.001 0.001" />
+    <mesh name="mount_6" file="mount_6.obj" scale="0.001 0.001 0.001" />
+    <mesh name="rightElbowConnector_1" file="rightElbowConnector_1.obj" scale="0.001 0.001 0.001" />
+    <mesh name="rightShoulderConnector_1" file="rightShoulderConnector_1.obj" scale="0.001 0.001 0.001" />
+    <mesh name="rightXZprint_1" file="rightXZprint_1.obj" scale="0.001 0.001 0.001" />
+    <mesh name="rightXZprint_2" file="rightXZprint_2.obj" scale="0.001 0.001 0.001" />
+    <mesh name="rightZYprint_1" file="rightZYprint_1.obj" scale="0.001 0.001 0.001" />
+    <mesh name="rightfoot_1" file="rightfoot_1.obj" scale="0.001 0.001 0.001" />
+    <mesh name="rightfoot_2" file="rightfoot_2.obj" scale="0.001 0.001 0.001" />
+    <mesh name="rightshin_1" file="rightshin_1.obj" scale="0.001 0.001 0.001" />
+    <mesh name="rightshin_2" file="rightshin_2.obj" scale="0.001 0.001 0.001" />
+    <mesh name="shoulderConnector_1" file="shoulderConnector_1.obj" scale="0.001 0.001 0.001" />
+    <mesh name="shoulderLeft_1" file="shoulderLeft_1.obj" scale="0.001 0.001 0.001" />
+    <mesh name="shoulderRight_1" file="shoulderRight_1.obj" scale="0.001 0.001 0.001" />
+    <mesh name="thigh_1" file="thigh_1.obj" scale="0.001 0.001 0.001" />
+    <mesh name="thigh_2" file="thigh_2.obj" scale="0.001 0.001 0.001" />
+    <mesh name="upperArm_1" file="upperArm_1.obj" scale="0.001 0.001 0.001" />
+    <mesh name="upperArm_2" file="upperArm_2.obj" scale="0.001 0.001 0.001" />
+  </asset>
+  <worldbody>
+    <light directional="true" diffuse=".8 .8 .8" pos="0 0 5" dir="0 0 -1" />
+    <geom name="floor" type="plane" size="10 10 0.1" rgba=".9 .9 .9 1" condim="3" />
+    <body name="base_link" pos="0 0 -0.0130">
+      <inertial pos="0.560728 0.059613 0.470217" mass="0.200499" fullinertia="5.192e-04 7.512e-05 5.196e-04 -1.825e-06 -1.382e-07 5.800e-06" />
+      <joint name="base_joint" type="free" />
+      <body name="0003_9" pos="0.540429 -0.527466 0.983811">
+        <inertial pos="0.019955 0.489201 -0.541609" mass="0.077681" fullinertia="5.745e-05 5.792e-05 2.458e-05 2.436e-08 8.064e-08 -7.047e-06" />
+        <joint name="Revolute 18" pos="0.04570 0.49810 -0.50814" axis="1 0 0" range="-1.5708 0.349066" actuatorfrcrange="-100 100" />
+        <body name="0003_11" pos="-0.437997 1.05685 -0.548399">
+          <inertial pos="0.473030 -0.550624 -0.031976" mass="0.206952" fullinertia="1.252e-04 1.328e-04 7.988e-05 6.713e-08 5.250e-06 -6.941e-06" />
+          <joint name="Revolute 26" pos="0.46038 -0.55657 -0.04412" axis="0 -0.013033 -0.999915" range="-1.5708 0.959931" actuatorfrcrange="-100 100" />
+          <body name="0003_4" pos="-0.091932 -0.549871 0.341287">
+            <inertial pos="0.550018 -0.004388 -0.462059" mass="0.079407" fullinertia="1.425e-04 1.288e-04 2.370e-05 1.554e-09 9.021e-08 -1.706e-06" />
+            <joint name="Revolute 23" pos="0.55055 -0.02929 -0.40110" axis="0 -0.999915 0.013033" range="-1.5708 0.349066" actuatorfrcrange="-100 100" />
+            <body name="0003_2" pos="0.80407 -0.037649 -1.06229">
+              <inertial pos="-0.253933 0.030426 0.401634" mass="0.022589" fullinertia="8.785e-05 8.514e-05 1.659e-05 3.285e-11 2.505e-09 -8.938e-07" />
+              <joint name="Revolute 21" pos="-0.25655 0.05797 0.53529" axis="0 0.999915 -0.013033" range="-1.5708 1.5708" actuatorfrcrange="-100 100" />
+              <geom class="visual" mesh="0003_2" pos="-0.81457 0.058137 0.28559" quat="1 0 0 0" />
+              <geom class="visual" mesh="rightshin_2" pos="-0.81457 0.058137 0.28559" quat="1 0 0 0" />
+              <geom class="visual" mesh="rightfoot_2" pos="-0.81457 0.058137 0.28559" quat="1 0 0 0" />
+              <geom class="collision" type="box" pos="-0.25393 0.02937 0.32068" quat="0.49673 -0.50325 -0.50325 -0.49673" size="0.00250 0.04000 0.04000" />
+              <geom class="collision" type="capsule" pos="-0.25394 0.03084 0.43367" quat="0.00652 0.99998 0.00000 -0.00000" size="0.02140 0.08910" />
+            </body>
+            <geom class="visual" mesh="0003_4" pos="-0.0105 0.020488 -0.776699" quat="1 0 0 0" />
+            <geom class="visual" mesh="thigh_1" pos="-0.0105 0.020488 -0.776699" quat="1 0 0 0" />
+            <geom class="visual" mesh="0004_2" pos="-0.0105 0.020488 -0.776699" quat="1 0 0 0" />
+            <geom class="visual" mesh="Servo_SC15_10" pos="-0.0105 0.020488 -0.776699" quat="1 0 0 0" />
+            <geom class="collision" type="capsule" pos="0.55000 -0.00430 -0.46306" quat="0.00000 -0.00000 0.00652 0.99998" size="0.02140 0.05318" />
+          </body>
+          <geom class="visual" mesh="0003_11" pos="-0.102432 -0.529383 -0.435412" quat="1 0 0 0" />
+          <geom class="visual" mesh="LeftZYprint_1" pos="-0.102432 -0.529383 -0.435412" quat="1 0 0 0" />
+          <geom class="visual" mesh="0004_10" pos="-0.102432 -0.529383 -0.435412" quat="1 0 0 0" />
+          <geom class="visual" mesh="Servo_SC15_11" pos="-0.102432 -0.529383 -0.435412" quat="1 0 0 0" />
+          <geom class="collision" type="box" pos="0.47388 -0.55291 -0.02889" quat="0.00462 0.70709 0.70709 -0.00462" size="0.02565 0.02583 0.03832" />
+        </body>
+        <geom class="visual" mesh="0003_9" pos="-0.540429 0.527466 -0.983811" quat="1 0 0 0" />
+        <geom class="visual" mesh="rightXZprint_2" pos="-0.540429 0.527466 -0.983811" quat="1 0 0 0" />
+        <geom class="visual" mesh="0004_6" pos="-0.540429 0.527466 -0.983811" quat="1 0 0 0" />
+        <geom class="visual" mesh="Servo_SC15_6" pos="-0.540429 0.527466 -0.983811" quat="1 0 0 0" />
+        <geom class="collision" type="capsule" pos="0.01990 0.48517 -0.54360" quat="0.00787 0.70706 0.70706 -0.00787" size="0.02578 0.02263" />
+      </body>
+      <body name="0003_1" pos="0.395242 0.737653 0.965035">
+        <inertial pos="0.165737 -0.580924 -0.525375" mass="0.077681" fullinertia="5.745e-05 5.827e-05 2.423e-05 2.225e-08 -8.125e-08 6.168e-06" />
+        <joint name="Revolute 24" pos="0.13999 -0.58809 -0.48698" axis="-1 0 0" range="-1.5708 0.174533" actuatorfrcrange="-100 100" />
+        <body name="0003_3" pos="0.610997 -1.12513 -0.692973">
+          <inertial pos="-0.430406 0.526371 0.129303" mass="0.206952" fullinertia="1.253e-04 1.329e-04 7.986e-05 4.008e-07 5.240e-06 6.089e-06" />
+          <joint name="Revolute 28" pos="-0.44769 0.53181 0.11700" axis="0 -0.013033 -0.999915" range="-0.959931 1.5708" actuatorfrcrange="-100 100" />
+          <body name="0003_10" pos="-0.995739 0.366978 0.502481">
+            <inertial pos="0.550418 0.161015 -0.462060" mass="0.079407" fullinertia="1.425e-04 1.288e-04 2.370e-05 1.552e-09 9.019e-08 -1.705e-06" />
+            <joint name="Revolute 25" pos="0.55095 0.13619 -0.39521" axis="0 -0.999915 0.013033" range="-1.5708 0.349066" actuatorfrcrange="-100 100" />
+            <body name="0003_5" pos="0.802314 0.293125 -1.06485">
+              <inertial pos="-0.251777 -0.135917 0.404203" mass="0.022589" fullinertia="8.786e-05 8.513e-05 1.661e-05 2.603e-11 2.537e-09 -1.416e-06" />
+              <joint name="Revolute 27" pos="-0.25335 -0.10745 0.53383" axis="0 0.999915 -0.013033" range="-1.5708 1.5708" actuatorfrcrange="-100 100" />
+              <geom class="visual" mesh="0003_5" pos="-0.812814 -0.272623 0.290302" quat="1 0 0 0" />
+              <geom class="visual" mesh="rightshin_1" pos="-0.812814 -0.272623 0.290302" quat="1 0 0 0" />
+              <geom class="visual" mesh="rightfoot_1" pos="-0.812814 -0.272623 0.290302" quat="1 0 0 0" />
+              <geom class="collision" type="box" pos="-0.25177 -0.13750 0.32326" quat="0.50325 0.49673 0.49673 -0.50325" size="0.00250 0.04000 0.04000" />
+              <geom class="collision" type="capsule" pos="-0.25178 -0.13453 0.43623" quat="0.00000 0.00000 -0.00652 -0.99998" size="0.02140 0.08910" />
+            </body>
+            <geom class="visual" mesh="0003_10" pos="-0.0105 0.020502 -0.774543" quat="1 0 0 0" />
+            <geom class="visual" mesh="thigh_2" pos="-0.0105 0.020502 -0.774543" quat="1 0 0 0" />
+            <geom class="visual" mesh="0004_9" pos="-0.0105 0.020502 -0.774543" quat="1 0 0 0" />
+            <geom class="visual" mesh="Servo_SC15_5" pos="-0.0105 0.020502 -0.774543" quat="1 0 0 0" />
+            <geom class="collision" type="capsule" pos="0.55040 0.16111 -0.46306" quat="0.00000 -0.00000 0.00652 0.99998" size="0.02140 0.05317" />
+          </body>
+          <geom class="visual" mesh="0003_3" pos="-1.00624 0.38748 -0.272062" quat="1 0 0 0" />
+          <geom class="visual" mesh="rightZYprint_1" pos="-1.00624 0.38748 -0.272062" quat="1 0 0 0" />
+          <geom class="visual" mesh="0004_8" pos="-1.00624 0.38748 -0.272062" quat="1 0 0 0" />
+          <geom class="visual" mesh="Servo_SC15_4" pos="-1.00624 0.38748 -0.272062" quat="1 0 0 0" />
+          <geom class="collision" type="box" pos="-0.42953 0.52885 0.13231" quat="0.00020 -0.00000 -0.99998 0.00679" size="0.02584 0.02597 0.03833" />
+        </body>
+        <geom class="visual" mesh="0003_1" pos="-0.395242 -0.737653 -0.965035" quat="1 0 0 0" />
+        <geom class="visual" mesh="rightXZprint_1" pos="-0.395242 -0.737653 -0.965035" quat="1 0 0 0" />
+        <geom class="visual" mesh="0004_7" pos="-0.395242 -0.737653 -0.965035" quat="1 0 0 0" />
+        <geom class="visual" mesh="Servo_SC15_9" pos="-0.395242 -0.737653 -0.965035" quat="1 0 0 0" />
+        <geom class="collision" type="capsule" pos="0.16579 -0.57694 -0.52747" quat="0.00135 0.70711 0.70711 -0.00135" size="0.02578 0.02263" />
+      </body>
+      <body name="0003_6" pos="0.482752 -0.417042 1.07481">
+        <inertial pos="0.085091 0.477962 -0.560107" mass="0.125775" fullinertia="5.098e-05 7.072e-05 5.090e-05 -3.132e-07 -8.412e-06 -1.070e-06" />
+        <joint name="Revolute 22" pos="0.05248 0.47970 -0.58852" axis="-1 0 0" range="-0.610865 0.610865" actuatorfrcrange="-100 100" />
+        <body name="0003_7" pos="-0.472252 0.395027 0.010165">
+          <inertial pos="0.562558 0.083961 -0.514154" mass="0.077598" fullinertia="5.961e-05 6.100e-05 2.794e-05 -4.182e-08 -8.307e-06 -2.577e-07" />
+          <joint name="Revolute 20" pos="0.55329 0.05789 -0.55354" axis="0 -0.999979 0.006517" range="-0.349066 1.5708" actuatorfrcrange="-100 100" />
+          <body name="0003_8" pos="0 0.677737 -0.408133">
+            <inertial pos="0.550157 -0.592797 0.015843" mass="0.065147" fullinertia="4.478e-04 1.905e-04 3.104e-04 -1.319e-08 -2.023e-06 7.815e-07" />
+            <joint name="Revolute 19" pos="0.55089 -0.59622 -0.05599" axis="0 0.006517 0.999979" range="-1.5708 1.5708" actuatorfrcrange="-100 100" />
+            <body name="mount_6" pos="0.54596 -0.420605 0.079674">
+              <inertial pos="0.005405 -0.021997 -0.031355" mass="0.011150" fullinertia="2.820e-06 2.440e-06 1.638e-06 3.760e-08 7.296e-09 -1.018e-07" />
+              <joint name="Revolute 2" pos="0.01375 -0.01317 -0.00776" axis="0 0.999979 -0.006517" range="-2.0944 2.0944" actuatorfrcrange="-100 100" />
+              <body name="mount_5" pos="-0.01447 -0.002339 -0.035059">
+                <inertial pos="0.021511 -0.010858 -0.078608" mass="0.014307" fullinertia="1.946e-05 2.018e-05 2.447e-06 -6.476e-08 1.376e-06 6.579e-07" />
+                <joint name="Revolute 6" pos="0.00924 -0.02210 -0.01009" axis="-1 0 0" range="-1.5708 0.436332" actuatorfrcrange="-100 100" />
+                <body name="mount_2" pos="0.015106 -0.01 -0.12041">
+                  <inertial pos="0.005204 0.000366 -0.093340" mass="0.004760" fullinertia="1.169e-05 1.147e-05 5.962e-07 -1.497e-14 1.805e-13 1.731e-07" />
+                  <joint name="Revolute 1" pos="0.01410 -0.01319 -0.01023" axis="0 -1 0" range="0 2.0944" actuatorfrcrange="-100 100" />
+                  <geom class="visual" mesh="mount_2" pos="-0.557096 -0.222778 -0.601051" quat="1 0 0 0" />
+                  <geom class="visual" mesh="forearm_1" pos="-0.557096 -0.222778 -0.601051" quat="1 0 0 0" />
+                  <geom class="collision" type="capsule" pos="0.00520 0.00081 -0.08873" quat="0.00000 -0.00000 1.00000 0.00000" size="0.01375 0.07625" />
+                </body>
+                <geom class="visual" mesh="mount_5" pos="-0.54199 -0.232778 -0.721461" quat="1 0 0 0" />
+                <geom class="visual" mesh="upperArm_2" pos="-0.54199 -0.232778 -0.721461" quat="1 0 0 0" />
+                <geom class="visual" mesh="rightElbowConnector_1" pos="-0.54199 -0.232778 -0.721461" quat="1 0 0 0" />
+                <geom class="visual" mesh="SCS0009_2" pos="-0.54199 -0.232778 -0.721461" quat="1 0 0 0" />
+                <geom class="collision" type="capsule" pos="0.02349 -0.00960 -0.06896" quat="0.00774 -0.70706 -0.70706 -0.00774" size="0.01772 0.05258" />
+              </body>
+              <geom class="visual" mesh="mount_6" pos="-0.55646 -0.235117 -0.75652" quat="1 0 0 0" />
+              <geom class="visual" mesh="rightShoulderConnector_1" pos="-0.55646 -0.235117 -0.75652" quat="1 0 0 0" />
+              <geom class="visual" mesh="SCS0009_1" pos="-0.55646 -0.235117 -0.75652" quat="1 0 0 0" />
+              <geom class="collision" type="box" pos="0.00571 -0.02411 -0.02833" quat="0.99420 0.10754 0.00000 0.00000" size="0.01498 0.01902 0.02729" />
+            </body>
+            <body name="mount_1" pos="0.54596 -0.737898 0.081742">
+              <inertial pos="0.005405 -0.004657 -0.031468" mass="0.011150" fullinertia="2.820e-06 2.442e-06 1.635e-06 -3.750e-08 7.787e-09 9.131e-08" />
+              <joint name="Revolute 4" pos="-0.00326 -0.01321 -0.01299" axis="0 -0.999979 0.006517" range="-2.0944 2.0944" actuatorfrcrange="-100 100" />
+              <body name="mount_4" pos="-0.01447 0.001881 -0.035087">
+                <inertial pos="0.021469 -0.015745 -0.078502" mass="0.014307" fullinertia="1.946e-05 2.020e-05 2.429e-06 7.214e-08 1.361e-06 -6.921e-07" />
+                <joint name="Revolute 5" pos="0.00923 -0.00436 -0.01105" axis="-1 0 0" range="-2.00713 0" actuatorfrcrange="-100 100" />
+                <body name="mount_3" pos="0.015106 0.01003 -0.12055">
+                  <inertial pos="0.005204 -0.027791 -0.093137" mass="0.004760" fullinertia="1.168e-05 1.147e-05 6.031e-07 1.560e-14 1.871e-13 -3.125e-07" />
+                  <joint name="Revolute 3" pos="0.01398 -0.01721 -0.00904" axis="0 0.999915 -0.013033" range="-2.0944 0" actuatorfrcrange="-100 100" />
+                  <geom class="visual" mesh="mount_3" pos="-0.557096 0.070265 -0.602951" quat="1 0 0 0" />
+                  <geom class="visual" mesh="forearm_2" pos="-0.557096 0.070265 -0.602951" quat="1 0 0 0" />
+                  <geom class="collision" type="capsule" pos="0.00520 -0.02819 -0.08854" quat="0.00000 -0.00000 -0.99998 0.00652" size="0.01376 0.07624" />
+                </body>
+                <geom class="visual" mesh="mount_4" pos="-0.54199 0.080295 -0.723501" quat="1 0 0 0" />
+                <geom class="visual" mesh="upperArm_1" pos="-0.54199 0.080295 -0.723501" quat="1 0 0 0" />
+                <geom class="visual" mesh="elbowConnector_1" pos="-0.54199 0.080295 -0.723501" quat="1 0 0 0" />
+                <geom class="visual" mesh="SCS0009_3" pos="-0.54199 0.080295 -0.723501" quat="1 0 0 0" />
+                <geom class="collision" type="capsule" pos="0.02349 -0.01739 -0.06909" quat="0.70729 -0.00426 0.00426 0.70689" size="0.01764 0.05277" />
+              </body>
+              <geom class="visual" mesh="mount_1" pos="-0.55646 0.082176 -0.758588" quat="1 0 0 0" />
+              <geom class="visual" mesh="shoulderConnector_1" pos="-0.55646 0.082176 -0.758588" quat="1 0 0 0" />
+              <geom class="visual" mesh="SCS0009_4" pos="-0.55646 0.082176 -0.758588" quat="1 0 0 0" />
+              <geom class="collision" type="box" pos="0.00571 -0.00251 -0.02847" quat="0.11402 0.99348 0.00000 0.00000" size="0.01498 0.01902 0.02729" />
+            </body>
+            <geom class="visual" mesh="0003_8" pos="-0.0105 -0.655722 -0.676846" quat="1 0 0 0" />
+            <geom class="visual" mesh="Component22_1" pos="-0.0105 -0.655722 -0.676846" quat="1 0 0 0" />
+            <geom class="visual" mesh="shoulderLeft_1" pos="-0.0105 -0.655722 -0.676846" quat="1 0 0 0" />
+            <geom class="visual" mesh="SCS0009_5" pos="-0.0105 -0.655722 -0.676846" quat="1 0 0 0" />
+            <geom class="visual" mesh="shoulderRight_1" pos="-0.0105 -0.655722 -0.676846" quat="1 0 0 0" />
+            <geom class="visual" mesh="SCS0009_6" pos="-0.0105 -0.655722 -0.676846" quat="1 0 0 0" />
+            <geom class="collision" type="box" pos="0.55039 -0.59294 -0.00681" quat="0.00000 0.00000 -0.70941 -0.70480" size="0.03750 0.10280 0.15865" />
+          </body>
+          <geom class="visual" mesh="0003_7" pos="-0.0105 0.022015 -1.08498" quat="1 0 0 0" />
+          <geom class="visual" mesh="YZWaist_1" pos="-0.0105 0.022015 -1.08498" quat="1 0 0 0" />
+          <geom class="visual" mesh="0004_5" pos="-0.0105 0.022015 -1.08498" quat="1 0 0 0" />
+          <geom class="visual" mesh="Servo_SC15_2" pos="-0.0105 0.022015 -1.08498" quat="1 0 0 0" />
+          <geom class="collision" type="capsule" pos="0.56602 0.08395 -0.51365" quat="0.00000 -0.00000 -0.00326 -0.99999" size="0.02672 0.02259" />
+        </body>
+        <geom class="visual" mesh="0003_6" pos="-0.482752 0.417042 -1.07481" quat="1 0 0 0" />
+        <geom class="visual" mesh="XYWaist_1" pos="-0.482752 0.417042 -1.07481" quat="1 0 0 0" />
+        <geom class="visual" mesh="0004_4" pos="-0.482752 0.417042 -1.07481" quat="1 0 0 0" />
+        <geom class="visual" mesh="Servo_SC15_1" pos="-0.482752 0.417042 -1.07481" quat="1 0 0 0" />
+        <geom class="collision" type="box" pos="0.08313 0.47849 -0.56513" quat="0.50202 0.49797 0.50202 0.49797" size="0.02555 0.03237 0.03265" />
+      </body>
+      <geom class="visual" mesh="base_link" pos="0 0 0" quat="1 0 0 0" />
+      <geom class="visual" mesh="0004_1" pos="0 0 0" quat="1 0 0 0" />
+      <geom class="visual" mesh="Servo_SC15_7" pos="0 0 0" quat="1 0 0 0" />
+      <geom class="visual" mesh="0004_3" pos="0 0 0" quat="1 0 0 0" />
+      <geom class="visual" mesh="Servo_SC15_8" pos="0 0 0" quat="1 0 0 0" />
+      <geom class="visual" mesh="0004_11" pos="0 0 0" quat="1 0 0 0" />
+      <geom class="visual" mesh="Servo_SC15_3" pos="0 0 0" quat="1 0 0 0" />
+      <geom class="collision" type="capsule" pos="0.56083 0.05960 0.46925" quat="0.00122 0.00120 0.71170 0.70248" size="0.02664 0.07058" />
+    </body>
+  </worldbody>
+  <option timestep="0.005" integrator="implicitfast" />
+  <contact>
+    <exclude body1="base_link" body2="0003_9" />
+    <exclude body1="0003_9" body2="0003_11" />
+    <exclude body1="0003_11" body2="0003_4" />
+    <exclude body1="0003_4" body2="0003_2" />
+    <exclude body1="base_link" body2="0003_1" />
+    <exclude body1="0003_1" body2="0003_3" />
+    <exclude body1="0003_3" body2="0003_10" />
+    <exclude body1="0003_10" body2="0003_5" />
+    <exclude body1="base_link" body2="0003_6" />
+    <exclude body1="0003_6" body2="0003_7" />
+    <exclude body1="0003_7" body2="0003_8" />
+    <exclude body1="0003_8" body2="mount_6" />
+    <exclude body1="mount_6" body2="mount_5" />
+    <exclude body1="mount_5" body2="mount_2" />
+    <exclude body1="0003_8" body2="mount_1" />
+    <exclude body1="mount_1" body2="mount_4" />
+    <exclude body1="mount_4" body2="mount_3" />
+    <exclude body1="base_link" body2="0003_3" />
+    <exclude body1="mount_5" body2="0003_8" />
+    <exclude body1="mount_2" body2="0003_8" />
+    <exclude body1="mount_4" body2="0003_8" />
+    <exclude body1="mount_3" body2="0003_8" />
+  </contact>
+  <actuator>
+    <position name="Revolute 18" joint="Revolute 18" kp="12.0" kv="2.0" ctrlrange="-1.5708 0.3491" forcerange="-1.47 1.47" />
+    <position name="Revolute 26" joint="Revolute 26" kp="12.0" kv="2.0" ctrlrange="-1.5708 0.9599" forcerange="-1.47 1.47" />
+    <position name="Revolute 23" joint="Revolute 23" kp="12.0" kv="2.0" ctrlrange="-1.5708 0.3491" forcerange="-1.47 1.47" />
+    <position name="Revolute 21" joint="Revolute 21" kp="12.0" kv="2.0" ctrlrange="-1.5708 1.5708" forcerange="-1.47 1.47" />
+    <position name="Revolute 24" joint="Revolute 24" kp="12.0" kv="2.0" ctrlrange="-1.5708 0.1745" forcerange="-1.47 1.47" />
+    <position name="Revolute 28" joint="Revolute 28" kp="12.0" kv="2.0" ctrlrange="-0.9599 1.5708" forcerange="-1.47 1.47" />
+    <position name="Revolute 25" joint="Revolute 25" kp="12.0" kv="2.0" ctrlrange="-1.5708 0.3491" forcerange="-1.47 1.47" />
+    <position name="Revolute 27" joint="Revolute 27" kp="12.0" kv="2.0" ctrlrange="-1.5708 1.5708" forcerange="-1.47 1.47" />
+    <position name="Revolute 22" joint="Revolute 22" kp="12.0" kv="2.0" ctrlrange="-0.6109 0.6109" forcerange="-1.47 1.47" />
+    <position name="Revolute 20" joint="Revolute 20" kp="12.0" kv="2.0" ctrlrange="-0.3491 1.5708" forcerange="-1.47 1.47" />
+    <position name="Revolute 19" joint="Revolute 19" kp="12.0" kv="2.0" ctrlrange="-1.5708 1.5708" forcerange="-1.47 1.47" />
+    <position name="Revolute 2" joint="Revolute 2" kp="5.0" kv="0.5" ctrlrange="-2.0944 2.0944" forcerange="-0.226 0.226" />
+    <position name="Revolute 6" joint="Revolute 6" kp="5.0" kv="0.5" ctrlrange="-1.5708 0.4363" forcerange="-0.226 0.226" />
+    <position name="Revolute 1" joint="Revolute 1" kp="5.0" kv="0.5" ctrlrange="0.0000 2.0944" forcerange="-0.226 0.226" />
+    <position name="Revolute 4" joint="Revolute 4" kp="5.0" kv="0.5" ctrlrange="-2.0944 2.0944" forcerange="-0.226 0.226" />
+    <position name="Revolute 5" joint="Revolute 5" kp="5.0" kv="0.5" ctrlrange="-2.0071 0.0000" forcerange="-0.226 0.226" />
+    <position name="Revolute 3" joint="Revolute 3" kp="5.0" kv="0.5" ctrlrange="-2.0944 0.0000" forcerange="-0.226 0.226" />
+  </actuator>
+  <keyframe>
+    <key name="home" qpos="-0.5081541159865803 -0.13224099317118346 -0.028839669878346942 1 0 0 0 -0.06023 0.95993 -0.32092 0.0292 -0.0185 1.13261 -0.09577 0.27894 -0.09589 -0.08487 -0.20783 -0.03803 -0.00268 0.00409 0.03624 -0.00246 -0.00409" />
+  </keyframe>
+</mujoco>
