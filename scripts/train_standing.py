@@ -300,7 +300,10 @@ def main():
 
     callbacks = CallbackList([
         EntropyScheduleCallback(initial_ent, final_ent, learn_timesteps, verbose=1),
-        LogStdClampCallback(log_std_min=-2.0, log_std_max=0.5, clamp_freq=500, verbose=1),
+        LogStdClampCallback(
+            log_std_min=float(standing.get('log_std_min', -2.0)),
+            log_std_max=float(standing.get('log_std_max', 0.5)),
+            clamp_freq=500, verbose=1),
         SaveVecNormCallback(vecnorm_path, freq=int(standing.get('save_freq', 100_000))),
         JsonlMetricsCallback(
             output_path=metrics_path,

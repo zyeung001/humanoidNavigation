@@ -62,6 +62,10 @@ class StandingEnv(gym.Wrapper):
         self.domain_rand = self.cfg.get('domain_rand', False)
         self.rand_mass_range = self.cfg.get('rand_mass_range', [0.95, 1.05])
         self.rand_friction_range = self.cfg.get('rand_friction_range', [0.95, 1.05])
+        # Nominal model params, captured lazily on first domain-rand reset so
+        # randomization is applied relative to nominal (not compounded).
+        self._nominal_body_mass = None
+        self._nominal_geom_friction = None
         
         #Random height initialization for recovery training
         self.random_height_init = self.cfg.get('random_height_init', True)
@@ -88,6 +92,18 @@ class StandingEnv(gym.Wrapper):
         self.pd_kp = float(self.cfg.get('pd_kp', 0.0))
         self.pd_kd = float(self.cfg.get('pd_kd', 0.0))
         self.prev_action = np.zeros(self.env.action_space.shape, dtype=np.float32)
+        # Action-rate penalty: discourage high-frequency setpoint jitter (the
+        # "taut string" shake). Penalizes ||a_t - a_{t-1}||^2 of the applied
+        # (smoothed) action. 0.0 = off, so the legacy std-humanoid path is
+        # byte-identical.
+        self.action_rate_weight = float(self.cfg.get('action_rate_penalty', 0.0))
+        self._last_action_rate = np.zeros(self.env.action_space.shape, dtype=np.float32)
+
+        # Yaw-rate damping. Penalizes (base yaw rate)^2 to discourage the slow
+        # in-place spin that proprioceptive obs can't correct via heading
+        # (projected gravity is yaw-invariant) but CAN sense via the gyro
+        # (qvel[5] / base_ang_vel). 0.0 = off (legacy std path byte-identical).
+        self.yaw_rate_weight = float(self.cfg.get('yaw_rate_penalty', 0.0))
 
         # Observation processing
         self.enable_history = int(self.cfg.get('obs_history', 0)) > 0
@@ -95,17 +111,46 @@ class StandingEnv(gym.Wrapper):
         self.obs_history = []
         self.include_com = bool(self.cfg.get('obs_include_com', False))
         self.feature_norm = bool(self.cfg.get('obs_feature_norm', False))
-        
+
+        # ----- Proprioceptive (deployable) observation -----
+        # When True, the observation is rebuilt from ONLY quantities a real robot
+        # can measure: base orientation -> projected gravity (IMU), base angular
+        # velocity (gyro), joint positions (encoders), joint velocities, and the
+        # last applied action. This replaces Humanoid-v5's stock obs, ~400 dims of
+        # which (cinert/cvel/cfrc_ext/COM) are privileged sim state with no real
+        # sensor. Default False keeps the legacy privileged obs byte-identical.
+        self.proprioceptive = bool(self.cfg.get('proprioceptive_obs', False))
+        self.include_foot_contact = bool(self.cfg.get('obs_foot_contact', False))
+        if self.proprioceptive:
+            # COM (subtree_com) is not measurable on hardware -> never include it.
+            self.include_com = False
+        # Nominal (home-keyframe) joint pose. Proprioceptive joint obs is reported
+        # RELATIVE to this, matching the real robot's encoder-minus-home convention
+        # (the v2 home keyframe is a bent standing pose, not all-zeros).
+        m_unwrapped = self.env.unwrapped.model
+        self.n_joints = int(m_unwrapped.nu)
+        if m_unwrapped.nkey > 0:
+            self.default_joint_pos = np.asarray(
+                m_unwrapped.key_qpos[0][7:7 + self.n_joints], dtype=np.float32
+            )
+        else:
+            self.default_joint_pos = np.zeros(self.n_joints, dtype=np.float32)
+
         # Humanoid-v5 reports a smaller observation_space than it actually
         # returns (the +15 below is the historical correction for the default
         # capsule model). Custom MJCFs don't have this discrepancy — measure
         # the actual stepped obs dim instead of trusting the magic number.
         base_obs_from_space = int(env.observation_space.shape[0])
-        if self._is_custom:
+        if self.proprioceptive:
+            # proj_grav(3) + base_ang_vel(3) + joint_pos(nj) + joint_vel(nj) + last_action(nj)
+            base_obs_dim = 6 + 3 * self.n_joints
+            if self.include_foot_contact:
+                base_obs_dim += 2  # per-foot contact booleans (FSR)
+        elif self._is_custom:
             base_obs_dim = self.model_spec.actual_obs_dim
         else:
             base_obs_dim = base_obs_from_space + 15  # Actual observations are 365 dims
-        
+
         # Calculate dimension after all processing steps
         extra_dim = 6 if self.include_com else 0  # COM pos (3) + COM vel (3)
         feature_dim = base_obs_dim + extra_dim
@@ -128,6 +173,11 @@ class StandingEnv(gym.Wrapper):
         )
         
         print("Observation space configuration:")
+        if self.proprioceptive:
+            print(f"  PROPRIOCEPTIVE (deployable) obs: "
+                  f"proj_grav(3)+ang_vel(3)+jpos({self.n_joints})+jvel({self.n_joints})"
+                  f"+last_action({self.n_joints})"
+                  f"{'+foot_contact(2)' if self.include_foot_contact else ''} = {base_obs_dim}")
         print(f"  Base from env.observation_space: {base_obs_from_space}")
         print(f"  + Position inclusion adjustment: +15 -> {base_obs_dim}")
         print(f"  + COM features: {extra_dim} -> {feature_dim}")
@@ -163,6 +213,7 @@ class StandingEnv(gym.Wrapper):
         self.prev_height = default_height
         self.target_height = self.base_target_height
         self.prev_action[:] = 0.0
+        self._last_action_rate[:] = 0.0
         self.obs_history = []  # Clear history
         
         # Clear reward history
@@ -170,16 +221,21 @@ class StandingEnv(gym.Wrapper):
             self.reward_history[key] = []
         
         if self.domain_rand:
-            # Randomize body masses
-            self.env.unwrapped.model.body_mass *= np.random.uniform(
+            m = self.env.unwrapped.model
+            # Capture nominal params once, then randomize RELATIVE to nominal every
+            # reset. The old code multiplied the live arrays in place, so the
+            # randomization compounded across episodes and mass/friction drifted
+            # away over a long run.
+            if self._nominal_body_mass is None:
+                self._nominal_body_mass = m.body_mass.copy()
+                self._nominal_geom_friction = m.geom_friction.copy()
+            m.body_mass[:] = self._nominal_body_mass * np.random.uniform(
                 self.rand_mass_range[0], self.rand_mass_range[1],
-                size=self.env.unwrapped.model.body_mass.shape
+                size=m.body_mass.shape
             )
-
-            # Randomize geom friction
-            self.env.unwrapped.model.geom_friction[:, 0] *= np.random.uniform(
+            m.geom_friction[:, 0] = self._nominal_geom_friction[:, 0] * np.random.uniform(
                 self.rand_friction_range[0], self.rand_friction_range[1],
-                size=self.env.unwrapped.model.geom_friction.shape[0]
+                size=m.geom_friction.shape[0]
             )
         
         # Random height initialization for recovery training. Skip for custom
@@ -201,14 +257,18 @@ class StandingEnv(gym.Wrapper):
             observation = self.env.unwrapped._get_obs()
         
         # Process observation with guaranteed dimension
-        if self.enable_history or self.include_com or self.feature_norm:
+        if self.enable_history or self.include_com or self.feature_norm or self.proprioceptive:
             observation = self._process_observation(observation)
 
         return observation, info
     
     def step(self, action):
-        # Action preprocessing
+        # Action preprocessing. Capture the previously-applied (smoothed) action
+        # before _process_action overwrites prev_action, so the reward can charge
+        # the per-step action rate.
+        prev_applied = self.prev_action.copy()
         proc_action = self._process_action(np.asarray(action, dtype=np.float32))
+        self._last_action_rate = proc_action - prev_applied
 
         observation, base_reward, terminated, truncated, info = self.env.step(proc_action)
         self.current_step += 1
@@ -223,7 +283,7 @@ class StandingEnv(gym.Wrapper):
         info.update(self._get_task_info())
         
         # Process observation with dimension verification
-        if self.enable_history or self.include_com or self.feature_norm:
+        if self.enable_history or self.include_com or self.feature_norm or self.proprioceptive:
             observation = self._process_observation(observation)
 
         return observation, reward, terminated, truncated, info
@@ -260,7 +320,12 @@ class StandingEnv(gym.Wrapper):
             height_reward = 25.0 - 20.0 * np.clip((height - 1.6) / 0.2, 0.0, 1.0)  
         
         # ========== UPRIGHT ORIENTATION REWARD  ==========
-        upright_error = 1.0 - abs(quat[0])
+        # Yaw-invariant tilt from projected gravity: gz = -1 upright, 0 horizontal.
+        # upright_cos = +1 upright, 0 horizontal, -1 inverted. (quat_w was WRONG
+        # here: a pure yaw spin shrinks quat_w and falsely reads as tipping.)
+        proj_grav = self._projected_gravity(quat)
+        upright_cos = -float(proj_grav[2])
+        upright_error = 1.0 - upright_cos
         if height >= 1.2:
             upright_reward = 12.0 * np.exp(-8.0 * upright_error**2)  
         elif height >= 1.0:
@@ -285,7 +350,29 @@ class StandingEnv(gym.Wrapper):
         
         # ========== CONTROL COST ========== 
         control_cost = -0.005 * np.sum(np.square(action))
-        
+
+        # ==========  ACTION-RATE PENALTY (anti-jitter / sim2real smoothness) ==========
+        # Charge the squared per-step change in the applied target. Capped so a
+        # single transient can't spike PPO's value targets.
+        if self.action_rate_weight > 0.0:
+            action_rate_penalty = -min(
+                self.action_rate_weight * float(np.sum(np.square(self._last_action_rate))),
+                20.0,
+            )
+        else:
+            action_rate_penalty = 0.0
+
+        # ==========  YAW-RATE DAMPING (anti-spin) ==========
+        # angular_vel = qvel[3:6] (base frame); [2] is yaw rate. Penalize its
+        # square, capped, so a transient can't spike PPO value targets.
+        if self.yaw_rate_weight > 0.0:
+            yaw_rate_penalty = -min(
+                self.yaw_rate_weight * float(angular_vel[2]) ** 2,
+                10.0,
+            )
+        else:
+            yaw_rate_penalty = 0.0
+
         # ==========  CAPPED HEIGHT MAINTENANCE PENALTY ==========
         height_velocity = height - self.prev_height if hasattr(self, 'prev_height') else 0.0
         if height_velocity < -0.003:  # Losing height
@@ -330,17 +417,19 @@ class StandingEnv(gym.Wrapper):
         termination_penalty = 0.0
         
         # ========== TERMINATION CONDITIONS ==========
+        # Tip-over test uses yaw-invariant tilt (upright_cos < 0.5 ~= >60 deg
+        # tilt), NOT quat_w (which fired at ~106 deg of harmless yaw).
         terminate = (
             height < 0.75 or
             height > 2.0 or
-            abs(quat[0]) < 0.6
+            upright_cos < 0.5
         )
-        
+
         #  Apply CONSTANT termination penalty (not time-dependent)
         if terminate:
             if height < 0.75:  # Fell too low
                 termination_penalty = -self.termination_penalty_constant
-            elif abs(quat[0]) < 0.6:  # Tipped over
+            elif upright_cos < 0.5:  # Tipped over
                 termination_penalty = -self.termination_penalty_constant
             else:  # Other terminations (height too high)
                 termination_penalty = -self.termination_penalty_constant * 0.5
@@ -353,9 +442,11 @@ class StandingEnv(gym.Wrapper):
             smoothness_reward +
             control_cost +
             height_maintenance +
-            recovery_bonus +  
+            recovery_bonus +
             velocity_penalty +
             sustained_bonus +
+            action_rate_penalty +
+            yaw_rate_penalty +
             termination_penalty
         )
         
@@ -372,10 +463,11 @@ class StandingEnv(gym.Wrapper):
         if self.current_step % 500 == 0:
             print(f"Step {self.current_step:4d}: "
                 f"h={height:.3f} (err={height_error:.3f}), "
-                f"quat_w={quat[0]:.3f}, "
+                f"tilt_cos={upright_cos:.3f}, yaw_rate={float(angular_vel[2]):+.2f}, "
                 f"r={total_reward:6.1f} "
                 f"[h={height_reward:6.1f}, u={upright_reward:4.1f}, "
                 f"stab={stability_reward:4.1f}, recov={recovery_bonus:4.1f}, "
+                f"rate={action_rate_penalty:5.1f}, yaw={yaw_rate_penalty:5.1f}, "
                 f"bonus={sustained_bonus:.0f}]")
         
         return total_reward, terminate
@@ -413,20 +505,25 @@ class StandingEnv(gym.Wrapper):
 
     def _process_observation(self, obs: np.ndarray) -> np.ndarray:
         """Process observation with correct dimension handling."""
-        features = [obs]
+        if self.proprioceptive:
+            # Rebuild obs from measurable-only signals; ignore the privileged
+            # Humanoid-v5 obs entirely.
+            feat_vec = self._proprioceptive_features()
+        else:
+            features = [obs]
 
-        # Add COM features if enabled
-        if self.include_com:
-            try:
-                com_pos = self.env.unwrapped.data.subtree_com[0]
-                com_vel = self.env.unwrapped.data.cdof_dot[:3] if hasattr(self.env.unwrapped.data, 'cdof_dot') else self.env.unwrapped.data.qvel[:3]
-                features.append(np.asarray(com_pos, dtype=np.float32))
-                features.append(np.asarray(com_vel, dtype=np.float32))
-            except (AttributeError, IndexError) as e:
-                logger.warning("Failed to add COM features: %s", e)
+            # Add COM features if enabled
+            if self.include_com:
+                try:
+                    com_pos = self.env.unwrapped.data.subtree_com[0]
+                    com_vel = self.env.unwrapped.data.cdof_dot[:3] if hasattr(self.env.unwrapped.data, 'cdof_dot') else self.env.unwrapped.data.qvel[:3]
+                    features.append(np.asarray(com_pos, dtype=np.float32))
+                    features.append(np.asarray(com_vel, dtype=np.float32))
+                except (AttributeError, IndexError) as e:
+                    logger.warning("Failed to add COM features: %s", e)
 
-        # Concatenate base + COM features
-        feat_vec = np.concatenate([np.atleast_1d(f).ravel() for f in features]).astype(np.float32)
+            # Concatenate base + COM features
+            feat_vec = np.concatenate([np.atleast_1d(f).ravel() for f in features]).astype(np.float32)
 
         # Feature normalization
         if self.feature_norm:
@@ -459,7 +556,68 @@ class StandingEnv(gym.Wrapper):
                 feat_vec = np.concatenate([feat_vec, pad], axis=0)
 
         return feat_vec
-        
+
+    # ======== Proprioceptive (deployable) observation ========
+
+    @staticmethod
+    def _projected_gravity(quat: np.ndarray) -> np.ndarray:
+        """Gravity direction expressed in the base body frame.
+
+        World gravity points down ([0,0,-1]); rotating it into the base frame by
+        the root orientation gives a 3-vector that is [0,0,-1] when upright and
+        tilts as the torso tips. This is the standard sim2real orientation cue and
+        is reconstructed on hardware from the IMU's fused orientation.
+
+        quat is MuJoCo order [w, x, y, z].
+        Convention check: real IMU accel at rest reads +1g UP, i.e. specific
+        force = -projected_gravity. Deployment should feed -accel_normalized here.
+        """
+        w, x, y, z = float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3])
+        gx = 2.0 * (w * y - x * z)
+        gy = -2.0 * (y * z + w * x)
+        gz = 2.0 * (x * x + y * y) - 1.0
+        return np.array([gx, gy, gz], dtype=np.float32)
+
+    def _foot_contacts(self) -> np.ndarray:
+        """Per-foot contact booleans — the signal the FSRs will provide.
+
+        Derived in sim from the foot bodies' external contact force magnitude.
+        Defaults off; only used when obs_foot_contact is set.
+        """
+        data = self.env.unwrapped.data
+        ids = self.model_spec.foot_body_ids if self._is_custom else []
+        out = []
+        for bid in list(ids)[:2]:
+            f = float(np.linalg.norm(data.cfrc_ext[bid][3:6]))
+            out.append(1.0 if f > 1.0 else 0.0)
+        while len(out) < 2:
+            out.append(0.0)
+        return np.asarray(out, dtype=np.float32)
+
+    def _proprioceptive_features(self) -> np.ndarray:
+        """Build the per-frame observation from measurable-only signals.
+
+        Order (must match deployment exactly):
+          projected_gravity(3) | base_ang_vel(3) | joint_pos-default(nj) |
+          joint_vel(nj) | last_action(nj) | [foot_contact(2)]
+        """
+        data = self.env.unwrapped.data
+        # base orientation -> projected gravity (IMU fused orientation on hardware)
+        proj_grav = self._projected_gravity(np.asarray(data.qpos[3:7]))
+        # base angular velocity, free-joint local frame (matches IMU gyro)
+        base_ang_vel = np.asarray(data.qvel[3:6], dtype=np.float32)
+        # joint angles relative to home pose (encoder-minus-home on hardware)
+        jpos = np.asarray(data.qpos[7:7 + self.n_joints], dtype=np.float32) - self.default_joint_pos
+        # joint velocities (finite-difference of encoders on hardware)
+        jvel = np.asarray(data.qvel[6:6 + self.n_joints], dtype=np.float32)
+        # last applied (smoothed) action
+        last_action = np.asarray(self.prev_action, dtype=np.float32).ravel()
+
+        feats = [proj_grav, base_ang_vel, jpos, jvel, last_action]
+        if self.include_foot_contact:
+            feats.append(self._foot_contacts())
+        return np.concatenate([np.atleast_1d(f).ravel() for f in feats]).astype(np.float32)
+
     def _get_task_info(self):
         """Get task-specific information"""
         root_x, root_y = self.env.unwrapped.data.qpos[0:2]
