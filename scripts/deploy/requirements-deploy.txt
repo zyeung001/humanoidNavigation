@@ -1,0 +1,15 @@
+# Minimal deps to run scripts/deploy/ on the Raspberry Pi.
+# The Pi does NOT need mujoco / gymnasium / the training stack — only these.
+# Versions pinned to the dev machine that trained the model, so PPO.load() doesn't
+# hit a version-mismatch error.
+
+numpy==2.4.6
+pyyaml==6.0.3
+stable-baselines3==2.8.0
+torch==2.12.0          # CPU build. On Pi OS use piwheels (https://www.piwheels.org/) or
+                       # the official aarch64 wheel; the +cpu suffix is fine.
+
+# --- hardware libs (Pi only; hardware.py lazy-imports them, so --dry-run works without) ---
+# smbus2                 # ICM-20948 over I2C
+# feetech-servo-sdk      # SCS bus servos (a.k.a. scservo_sdk). If you use Waveshare's
+#                        # vendored scservo_sdk source instead, drop it on the PYTHONPATH.
