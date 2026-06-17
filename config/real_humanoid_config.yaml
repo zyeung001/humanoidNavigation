@@ -7,7 +7,13 @@
 
 standing:
   # ========== ENVIRONMENT ==========
-  xml_file: models/humanoid_real.xml   # 18 bodies, 17 actuators, ~0.72 m tall, 1.30 kg
+  # v2 (build_humanoid_mjcf.py): 18 bodies, 17 actuators, ~0.72 m, 1.30 kg.
+  # POSITION servos (ctrl = target joint ANGLE, not torque) at real BOM torque
+  # limits (SCS15 1.47 N*m legs/waist, SCS0009 0.226 N*m arms); capsule/box
+  # collision with self-collision on; inertia grounded in mesh geometry; home
+  # keyframe = solved balanced standing pose. Passes 13/13 test_model_integrity.
+  # (v1 models/humanoid_real.xml — torque motors — still on disk if needed.)
+  xml_file: models/humanoid_real_v2.xml
 
   seed: 42
   n_envs: 12
@@ -16,31 +22,69 @@ standing:
   max_episode_steps: 5000              # shorter than std (10000): smaller robot, faster dynamics
 
   # ========== OBSERVATION PROCESSING ==========
-  # Real-robot obs dim is 460 (vs std 365). With history×4 + COM(6): 1864.
-  # The standing_env introspection handles the dim difference automatically.
+  # DEPLOYABLE (proprioceptive) observation. The stock Humanoid-v5 obs is ~460
+  # dims, ~400 of which (cinert/cvel/cfrc_ext/COM) are privileged sim state with
+  # no real sensor — a policy trained on it cannot run on hardware. With
+  # proprioceptive_obs the env rebuilds the obs from measurable-only signals:
+  #   proj_grav(3) + base_ang_vel(3) + joint_pos(17) + joint_vel(17)
+  #   + last_action(17) = 57, x history(4) = 228 dims.
+  # Every term maps 1:1 to a sensor on the robot (IMU quat -> proj_grav,
+  # IMU gyro -> ang_vel, encoders -> joint_pos/vel). NOTE: this changes the obs
+  # dim, so it is NOT checkpoint-compatible with the old 1864 privileged runs.
+  proprioceptive_obs: true
+  obs_foot_contact: false   # FSRs not wired yet; enable once they're on A0/A1
   obs_history: 4
-  obs_include_com: true
-  obs_feature_norm: true
+  obs_include_com: false    # forced off in proprioceptive mode (COM not measurable)
+  obs_feature_norm: false   # let VecNormalize scale; tanh(0.1x) over-squashes proprio obs
 
   # ========== ACTION ==========
   action_smoothing: true
-  action_smoothing_tau: 0.5
+  # 6/16: lowered 0.5 -> 0.3 for sim2real jitter. A tau=0.3 inference probe cut
+  # target chatter -47% (5.2->2.8 deg/step) but the tau=0.5-trained policy fell
+  # (3597<5000). Bumping action_rate_penalty alone (2->15) barely moved jitter
+  # (-13%) because it's dwarfed by the +300 sustained bonus -> tau is the real
+  # lever. Fine-tune AT 0.3 so the policy re-learns balance under the smoothing.
+  # NOTE: deployment inference loop must EMA-smooth actions at this same tau.
+  action_smoothing_tau: 0.3
   action_symmetry: false
   pd_assist: false
+  # Anti-jitter: penalize ||a_t - a_{t-1}||^2 of the applied target. The v1 run
+  # had no such term + std pinned at the cap, so the deterministic policy shook
+  # ("taut string"). Start moderate; raise if still twitchy, lower if it won't
+  # balance. Penalty is internally capped at -20.
+  # 6/16: bumped 2.0 -> 15.0 for sim2real. At 2.0 the term was ~-0.2 vs ~375
+  # reward (~0.05%) so the policy had no smoothness incentive: measured ~4-5 Hz
+  # tremor, 5.2 deg RMS target-change/step (scripts/debug/measure_jitter.py).
+  # A tau=0.3 inference probe halved the chatter but fell (3597<5000) -> must
+  # fine-tune so the policy re-learns balance under a smoothness gradient.
+  action_rate_penalty: 15.0
+  # Yaw-rate damping (anti-spin). The proprioceptive obs is yaw-INVARIANT
+  # (projected gravity can't see heading), so the policy drifts in a slow
+  # in-place spin. Yaw RATE is observable (gyro / qvel[5]), so penalize its
+  # square to null the spin. Penalty internally capped at -10. 0.0 = off.
+  yaw_rate_penalty: 30.0
 
   # ========== CURRICULUM ==========
   # Targets stay in the legacy 1.40-regime; _get_height() returns scaled COM-z
   # for custom models, so [0.80..1.40] maps to real COM [0.30..0.53] m.
-  curriculum_start_stage: 0
+  # Custom-model height scaling maps the robot's NATURAL standing COM to 1.40 —
+  # the curriculum's FINAL target. So the reset pose already sits at the goal and
+  # stages 0-4 (crouch heights 0.80-1.35) are vestigial: the v1 run froze at
+  # stage 0 forever (err locked at |1.40-0.80|=0.600) while the robot stood fine
+  # at 1.40. Start at the final stage so the run trains the real target.
+  curriculum_start_stage: 5
   curriculum_max_stage: 5
   curriculum_advance_after: 20
   curriculum_success_rate: 0.60
 
   # ========== DOMAIN RANDOMIZATION ==========
-  # Off initially. The Fusion-exported masses are validated against the real
-  # 3 lb robot but the inertias are Fusion defaults — enable rand only after
-  # the base controller is stable, so we know the unrandomized model trains.
+  # Off initially. Masses are real (Fusion densities, 1.30 kg) and inertias are
+  # now geometry-grounded (v2 reground_inertia), so the unrandomized model is
+  # physically faithful — enable rand only after the base controller is stable.
   domain_rand: false
+  # The 6-stage curriculum normally force-enables domain_rand at the final stage.
+  # Opt out so our explicit domain_rand:false above is honored even at stage 5.
+  curriculum_manage_domain_rand: false
   rand_mass_range: [0.97, 1.03]
   rand_friction_range: [0.97, 1.03]
 
@@ -56,13 +100,18 @@ standing:
     termination_penalty_constant: 50.0
 
   # ========== PPO HYPERPARAMETERS ==========
-  total_timesteps: 5_000_000
+  total_timesteps: 10_000_000   # 2x: real body needs more steps to converge from scratch
   learning_rate: 0.0003
   final_learning_rate: 0.00005
 
   n_steps: 2048
-  batch_size: 256
-  n_epochs: 10
+  # KL-stability fix for the real body. The std config's 256/10 (=960 grad
+  # steps/cycle) KL-explodes here (clip_fraction 0.755, KL 0.31) because the
+  # lighter real body is more update-sensitive. 2048/5 = 60 grad steps/cycle:
+  # ~16x gentler, still enough to learn from scratch (cf. walking b91a244 which
+  # uses full-batch 24576/3 for the same reason).
+  batch_size: 2048
+  n_epochs: 5
 
   gamma: 0.995
   gae_lambda: 0.95
@@ -70,8 +119,18 @@ standing:
   clip_range: 0.2
   final_clip_range: 0.1
 
-  ent_coef: 0.02
-  final_ent_coef: 0.005
+  ent_coef: 0.005        # was 0.02; that pushed std hard against the log_std cap. Lower so the
+                         #   policy is free to sharpen its mean instead of maximizing noise.
+  final_ent_coef: 0.001   # lower: let std tighten instead of staying pinned at the log_std cap
+
+  # log_std clamp. CRITICAL for the v2 position-servo plant: action = target joint angle
+  # in RADIANS (ranges ~+-1.5 rad), NOT a torque on [-1,1]. v1 capped at 0.0 (std<=1.0)
+  # which is ~1 rad / ~57 deg of action noise per joint -> violent jitter, and the
+  # deterministic mean was never a stable balance point (fell ~step 120, 0% eval success).
+  # Clamp into a tight band: [-2.0, -1.5] => std in [0.135, 0.223] rad (~8-13 deg). Always
+  # some exploration, never the ~1 rad noise that destabilized the noise-free policy.
+  log_std_max: -1.5
+  log_std_min: -2.0
 
   vf_coef: 0.5
   max_grad_norm: 0.5

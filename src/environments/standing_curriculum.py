@@ -50,6 +50,12 @@ class StandingCurriculumEnv(StandingEnv):
 
     def _apply_stage_settings(self, cfg: Dict[str, Any], stage: int) -> None:
         """Configure curriculum stage with progressive difficulty."""
+        # The per-stage logic below escalates domain randomization (off early,
+        # full at the final stage). Set curriculum_manage_domain_rand: false to
+        # opt out and keep the config's explicit domain_rand value — needed for
+        # the real-robot first run, which wants rand OFF even at stage 5.
+        manage_domain_rand = cfg.get('curriculum_manage_domain_rand', True)
+        user_domain_rand = cfg.get('domain_rand', False)
         if stage == 0:
             # Stage 0 (0.80m): Recovery training, very forgiving
             cfg['domain_rand'] = False
@@ -78,6 +84,11 @@ class StandingCurriculumEnv(StandingEnv):
             cfg['max_episode_steps'] = 5000
             cfg['random_height_init'] = True
             cfg['random_height_prob'] = 0.1  # Still some random init for robustness
+
+        # Honor an explicit opt-out: leave domain_rand at the config's value
+        # instead of the stage-escalated one.
+        if not manage_domain_rand:
+            cfg['domain_rand'] = user_domain_rand
 
     def reset(self, seed: Optional[int] = None):
         # Update target height for current stage
