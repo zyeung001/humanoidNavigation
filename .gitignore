@@ -225,3 +225,7 @@ models/configs/*.yaml
 models/*.zip
 models/*.pkl
 
+# Exported NumPy policy bundles (deploy artifact; scp to the Pi, like the .zip/.pkl)
+models/**/*.npz
+models/*.npz
+

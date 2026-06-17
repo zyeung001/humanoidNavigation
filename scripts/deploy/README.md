@@ -10,6 +10,24 @@ All files here run **on the Pi** except the `--dry-run` paths, which run anywher
 | `hardware.py` | **The hardware seam.** `ServoBus` (scservo_sdk SCSCL) + `IMU` (ICM-20948). Reconcile with your Pi driver HERE only. |
 | `verify_signs.py` | Bench tool: confirm which servo each action index drives and its sign. Writes results back into the map. |
 | `deploy_standing.py` | The closed-loop inference loop. |
+| `export_policy.py` | **Dev box only:** dump the SB3 policy + vecnorm stats to a torch-free `.npz`. |
+| `numpy_policy.py` | Pure-NumPy inference for the `.npz` (no torch/SB3/pickle). |
+
+## Recommended: torch-free NumPy policy
+Running torch + SB3 on a Pi works but the ARM wheels are heavy/fiddly. The policy is a small
+`[512,512,256]` SiLU MLP, so export it to a NumPy bundle and the Pi needs only `numpy` + `pyyaml`:
+
+```bash
+# on the DEV box (has torch+SB3):
+python scripts/deploy/export_policy.py        # -> models/real_standing_policy.npz (~2 MB)
+#   bundles policy weights AND vecnorm stats; self-checks parity vs SB3 (asserts <1e-4).
+# scp models/real_standing_policy.npz pi@<ip>:~/humanoidnavigation/models/
+
+# on the Pi:
+python scripts/deploy/deploy_standing.py --policy-npz models/real_standing_policy.npz
+```
+Output is byte-identical to the SB3 backend. Without `--policy-npz`, the loop falls back to
+loading the `.zip` + `.pkl` (needs torch+SB3). The `.npz` is gitignored — `scp` it like the `.zip`/`.pkl`.
 
 ## Order of operations
 1. **Validate wiring (any machine):** `python scripts/deploy/deploy_standing.py --dry-run`

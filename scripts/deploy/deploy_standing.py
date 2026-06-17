@@ -55,6 +55,17 @@ def normalize(obs, mean, var, eps, clip):
     return np.clip((obs - mean) / np.sqrt(var + eps), -clip, clip).astype(np.float32)
 
 
+class _SB3Backend:
+    """Wraps an SB3 PPO model + vecnorm stats to a uniform predict(raw_obs)->action."""
+
+    def __init__(self, model, mean, var, eps, clip):
+        self.model, self.mean, self.var, self.eps, self.clip = model, mean, var, eps, clip
+
+    def predict(self, obs):
+        z = normalize(obs, self.mean, self.var, self.eps, self.clip)
+        return self.model.predict(z, deterministic=True)[0]
+
+
 class ObsBuilder:
     """Maintains history + finite-diff joint velocity, emits the 228-dim obs."""
 
@@ -86,6 +97,9 @@ def main():
     p.add_argument("--model", default=str(ROOT / "models" / "final_real_standing_model.zip"))
     p.add_argument("--vecnorm", default=str(ROOT / "models" / "vecnorm_real_standing.pkl"))
     p.add_argument("--map", default=str(DEFAULT_MAP))
+    p.add_argument("--policy-npz", default=None,
+                   help="torch-free NumPy policy bundle from export_policy.py. If set, runs with "
+                        "numpy only (no torch/SB3/pkl); else loads the SB3 .zip + vecnorm .pkl.")
     p.add_argument("--tau", type=float, default=0.3, help="action smoothing (MUST match training)")
     p.add_argument("--hz", type=float, default=40.0)
     p.add_argument("--ramp-secs", type=float, default=2.0, help="open-loop ramp to home before closed loop")
@@ -109,20 +123,26 @@ def main():
             return
         print(msg)
 
-    # ---- load policy + normalization ----
-    from stable_baselines3 import PPO  # noqa: E402
-    print(f"Loading model {args.model}")
-    model = PPO.load(args.model, device="cpu")
-    mean, var, eps, clip = load_vecnorm_stats(args.vecnorm)
-    print(f"VecNormalize stats OK (obs_dim={OBS_DIM}, clip={clip})")
+    # ---- load policy (numpy bundle OR torch/SB3) ----
+    if args.policy_npz:
+        from numpy_policy import NumpyPolicy  # noqa: E402
+        npol = NumpyPolicy.load(args.policy_npz)
+        assert npol.obs_dim == OBS_DIM, f"npz obs_dim {npol.obs_dim} != {OBS_DIM}"
+        infer = npol.predict  # raw obs -> action; normalization baked in
+        print(f"Policy: NumPy bundle {args.policy_npz} (no torch/SB3, obs_dim={npol.obs_dim})")
+    else:
+        from stable_baselines3 import PPO  # noqa: E402
+        model = PPO.load(args.model, device="cpu")
+        mean, var, eps, clip = load_vecnorm_stats(args.vecnorm)
+        infer = _SB3Backend(model, mean, var, eps, clip).predict
+        print(f"Policy: SB3 {args.model} + vecnorm (obs_dim={OBS_DIM}, clip={clip})")
 
     builder = ObsBuilder(m, dt)
 
     def predict_units(proj_grav, ang_vel, jpos):
         frame = builder.frame(proj_grav, ang_vel, jpos)
         obs = builder.obs(frame)
-        raw_action = model.predict(normalize(obs, mean, var, eps, clip), deterministic=True)[0]
-        raw_action = np.asarray(raw_action, dtype=np.float32).ravel()
+        raw_action = np.asarray(infer(obs), dtype=np.float32).ravel()
         # Match StandingEnv._process_action: SB3 clips the action to the space BEFORE the
         # env smooths it, so clip raw -> EMA-smooth -> clip again.
         raw_action = np.clip(raw_action, m.range_lo, m.range_hi)
