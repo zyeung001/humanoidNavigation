@@ -22,6 +22,7 @@ Defaults match the deployed model:
 
 from __future__ import annotations
 import argparse
+import os
 import pickle
 import sys
 import time
@@ -111,6 +112,8 @@ def main():
     p.add_argument("--imu-on-chest", action="store_true",
                    help="IMU is mounted on the chest (above the waist joints): rotate proj_grav/"
                         "ang_vel into the pelvis frame using the live waist encoder angles.")
+    p.add_argument("--imu-calib", default=str(ROOT / "config" / "imu_calib.yaml"),
+                   help="YAML with axis_remap (raw IMU axes -> chest frame). Identity if missing.")
     p.add_argument("--dry-run", action="store_true", help="no hardware: load, predict once with zero sensors, print")
     args = p.parse_args()
 
@@ -170,8 +173,14 @@ def main():
 
     # ---- hardware ----
     from hardware import ServoBus, IMU  # noqa: E402
+    axis_remap = None
+    if os.path.exists(args.imu_calib):
+        import yaml  # noqa: E402
+        with open(args.imu_calib) as f:
+            axis_remap = np.asarray(yaml.safe_load(f)["axis_remap"], dtype=np.float32)
+        print(f"IMU axis_remap loaded from {args.imu_calib}:\n{axis_remap}")
     bus = ServoBus().connect()
-    imu = IMU().connect()
+    imu = IMU(axis_remap=axis_remap).connect()
 
     # waist joint indices (for the chest->pelvis IMU transform)
     dof_idx = {j.dof: j.idx for j in m.joints}
