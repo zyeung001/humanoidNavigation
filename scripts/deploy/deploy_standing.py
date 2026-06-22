@@ -109,11 +109,8 @@ def main():
     p.add_argument("--speed", type=int, default=0, help="servo move speed (0=max)")
     p.add_argument("--require-verified", action="store_true",
                    help="refuse to drive joints whose sign is not bench-verified")
-    p.add_argument("--imu-on-chest", action="store_true",
-                   help="IMU is mounted on the chest (above the waist joints): rotate proj_grav/"
-                        "ang_vel into the pelvis frame using the live waist encoder angles.")
     p.add_argument("--imu-calib", default=str(ROOT / "config" / "imu_calib.yaml"),
-                   help="YAML with axis_remap (raw IMU axes -> chest frame). Identity if missing.")
+                   help="YAML with axis_remap (raw IMU axes -> pelvis/base frame). Identity if missing.")
     p.add_argument("--dry-run", action="store_true", help="no hardware: load, predict once with zero sensors, print")
     args = p.parse_args()
 
@@ -182,22 +179,12 @@ def main():
     bus = ServoBus().connect()
     imu = IMU(axis_remap=axis_remap).connect()
 
-    # waist joint indices (for the chest->pelvis IMU transform)
-    dof_idx = {j.dof: j.idx for j in m.joints}
-    waist_ix = [dof_idx["waist_roll"], dof_idx["waist_pitch"], dof_idx["waist_yaw"]]
-    if args.imu_on_chest:
-        from imu_frame import chest_to_pelvis  # noqa: E402
-        print(f"IMU-on-chest: rotating proj_grav/ang_vel to pelvis frame via waist idx {waist_ix}")
-
     def read_sensors():
+        # IMU is on the pelvis/base body, so proj_grav/ang_vel are already in the obs frame.
         pg = imu.projected_gravity()
         av = imu.angular_velocity()
         units = bus.read_all(m.servo_ids)
         abs_rad = m.units_to_rad(units)                    # absolute joint angles (sim, 0=straight)
-        if args.imu_on_chest:
-            R = chest_to_pelvis(*abs_rad[waist_ix])
-            pg = (R @ pg).astype(np.float32)
-            av = (R @ av).astype(np.float32)
         jpos = (abs_rad - m.default_joint_pos).astype(np.float32)
         return pg, av, jpos
 
