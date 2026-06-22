@@ -32,13 +32,13 @@ default_joint_pos: [-0.06023, 0.95993, -0.32092, 0.0292, -0.0185, 1.13261, -0.09
 joints:
   # ---- RIGHT LEG (roll, yaw, pitch, knee) -- DOF high-confidence via axis ----
   - {idx: 0,  mjcf: "Revolute 18", dof: "R_hip_roll",   axis: x, sim_range: [-1.5708, 0.3491], servo_id: 4,  sign: +1, sign_verified: false, servo_limit: [411, 613]}
-  - {idx: 1,  mjcf: "Revolute 26", dof: "R_hip_yaw",    axis: z, sim_range: [-1.5708, 0.9599], servo_id: 5,  sign: +1, sign_verified: false, servo_limit: [411, 613]}
+  - {idx: 1,  mjcf: "Revolute 26", dof: "R_hip_yaw",    axis: z, sim_range: [-1.5708, 0.9599], servo_id: 5,  sign: +1, sign_verified: false, servo_limit: [411, 700]}  # hi widened: +55deg standing pose (6/21)
   - {idx: 2,  mjcf: "Revolute 23", dof: "R_hip_pitch",  axis: y, sim_range: [-1.5708, 0.3491], servo_id: 6,  sign: +1, sign_verified: false, servo_limit: [411, 613]}
   - {idx: 3,  mjcf: "Revolute 21", dof: "R_knee",       axis: y, sim_range: [-1.5708, 1.5708], servo_id: 7,  sign: -1, sign_verified: true,  servo_limit: [206, 512]}  # hinge, INVERTED
 
   # ---- LEFT LEG ----
   - {idx: 4,  mjcf: "Revolute 24", dof: "L_hip_roll",   axis: x, sim_range: [-1.5708, 0.1745], servo_id: 8,  sign: +1, sign_verified: false, servo_limit: [411, 613]}
-  - {idx: 5,  mjcf: "Revolute 28", dof: "L_hip_yaw",    axis: z, sim_range: [-0.9599, 1.5708], servo_id: 9,  sign: +1, sign_verified: false, servo_limit: [411, 613]}
+  - {idx: 5,  mjcf: "Revolute 28", dof: "L_hip_yaw",    axis: z, sim_range: [-0.9599, 1.5708], servo_id: 9,  sign: +1, sign_verified: false, servo_limit: [411, 735]}  # hi widened: +65deg standing pose (6/21)
   - {idx: 6,  mjcf: "Revolute 25", dof: "L_hip_pitch",  axis: y, sim_range: [-1.5708, 0.3491], servo_id: 10, sign: +1, sign_verified: false, servo_limit: [411, 613]}
   - {idx: 7,  mjcf: "Revolute 27", dof: "L_knee",       axis: y, sim_range: [-1.5708, 1.5708], servo_id: 11, sign: +1, sign_verified: true,  servo_limit: [512, 818]}  # hinge, normal
 
