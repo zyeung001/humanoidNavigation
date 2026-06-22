@@ -66,7 +66,27 @@ class StandingEnv(gym.Wrapper):
         # randomization is applied relative to nominal (not compounded).
         self._nominal_body_mass = None
         self._nominal_geom_friction = None
-        
+
+        # ======== sim2real robustness (all OFF by default => standard path unchanged) ========
+        # Observation noise + per-episode sensor BIASES. A real IMU/encoder set has both
+        # per-step noise and a constant per-power-cycle offset; the policy must be robust to
+        # both or it limit-cycles on hardware. Only affects the proprioceptive obs path.
+        self.obs_noise = bool(self.cfg.get('obs_noise', False))
+        self.noise_projgrav = float(self.cfg.get('noise_projgrav', 0.02))   # IMU tilt jitter
+        self.noise_angvel = float(self.cfg.get('noise_angvel', 0.05))       # gyro noise (rad/s)
+        self.noise_jpos = float(self.cfg.get('noise_jpos', 0.005))          # encoder noise (rad)
+        self.noise_jvel = float(self.cfg.get('noise_jvel', 0.20))           # finite-diff vel noise
+        self.bias_jpos_std = float(self.cfg.get('bias_jpos', 0.015))        # per-ep encoder offset
+        self.bias_angvel_std = float(self.cfg.get('bias_angvel', 0.02))     # per-ep gyro bias
+        self._bias_jpos = None
+        self._bias_angvel = None
+        # Actuator-gain randomization: real position servos differ from the MJCF kp/kv and vary
+        # unit-to-unit. Scale kp/kv per episode so the policy doesn't overfit one plant.
+        self.actuator_rand = bool(self.cfg.get('actuator_rand', False))
+        self.actuator_rand_range = self.cfg.get('actuator_rand_range', [0.8, 1.2])
+        self._nominal_gainprm = None
+        self._nominal_biasprm = None
+
         #Random height initialization for recovery training
         self.random_height_init = self.cfg.get('random_height_init', True)
         self.random_height_prob = self.cfg.get('random_height_prob', 0.3)
@@ -237,7 +257,28 @@ class StandingEnv(gym.Wrapper):
                 self.rand_friction_range[0], self.rand_friction_range[1],
                 size=m.geom_friction.shape[0]
             )
-        
+
+        # Per-episode constant sensor biases (the offset a real IMU/encoder set holds for a
+        # whole power-cycle). Sampled once here, added in _proprioceptive_features.
+        if self.obs_noise:
+            self._bias_jpos = np.random.normal(0.0, self.bias_jpos_std, size=self.n_joints).astype(np.float32)
+            self._bias_angvel = np.random.normal(0.0, self.bias_angvel_std, size=3).astype(np.float32)
+
+        # Actuator-gain randomization: scale each position servo's kp/kv per episode, relative
+        # to nominal (captured once). gainprm[:,0]=kp, biasprm[:,1]=-kp, biasprm[:,2]=-kv.
+        if self.actuator_rand:
+            m = self.env.unwrapped.model
+            if self._nominal_gainprm is None:
+                self._nominal_gainprm = m.actuator_gainprm.copy()
+                self._nominal_biasprm = m.actuator_biasprm.copy()
+            scale = np.random.uniform(
+                self.actuator_rand_range[0], self.actuator_rand_range[1],
+                size=m.actuator_gainprm.shape[0]
+            )
+            m.actuator_gainprm[:, 0] = self._nominal_gainprm[:, 0] * scale
+            m.actuator_biasprm[:, 1] = self._nominal_biasprm[:, 1] * scale
+            m.actuator_biasprm[:, 2] = self._nominal_biasprm[:, 2] * scale
+
         # Random height initialization for recovery training. Skip for custom
         # models: the legacy [0.6, 1.6] clip assumes a 1.40 m-target capsule
         # humanoid and would push a smaller robot through the floor or ceiling.
@@ -612,6 +653,18 @@ class StandingEnv(gym.Wrapper):
         jvel = np.asarray(data.qvel[6:6 + self.n_joints], dtype=np.float32)
         # last applied (smoothed) action
         last_action = np.asarray(self.prev_action, dtype=np.float32).ravel()
+
+        # sim2real: per-episode bias + per-step Gaussian noise on the measured channels
+        # (last_action is internal, left clean). Off unless obs_noise is set.
+        if self.obs_noise:
+            proj_grav = proj_grav + np.random.normal(0.0, self.noise_projgrav, size=3).astype(np.float32)
+            base_ang_vel = base_ang_vel + np.random.normal(0.0, self.noise_angvel, size=3).astype(np.float32)
+            jpos = jpos + np.random.normal(0.0, self.noise_jpos, size=self.n_joints).astype(np.float32)
+            jvel = jvel + np.random.normal(0.0, self.noise_jvel, size=self.n_joints).astype(np.float32)
+            if self._bias_angvel is not None:
+                base_ang_vel = base_ang_vel + self._bias_angvel
+            if self._bias_jpos is not None:
+                jpos = jpos + self._bias_jpos
 
         feats = [proj_grav, base_ang_vel, jpos, jvel, last_action]
         if self.include_foot_contact:
