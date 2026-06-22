@@ -84,10 +84,14 @@ def main():
     print(f"  +{args.delta} rad -> units {u_plus}  ({pdir});  -{args.delta} rad -> units {u_minus}")
     print("  sequence: 512 -> +d -> 512 -> -d -> 512")
 
-    ramp(bus, j.servo_id, NEUTRAL, u_plus, speed=args.speed);  time.sleep(0.6)
-    ramp(bus, j.servo_id, u_plus, NEUTRAL, speed=args.speed);  time.sleep(0.3)
-    ramp(bus, j.servo_id, NEUTRAL, u_minus, speed=args.speed); time.sleep(0.6)
-    ramp(bus, j.servo_id, u_minus, NEUTRAL, speed=args.speed); time.sleep(0.3)
+    ramp(bus, j.servo_id, NEUTRAL, u_plus, speed=args.speed)
+    time.sleep(0.6)
+    ramp(bus, j.servo_id, u_plus, NEUTRAL, speed=args.speed)
+    time.sleep(0.3)
+    ramp(bus, j.servo_id, NEUTRAL, u_minus, speed=args.speed)
+    time.sleep(0.6)
+    ramp(bus, j.servo_id, u_minus, NEUTRAL, speed=args.speed)
+    time.sleep(0.3)
     print("  done (held at 512, torque still ON).")
     bus.close()
 
