@@ -70,20 +70,29 @@ class _SB3Backend:
 class ObsBuilder:
     """Maintains history + finite-diff joint velocity, emits the 228-dim obs."""
 
-    def __init__(self, m: SimRealMap, dt: float):
+    def __init__(self, m: SimRealMap, dt: float, jvel_alpha: float = 0.35):
         self.m = m
         self.dt = dt
+        self.jvel_alpha = float(jvel_alpha)
         self.hist = deque(maxlen=HISTORY)
         self.prev_jpos = None
+        self.jvel_f = np.zeros(NJ, dtype=np.float32)      # low-passed joint velocity
+        self.last_jvel_raw = np.zeros(NJ, dtype=np.float32)  # for --debug
         self.last_action = np.zeros(NJ, dtype=np.float32)  # smoothed target (sim rad), env init=0
 
     def frame(self, proj_grav, ang_vel, jpos):
         if self.prev_jpos is None:
-            jvel = np.zeros(NJ, dtype=np.float32)
+            raw = np.zeros(NJ, dtype=np.float32)
         else:
-            jvel = ((jpos - self.prev_jpos) / self.dt).astype(np.float32)
+            raw = ((jpos - self.prev_jpos) / self.dt).astype(np.float32)
         self.prev_jpos = jpos.copy()
-        return np.concatenate([proj_grav, ang_vel, jpos, jvel, self.last_action]).astype(np.float32)
+        self.last_jvel_raw = raw
+        # Low-pass the finite-diff velocity. Quantized-encoder finite differencing at 40 Hz
+        # is far noisier than the clean velocity the policy trained on; the policy amplifies
+        # that noise into target jitter. alpha=1.0 disables (raw); lower = smoother.
+        a = self.jvel_alpha
+        self.jvel_f = ((1.0 - a) * self.jvel_f + a * raw).astype(np.float32)
+        return np.concatenate([proj_grav, ang_vel, jpos, self.jvel_f, self.last_action]).astype(np.float32)
 
     def obs(self, frame):
         self.hist.append(frame)
@@ -107,6 +116,10 @@ def main():
     p.add_argument("--tilt-cut", type=float, default=0.5, help="hold+cut torque if upright_cos < this (~60deg)")
     p.add_argument("--max-step-units", type=int, default=80, help="per-joint per-step servo move clamp")
     p.add_argument("--speed", type=int, default=0, help="servo move speed (0=max)")
+    p.add_argument("--jvel-alpha", type=float, default=0.35,
+                   help="low-pass on joint-velocity obs (1.0=raw/off, lower=smoother; anti-jitter)")
+    p.add_argument("--debug", action="store_true", help="print obs/action diagnostics each --debug-every steps")
+    p.add_argument("--debug-every", type=int, default=10)
     p.add_argument("--require-verified", action="store_true",
                    help="refuse to drive joints whose sign is not bench-verified")
     p.add_argument("--imu-calib", default=str(ROOT / "config" / "imu_calib.yaml"),
@@ -140,7 +153,7 @@ def main():
         infer = _SB3Backend(model, mean, var, eps, clip).predict
         print(f"Policy: SB3 {args.model} + vecnorm (obs_dim={OBS_DIM}, clip={clip})")
 
-    builder = ObsBuilder(m, dt)
+    builder = ObsBuilder(m, dt, jvel_alpha=args.jvel_alpha)
 
     def predict_units(proj_grav, ang_vel, jpos):
         frame = builder.frame(proj_grav, ang_vel, jpos)
@@ -205,8 +218,11 @@ def main():
             builder.obs(builder.frame(pg, av, jpos))
             time.sleep(dt)
 
-        print("Closed loop running (Ctrl-C to stop).")
+        print(f"Closed loop running (Ctrl-C to stop). jvel_alpha={args.jvel_alpha}, "
+              f"max_step_units={args.max_step_units}, tau={args.tau}")
         prev_units = home_units.copy().astype(float)
+        prev_applied = builder.last_action.copy()
+        step = 0
         while True:
             t0 = time.time()
             pg, av, jpos = read_sensors()
@@ -217,12 +233,22 @@ def main():
                 bus.set_torque(m.servo_ids, False)
                 break
 
-            units, _ = predict_units(pg, av, jpos)
+            units, applied = predict_units(pg, av, jpos)
             # per-step move clamp (rate limit), then write
             units = np.clip(units, prev_units - args.max_step_units, prev_units + args.max_step_units)
             units = np.clip(units, m.lim_lo, m.lim_hi).round().astype(int)
             bus.write_all(m.servo_ids, units, speed=args.speed)
             prev_units = units.astype(float)
+
+            if args.debug and step % args.debug_every == 0:
+                print(f"[{step:5d}] pg=[{pg[0]:+.2f},{pg[1]:+.2f},{pg[2]:+.2f}] "
+                      f"|av|={np.linalg.norm(av):.2f} "
+                      f"max|jvel_raw|={np.max(np.abs(builder.last_jvel_raw)):5.1f} "
+                      f"max|jvel_f|={np.max(np.abs(builder.jvel_f)):5.1f} "
+                      f"max|act|={np.max(np.abs(applied)):.2f} "
+                      f"d_act={np.max(np.abs(applied - prev_applied)):.3f}")
+            prev_applied = applied.copy()
+            step += 1
 
             time.sleep(max(0.0, dt - (time.time() - t0)))
     except KeyboardInterrupt:
