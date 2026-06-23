@@ -10,7 +10,9 @@
 #   target_units = servo_center + sign * (sim_rad) * units_per_rad
 #   target_units = clip(target_units, servo_min, servo_max)
 # servo_center = 512 (home = sim 0 = straight), units_per_rad ~= 195 (1.5708 rad = 306 units).
-# SCS servos are 10-bit (0..1023).
+# SCS servos are 10-bit (0..1023). A joint may override servo_center with a per-joint
+# `center:` when its physical-straight neutral differs from 512 (measured via hand re-zero,
+# saved in home.json). This corrects BOTH the ramp/command target AND the obs joint angle.
 #
 # sign_verified: true  = direction confirmed on the bare servo (only the 4 hinges so far).
 #                false = NOT yet tested; sign is a best guess, MUST verify on bare servo
@@ -43,7 +45,7 @@ joints:
   - {idx: 7,  mjcf: "Revolute 27", dof: "L_knee",       axis: y, sim_range: [-1.5708, 1.5708], servo_id: 11, sign: +1, sign_verified: true,  servo_limit: [512, 818]}  # hinge, normal
 
   # ---- WAIST (roll, pitch, yaw) ----
-  - {idx: 8,  mjcf: "Revolute 22", dof: "waist_roll",   axis: x, sim_range: [-0.6109, 0.6109], servo_id: 3,  sign: -1, sign_verified: true, servo_limit: [411, 613]}
+  - {idx: 8,  mjcf: "Revolute 22", dof: "waist_roll",   axis: x, sim_range: [-0.6109, 0.6109], servo_id: 3,  sign: -1, sign_verified: true, servo_limit: [411, 613], center: 485}  # physical-straight = 485 (hand re-zero 6/18), not 512
   - {idx: 9,  mjcf: "Revolute 20", dof: "waist_pitch",  axis: y, sim_range: [-0.3491, 1.5708], servo_id: 2,  sign: +1, sign_verified: true, servo_limit: [411, 613]}
   - {idx: 10, mjcf: "Revolute 19", dof: "waist_yaw",    axis: z, sim_range: [-1.5708, 1.5708], servo_id: 1,  sign: -1, sign_verified: true, servo_limit: [411, 613]}
 

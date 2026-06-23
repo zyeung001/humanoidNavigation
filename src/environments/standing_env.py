@@ -3,6 +3,7 @@
 
 import logging
 import os
+from collections import deque
 
 import gymnasium as gym
 import numpy as np
@@ -86,6 +87,25 @@ class StandingEnv(gym.Wrapper):
         self.actuator_rand_range = self.cfg.get('actuator_rand_range', [0.8, 1.2])
         self._nominal_gainprm = None
         self._nominal_biasprm = None
+
+        # Actuator LAG model: the dominant sim2real gap for the real robot. Bench step-response
+        # (scripts/deploy/servo_step_response.py) measured the SCS servos at ~50 ms dead time +
+        # ~120 ms first-order time constant (max ~2.1 rad/s) -- the sim position actuator instead
+        # tracks its target the SAME control step. A policy trained on the instant actuator relies
+        # on fast corrections the real servo can't follow -> it limit-cycles and falls. This models
+        # the real response by feeding the actuator a DELAYED + low-pass-filtered version of the
+        # commanded target, randomized per episode (dead time + tau cover unit-to-unit + load).
+        # The obs's last_action stays the COMMANDED value and jpos reflects the lagged result, so
+        # the policy sees command-vs-actual divergence exactly like hardware. Default off (legacy
+        # byte-identical). Training-only: at deploy the REAL servo supplies the lag, so do NOT
+        # enable this in the deploy loop (it would double-lag).
+        self.actuator_lag = bool(self.cfg.get('actuator_lag', False))
+        self.actuator_delay_ms = self.cfg.get('actuator_delay_ms', [30.0, 70.0])
+        self.actuator_tau_ms = self.cfg.get('actuator_tau_ms', [90.0, 220.0])
+        self._control_dt = float(self.env.unwrapped.dt)   # 0.025 s (40 Hz) for the real model
+        self._lag_buffer = None
+        self._servo_state = None
+        self._lag_alpha = 1.0
 
         #Random height initialization for recovery training
         self.random_height_init = self.cfg.get('random_height_init', True)
@@ -279,6 +299,20 @@ class StandingEnv(gym.Wrapper):
             m.actuator_biasprm[:, 1] = self._nominal_biasprm[:, 1] * scale
             m.actuator_biasprm[:, 2] = self._nominal_biasprm[:, 2] * scale
 
+        # Actuator lag: sample a per-episode dead time + first-order time constant, build the
+        # delay line and reset the filter state. Dead time -> integer control-step delay; tau ->
+        # discrete first-order coefficient alpha = 1 - exp(-dt/tau).
+        if self.actuator_lag:
+            dt = self._control_dt
+            delay_ms = np.random.uniform(self.actuator_delay_ms[0], self.actuator_delay_ms[1])
+            tau_ms = np.random.uniform(self.actuator_tau_ms[0], self.actuator_tau_ms[1])
+            delay_steps = max(0, int(round((delay_ms / 1000.0) / dt)))
+            self._lag_alpha = float(1.0 - np.exp(-dt / max(tau_ms / 1000.0, 1e-4)))
+            zero = np.zeros(self.env.action_space.shape, dtype=np.float32)
+            self._lag_buffer = deque([zero.copy() for _ in range(delay_steps + 1)],
+                                     maxlen=delay_steps + 1)
+            self._servo_state = zero.copy()
+
         # Random height initialization for recovery training. Skip for custom
         # models: the legacy [0.6, 1.6] clip assumes a 1.40 m-target capsule
         # humanoid and would push a smaller robot through the floor or ceiling.
@@ -311,7 +345,11 @@ class StandingEnv(gym.Wrapper):
         proc_action = self._process_action(np.asarray(action, dtype=np.float32))
         self._last_action_rate = proc_action - prev_applied
 
-        observation, base_reward, terminated, truncated, info = self.env.step(proc_action)
+        # The COMMANDED (smoothed) action is what the obs reports as last_action and what the
+        # reward charges for control/rate. The ACTUATOR, however, receives the lagged signal so
+        # the resulting joint motion (and thus the jpos obs) trails the command like a real servo.
+        actuator_action = self._apply_actuator_lag(proc_action) if self.actuator_lag else proc_action
+        observation, base_reward, terminated, truncated, info = self.env.step(actuator_action)
         self.current_step += 1
         
         # Modify reward for standing
@@ -543,6 +581,19 @@ class StandingEnv(gym.Wrapper):
         action = np.clip(action, low, high)
         self.prev_action = action.copy()
         return action
+
+    def _apply_actuator_lag(self, cmd: np.ndarray) -> np.ndarray:
+        """Model the real servo: dead-time delay then first-order lag toward the command.
+
+        cmd is the commanded (smoothed) target. Returns the value actually sent to the MuJoCo
+        actuator this step. The delay line gives transport dead time; the EMA gives the ~120 ms
+        mechanical time constant (and, implicitly, the ~2 rad/s slew ceiling). Clipped to the
+        action range so the lagged signal is always a valid actuator command."""
+        self._lag_buffer.append(cmd.copy())
+        delayed = self._lag_buffer[0]            # oldest sample = command from delay_steps ago
+        self._servo_state = self._servo_state + self._lag_alpha * (delayed - self._servo_state)
+        low, high = self.env.action_space.low, self.env.action_space.high
+        return np.clip(self._servo_state, low, high).astype(np.float32)
 
     def _process_observation(self, obs: np.ndarray) -> np.ndarray:
         """Process observation with correct dimension handling."""

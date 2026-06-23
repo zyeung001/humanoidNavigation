@@ -1,0 +1,147 @@
+# Sim2real ACTUATOR-LAG retrain for the real humanoid standing policy.
+#
+# Bench step-response (scripts/deploy/servo_step_response.py) measured the real SCS servos at
+# ~50 ms dead time + ~120 ms first-order time constant (max ~2.1 rad/s) on BOTH a knee and a
+# hip. The clean policy (and, worse, the mass/friction "robust" retrain) was trained on an
+# IDEAL position actuator that hits its target the same control step, so it relies on fast,
+# large corrections the real servo physically cannot follow -> it limit-cycles and falls in
+# ~0.25 s. Mass/friction randomization was the WRONG axis (it even made the policy MORE
+# aggressive). THIS config fixes the right axis: it models the measured servo dynamics in sim
+# (src/environments/standing_env.py `actuator_lag`) and retrains a gentler controller that a
+# bandwidth-limited servo can actually track.
+#
+# Resumes the CLEAN 19M model (the gentler base, NOT *_robust) and writes *_actuator outputs:
+#   python scripts/train_standing.py --config config/real_humanoid_actuator.yaml \
+#     --model models/final_real_standing_model.zip \
+#     --vecnorm models/vecnorm_real_standing.pkl \
+#     --timesteps 35000000
+#
+# Watch: approx_kl < ~0.1; ep_len dips when the lag kicks in, should recover toward ~5000 in a
+# few M. The policy's per-step action swing (d_act) should SHRINK over training (the whole
+# point). If it collapses, the lag is too hot -- widen nothing; instead dial actuator_tau_ms
+# down toward [80,150] and/or actuator_delay_ms toward [30,50] first.
+
+standing:
+  # ========== ENVIRONMENT (identical plant to the clean run) ==========
+  xml_file: models/humanoid_real_v2.xml
+  seed: 42
+  n_envs: 12
+  device: cuda
+  max_episode_steps: 5000
+
+  # ========== OBSERVATION (deployable proprioceptive, same 228-dim) ==========
+  proprioceptive_obs: true
+  obs_foot_contact: false
+  obs_history: 4
+  obs_include_com: false
+  obs_feature_norm: false
+
+  # ========== ACTION ==========
+  action_smoothing: true
+  action_smoothing_tau: 0.3      # deploy must EMA-smooth at this same tau
+  action_symmetry: false
+  pd_assist: false
+  action_rate_penalty: 25.0      # bumped 15->25: push gentle control to match the slow servo
+  yaw_rate_penalty: 30.0
+
+  # ========== CURRICULUM (pinned final stage, as the clean run) ==========
+  curriculum_start_stage: 5
+  curriculum_max_stage: 5
+  curriculum_advance_after: 20
+  curriculum_success_rate: 0.60
+
+  # ========== SIM2REAL RANDOMIZATION ==========
+  # THE key axis: model the measured servo dead time + first-order lag, randomized per episode
+  # to cover unit-to-unit spread and the extra lag under body-weight load (hip ~ knee, both
+  # ~120 ms low-load; allow up to 220 ms loaded). Training-only -- the real servo supplies the
+  # lag at deploy, so deploy_standing.py does NOT enable this.
+  actuator_lag: true
+  actuator_delay_ms: [30.0, 70.0]    # dead time (measured ~50 ms = 2 control steps @ 40 Hz)
+  actuator_tau_ms: [90.0, 220.0]     # first-order time constant (measured ~120 ms low-load)
+
+  # Actuator-gain randomization complements the lag (servo stiffness varies unit-to-unit).
+  actuator_rand: true
+  actuator_rand_range: [0.8, 1.2]    # +/-20% kp/kv (milder than the robust run's +/-30%)
+
+  # Domain randomization kept MILD -- it was the wrong axis; just enough so the policy isn't
+  # brittle to the approximate masses/friction, not so much it relearns aggressive control.
+  domain_rand: true
+  curriculum_manage_domain_rand: false
+  rand_mass_range: [0.9, 1.1]        # +/-10% body mass
+  rand_friction_range: [0.7, 1.3]    # foot friction
+
+  # Observation noise + per-episode sensor biases (realistic; bias_jpos also partly absorbs the
+  # residual joint-zero offset not yet folded into the map per-servo centers).
+  obs_noise: true
+  noise_projgrav: 0.02
+  noise_angvel: 0.05
+  noise_jpos: 0.005
+  noise_jvel: 0.25                   # deploy low-passes this (--jvel-alpha)
+  bias_jpos: 0.02                    # per-episode encoder zero offset (~1.1 deg/joint)
+  bias_angvel: 0.03                  # per-episode gyro bias (rad/s)
+
+  # ========== REWARD (same regime) ==========
+  target_height: 1.40
+  height_error_threshold: 0.08
+  height_stability_threshold: 0.15
+  reward_caps:
+    max_height_maintenance_penalty: 15.0
+    recovery_bonus_scale: 50.0
+    termination_penalty_constant: 50.0
+
+  # ========== PPO (fine-tune from 19M clean) ==========
+  total_timesteps: 35_000_000
+  learning_rate: 0.0002
+  final_learning_rate: 0.00003
+  n_steps: 2048
+  batch_size: 2048
+  n_epochs: 5
+  gamma: 0.995
+  gae_lambda: 0.95
+  clip_range: 0.2
+  final_clip_range: 0.1
+  ent_coef: 0.005
+  final_ent_coef: 0.001
+  log_std_max: -1.5
+  log_std_min: -2.0
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+
+  # ========== VECNORMALIZE ==========
+  normalize: true
+  vecnormalize_clip_obs: 50.0
+  vecnormalize_clip_reward: 50.0
+
+  # ========== NETWORK (must match the clean model to resume) ==========
+  policy_kwargs:
+    net_arch:
+      - pi: [512, 512, 256]
+        vf: [512, 512, 256]
+    activation_fn: SiLU
+    ortho_init: true
+
+  # ========== LOGGING / CHECKPOINTING (distinct *_actuator paths; clean model preserved) ==========
+  verbose: 1
+  log_dir: data/logs/real_standing_actuator
+  use_tensorboard: true
+  n_eval_episodes: 5
+  eval_freq: 100_000
+  save_freq: 250_000
+  checkpoint_dir: data/checkpoints/real_standing_actuator
+  checkpoint_prefix: real_standing_actuator
+  best_model_path: models/best_real_standing_actuator
+  final_model_path: models/final_real_standing_actuator
+  vecnormalize_path: models/vecnorm_real_standing_actuator.pkl
+  target_reward_threshold: 5000
+  early_stop:
+    patience: 5
+
+  random_height_init: false
+  random_height_prob: 0.0
+  random_height_range: [-0.3, 0.1]
+
+  use_wandb: false
+  wandb_project: humanoid_real_standing_actuator
+  wandb_log_freq: 10000
+  video_freq: 500000
+  episode_print_freq: 1000
