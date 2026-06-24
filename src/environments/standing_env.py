@@ -137,6 +137,11 @@ class StandingEnv(gym.Wrapper):
         # (smoothed) action. 0.0 = off, so the legacy std-humanoid path is
         # byte-identical.
         self.action_rate_weight = float(self.cfg.get('action_rate_penalty', 0.0))
+        # Saturation cap on the per-step rate penalty. Default 20.0 keeps legacy behavior, but
+        # that is far below the standing bonus (~300), so the smoothness signal is negligible and
+        # SATURATES during chatter -> no gradient to get smoother (why prior retrains stayed
+        # jerky). Raise it (config) when smoothness is the training objective.
+        self.action_rate_cap = float(self.cfg.get('action_rate_cap', 20.0))
         self._last_action_rate = np.zeros(self.env.action_space.shape, dtype=np.float32)
 
         # Yaw-rate damping. Penalizes (base yaw rate)^2 to discourage the slow
@@ -436,7 +441,7 @@ class StandingEnv(gym.Wrapper):
         if self.action_rate_weight > 0.0:
             action_rate_penalty = -min(
                 self.action_rate_weight * float(np.sum(np.square(self._last_action_rate))),
-                20.0,
+                self.action_rate_cap,
             )
         else:
             action_rate_penalty = 0.0
