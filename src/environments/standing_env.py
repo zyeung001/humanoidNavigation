@@ -81,6 +81,25 @@ class StandingEnv(gym.Wrapper):
         self.bias_angvel_std = float(self.cfg.get('bias_angvel', 0.02))     # per-ep gyro bias
         self._bias_jpos = None
         self._bias_angvel = None
+
+        # OBSERVATION FILTER / LATENCY (mirror the deploy ObsBuilder so training sees the SAME
+        # delayed, filtered, finite-diff-from-quantized obs the real loop produces). Training
+        # otherwise reads exact instantaneous proj_grav/jvel with zero lag, while deploy adds a
+        # proj_grav EMA + finite-diff-of-quantized-encoder jvel + jvel EMA -- roughly doubling the
+        # balance-loop delay the policy was tuned for, which can drive a ~2 Hz limit cycle. Filter
+        # strengths are randomized per episode (observation-latency randomization) so the policy is
+        # robust across the bracket that contains the real deploy values. Off by default.
+        self.obs_filter = bool(self.cfg.get('obs_filter', False))
+        self.obs_projgrav_alpha = self.cfg.get('obs_projgrav_alpha', [0.2, 0.5])
+        self.obs_jvel_alpha = self.cfg.get('obs_jvel_alpha', [0.2, 0.5])
+        self.obs_jvel_finite_diff = bool(self.cfg.get('obs_jvel_finite_diff', True))
+        self.obs_encoder_quant = float(self.cfg.get('obs_encoder_quant', 0.005))  # rad/unit
+        self.obs_jvel_clamp = float(self.cfg.get('obs_jvel_clamp', 2.5))
+        self._obs_pg_ema = None
+        self._obs_jvel_ema = None
+        self._obs_prev_jpos_q = None
+        self._obs_pg_alpha = 0.35
+        self._obs_jvel_alpha_ep = 0.35
         # Actuator-gain randomization: real position servos differ from the MJCF kp/kv and vary
         # unit-to-unit. Scale kp/kv per episode so the policy doesn't overfit one plant.
         self.actuator_rand = bool(self.cfg.get('actuator_rand', False))
@@ -111,6 +130,27 @@ class StandingEnv(gym.Wrapper):
         self.random_height_init = self.cfg.get('random_height_init', True)
         self.random_height_prob = self.cfg.get('random_height_prob', 0.3)
         self.random_height_range = self.cfg.get('random_height_range', [-0.3, 0.1])
+
+        # Push-recovery disturbances: random VELOCITY impulses to the root during the episode
+        # (and a varied initial root velocity/tilt at reset). Without this, a standing policy
+        # only ever sees the perfect setpoint (ang_vel ~ 0) and trains a razor's-edge stabilizer
+        # that limit-cycles on hardware the instant a real disturbance kicks it out of that tiny
+        # state distribution -- exactly the measured failure (pelvis gyro hit 2.7 rad/s while the
+        # bench step-response and obs were all clean). Pushing teaches it to DAMP those excursions.
+        # Works for custom models too (unlike random_height_init, which is gated off). Training-only.
+        self.push_enabled = bool(self.cfg.get('push_enabled', False))
+        self.push_interval_steps = self.cfg.get('push_interval_steps', [50, 150])
+        self.push_lin_vel = float(self.cfg.get('push_lin_vel', 0.4))   # m/s impulse on qvel[0:3]
+        self.push_ang_vel = float(self.cfg.get('push_ang_vel', 1.5))   # rad/s impulse on qvel[3:6]
+        self._push_countdown = 0
+
+        # Balanced two-foot stance reward. The standing reward can be fully earned on a lopsided
+        # single-leg pose that the forgiving sim tolerates but the real robot tips off of (the
+        # deployed policy learned exactly that -- it froze into an "essentially on one leg" stance).
+        # Rewarding even weight on both feet + a COM centered over them pulls the learned NOMINAL
+        # stance to a balanced two-foot stand that transfers. Off by default. Custom model only
+        # (needs foot_body_ids). Reward-only -- uses sim contact/COM, not in the deployable obs.
+        self.stance_balance_weight = float(self.cfg.get('stance_balance_weight', 0.0))
         
         # Reward caps from config
         reward_caps = self.cfg.get('reward_caps', {})
@@ -143,6 +183,15 @@ class StandingEnv(gym.Wrapper):
         # jerky). Raise it (config) when smoothness is the training objective.
         self.action_rate_cap = float(self.cfg.get('action_rate_cap', 20.0))
         self._last_action_rate = np.zeros(self.env.action_space.shape, dtype=np.float32)
+        # RAW action-rate penalty: charges the frame-to-frame change of the RAW network output
+        # (before the tau-EMA smoothing), unlike action_rate_penalty which charges the already-
+        # smoothed action and so lets the network emit jitter the EMA hides. This is the term that
+        # actually pressures the policy to be LOW-GAIN -- a sensitivity probe showed it amplifies
+        # sensor noise into ~0.1 rad of raw command jitter. 0.0 = off.
+        self.raw_action_rate_weight = float(self.cfg.get('raw_action_rate_penalty', 0.0))
+        self.raw_action_rate_cap = float(self.cfg.get('raw_action_rate_cap', 100.0))
+        self._prev_raw_action = np.zeros(self.env.action_space.shape, dtype=np.float32)
+        self._last_raw_action_rate = np.zeros(self.env.action_space.shape, dtype=np.float32)
 
         # Yaw-rate damping. Penalizes (base yaw rate)^2 to discourage the slow
         # in-place spin that proprioceptive obs can't correct via heading
@@ -318,6 +367,33 @@ class StandingEnv(gym.Wrapper):
                                      maxlen=delay_steps + 1)
             self._servo_state = zero.copy()
 
+        # Observation filter: sample this episode's EMA strengths + reset the filter states, so
+        # each episode trains a different obs latency within the bracket (matches deploy ObsBuilder).
+        if self.obs_filter:
+            self._obs_pg_alpha = float(np.random.uniform(*self.obs_projgrav_alpha))
+            self._obs_jvel_alpha_ep = float(np.random.uniform(*self.obs_jvel_alpha))
+            self._obs_pg_ema = None
+            self._obs_jvel_ema = None
+            self._obs_prev_jpos_q = None
+
+        # Push-recovery: schedule the first in-episode shove and (floor-safely, unlike
+        # random_height_init) start the episode already moving / slightly tilted so the policy
+        # trains across a WIDE state distribution, not just the perfect setpoint. Velocity/tilt
+        # only -- height is left untouched so the custom robot isn't pushed through the floor.
+        if self.push_enabled:
+            lo, hi = self.push_interval_steps
+            self._push_countdown = int(np.random.randint(int(lo), int(hi) + 1))
+            qvel = self.env.unwrapped.data.qvel
+            qvel[0:3] += np.random.uniform(-self.push_lin_vel, self.push_lin_vel, size=3)
+            qvel[3:6] += np.random.uniform(-self.push_ang_vel, self.push_ang_vel, size=3)
+            quat = self.env.unwrapped.data.qpos[3:7]   # [w,x,y,z]; nudge x/y tilt, renormalize
+            quat[1] += np.random.uniform(-0.05, 0.05)
+            quat[2] += np.random.uniform(-0.05, 0.05)
+            qn = np.linalg.norm(quat)
+            if qn > 1e-6:
+                quat /= qn
+            observation = self.env.unwrapped._get_obs()
+
         # Random height initialization for recovery training. Skip for custom
         # models: the legacy [0.6, 1.6] clip assumes a 1.40 m-target capsule
         # humanoid and would push a smaller robot through the floor or ceiling.
@@ -343,10 +419,26 @@ class StandingEnv(gym.Wrapper):
         return observation, info
     
     def step(self, action):
+        # Push-recovery: every so many steps, inject a random root velocity impulse mid-episode
+        # so the policy must actively DAMP an ang_vel/lin_vel excursion from a stable stand --
+        # the skill it needs on hardware. The kick lands in the live sim state and the next
+        # env.step integrates it, so the policy feels it through proj_grav/ang_vel like a shove.
+        if self.push_enabled:
+            self._push_countdown -= 1
+            if self._push_countdown <= 0:
+                qvel = self.env.unwrapped.data.qvel
+                qvel[0:3] += np.random.uniform(-self.push_lin_vel, self.push_lin_vel, size=3)
+                qvel[3:6] += np.random.uniform(-self.push_ang_vel, self.push_ang_vel, size=3)
+                lo, hi = self.push_interval_steps
+                self._push_countdown = int(np.random.randint(int(lo), int(hi) + 1))
+
         # Action preprocessing. Capture the previously-applied (smoothed) action
         # before _process_action overwrites prev_action, so the reward can charge
         # the per-step action rate.
         prev_applied = self.prev_action.copy()
+        raw_in = np.asarray(action, dtype=np.float32).ravel()
+        self._last_raw_action_rate = raw_in - self._prev_raw_action
+        self._prev_raw_action = raw_in.copy()
         proc_action = self._process_action(np.asarray(action, dtype=np.float32))
         self._last_action_rate = proc_action - prev_applied
 
@@ -446,6 +538,17 @@ class StandingEnv(gym.Wrapper):
         else:
             action_rate_penalty = 0.0
 
+        # RAW action-rate penalty: charge the change in the network's pre-smoothing output, the
+        # term that actually lowers the policy's noise-amplifying gain (the EMA hides this from the
+        # smoothed action_rate_penalty above).
+        if self.raw_action_rate_weight > 0.0:
+            raw_action_rate_penalty = -min(
+                self.raw_action_rate_weight * float(np.sum(np.square(self._last_raw_action_rate))),
+                self.raw_action_rate_cap,
+            )
+        else:
+            raw_action_rate_penalty = 0.0
+
         # ==========  YAW-RATE DAMPING (anti-spin) ==========
         # angular_vel = qvel[3:6] (base frame); [2] is yaw rate. Penalize its
         # square, capped, so a transient can't spike PPO value targets.
@@ -518,6 +621,27 @@ class StandingEnv(gym.Wrapper):
             else:  # Other terminations (height too high)
                 termination_penalty = -self.termination_penalty_constant * 0.5
         
+        # ========== BALANCED TWO-FOOT STANCE (anti one-leg lean) ==========
+        # Reward both feet bearing even load AND the COM centered horizontally over the feet, so
+        # the nominal standing pose is a symmetric two-foot stand rather than a sim-only one-leg
+        # lean. Gated to upright standing; reward-only (sim contact force + COM, not in obs).
+        stance_reward = 0.0
+        if self.stance_balance_weight > 0.0 and self._is_custom and height >= 1.2:
+            data = self.env.unwrapped.data
+            fids = list(self.model_spec.foot_body_ids)[:2]
+            if len(fids) == 2:
+                fL = float(np.linalg.norm(data.cfrc_ext[fids[0]][3:6]))
+                fR = float(np.linalg.norm(data.cfrc_ext[fids[1]][3:6]))
+                tot = fL + fR
+                both_down = 1.0 if (fL > 1.0 and fR > 1.0) else 0.0
+                imbalance = abs(fL - fR) / tot if tot > 1.0 else 1.0      # 0=even, 1=one foot
+                com_xy = np.asarray(data.subtree_com[0][:2], dtype=np.float64)
+                mid_xy = 0.5 * (np.asarray(data.xpos[fids[0]][:2], dtype=np.float64) +
+                                np.asarray(data.xpos[fids[1]][:2], dtype=np.float64))
+                off = float(np.linalg.norm(com_xy - mid_xy))             # COM offset from feet center
+                stance_reward = (self.stance_balance_weight * both_down *
+                                 float(np.exp(-4.0 * imbalance)) * float(np.exp(-20.0 * off ** 2)))
+
         # ========== TOTAL REWARD ==========
         total_reward = (
             height_reward +
@@ -530,7 +654,9 @@ class StandingEnv(gym.Wrapper):
             velocity_penalty +
             sustained_bonus +
             action_rate_penalty +
+            raw_action_rate_penalty +
             yaw_rate_penalty +
+            stance_reward +
             termination_penalty
         )
         
@@ -552,7 +678,7 @@ class StandingEnv(gym.Wrapper):
                 f"[h={height_reward:6.1f}, u={upright_reward:4.1f}, "
                 f"stab={stability_reward:4.1f}, recov={recovery_bonus:4.1f}, "
                 f"rate={action_rate_penalty:5.1f}, yaw={yaw_rate_penalty:5.1f}, "
-                f"bonus={sustained_bonus:.0f}]")
+                f"stance={stance_reward:4.1f}, bonus={sustained_bonus:.0f}]")
         
         return total_reward, terminate
 
@@ -721,6 +847,32 @@ class StandingEnv(gym.Wrapper):
                 base_ang_vel = base_ang_vel + self._bias_angvel
             if self._bias_jpos is not None:
                 jpos = jpos + self._bias_jpos
+
+        # Observation filter (applied AFTER noise so the order is "noisy sensor -> filter", exactly
+        # like hardware): quantize jpos to encoder resolution, derive jvel as a clamped finite-diff
+        # of the quantized jpos (not exact qvel), and EMA-low-pass both jvel and proj_grav. This is
+        # the deploy ObsBuilder reproduced in sim so the policy trains in the real, delayed loop.
+        if self.obs_filter:
+            if self.obs_encoder_quant > 0:
+                jpos = np.round(jpos / self.obs_encoder_quant) * self.obs_encoder_quant
+            if self.obs_jvel_finite_diff:
+                if self._obs_prev_jpos_q is None:
+                    raw_jv = np.zeros_like(jvel)
+                else:
+                    raw_jv = (jpos - self._obs_prev_jpos_q) / self._control_dt
+                self._obs_prev_jpos_q = jpos.copy()
+                raw_jv = np.clip(raw_jv, -self.obs_jvel_clamp, self.obs_jvel_clamp)
+            else:
+                raw_jv = jvel
+            aj = self._obs_jvel_alpha_ep
+            self._obs_jvel_ema = raw_jv if self._obs_jvel_ema is None else \
+                ((1.0 - aj) * self._obs_jvel_ema + aj * raw_jv)
+            jvel = self._obs_jvel_ema.astype(np.float32)
+            ap = self._obs_pg_alpha
+            self._obs_pg_ema = proj_grav if self._obs_pg_ema is None else \
+                ((1.0 - ap) * self._obs_pg_ema + ap * proj_grav)
+            n = float(np.linalg.norm(self._obs_pg_ema))
+            proj_grav = (self._obs_pg_ema / n if n > 1e-6 else self._obs_pg_ema).astype(np.float32)
 
         feats = [proj_grav, base_ang_vel, jpos, jvel, last_action]
         if self.include_foot_contact:
