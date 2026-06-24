@@ -11,9 +11,11 @@ Index convention: action[i] (policy output) and qpos[7+i] (obs joint angle) shar
 SAME index i, which is also this module's joint order (MJCF actuator == joint order).
 
 Unit conversion (per joint i):
-    units = center + sign[i] * sim_rad * units_per_rad          # rad -> servo units
-    sim_rad = sign[i] * (units - center) / units_per_rad        # servo units -> rad
-center = 512 (home), units_per_rad ~= 195. SCS servos are 10-bit (0..1023).
+    units = center[i] + sign[i] * sim_rad * units_per_rad        # rad -> servo units
+    sim_rad = sign[i] * (units - center[i]) / units_per_rad      # servo units -> rad
+center defaults to the global servo_center (512), but a joint may override it with a
+per-joint `center` field when its physical-straight neutral differs from 512 (e.g.
+waist_roll measured at 485). units_per_rad ~= 195. SCS servos are 10-bit (0..1023).
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ class Joint:
     sign_verified: bool
     servo_limit: tuple[int, int]
     sim_range: tuple[float, float]
+    center: int
 
 
 class SimRealMap:
@@ -50,12 +53,14 @@ class SimRealMap:
                 idx=j["idx"], mjcf=j["mjcf"], dof=j["dof"], servo_id=j["servo_id"],
                 sign=int(j["sign"]), sign_verified=bool(j["sign_verified"]),
                 servo_limit=tuple(j["servo_limit"]), sim_range=tuple(j["sim_range"]),
+                center=int(j.get("center", self.center)),
             ))
         self.n = len(self.joints)
         assert self.n == len(self.default_joint_pos) == 17, "expected 17 joints"
         # vectorized views, in index order
         self.servo_ids = np.array([j.servo_id for j in self.joints], dtype=int)
         self.signs = np.array([j.sign for j in self.joints], dtype=np.float32)
+        self.centers = np.array([j.center for j in self.joints], dtype=np.float32)
         self.lim_lo = np.array([j.servo_limit[0] for j in self.joints], dtype=np.float32)
         self.lim_hi = np.array([j.servo_limit[1] for j in self.joints], dtype=np.float32)
         self.range_lo = np.array([j.sim_range[0] for j in self.joints], dtype=np.float32)
@@ -65,12 +70,12 @@ class SimRealMap:
     # ---- conversions (vectorized over the 17 joints) ----
     def rad_to_units(self, sim_rad: np.ndarray) -> np.ndarray:
         sim_rad = np.clip(np.asarray(sim_rad, dtype=np.float32), self.range_lo, self.range_hi)
-        units = self.center + self.signs * sim_rad * self.units_per_rad
+        units = self.centers + self.signs * sim_rad * self.units_per_rad
         return np.clip(units, self.lim_lo, self.lim_hi).round().astype(int)
 
     def units_to_rad(self, units: np.ndarray) -> np.ndarray:
         units = np.asarray(units, dtype=np.float32)
-        return (self.signs * (units - self.center) / self.units_per_rad).astype(np.float32)
+        return (self.signs * (units - self.centers) / self.units_per_rad).astype(np.float32)
 
     def unverified_idxs(self) -> list[int]:
         return [j.idx for j in self.joints if not j.sign_verified]

@@ -1,0 +1,165 @@
+# BALANCED-STANCE retrain for the real humanoid standing policy.
+#
+# ROOT CAUSE (6/23, found by hardware elimination): the policy stands in sim but limit-cycles
+# / tips on hardware because it learned a LOPSIDED, essentially-one-leg standing pose. The
+# dry-run at a perfect upright+home obs commands an asymmetric stance (R knee bent 4x the L,
+# weight shifted right). Freezing that pose on the robot open-loop -> it can't stand ("legs
+# weren't in the right place, essentially on one leg"). The model is SYMMETRIC (L/R leg masses
+# and inertias are identical), so this is purely a learned-policy artifact: nothing in the
+# reward required a symmetric two-foot stance, so PPO settled into a weight-shifted local
+# optimum the forgiving sim tolerates but the real robot tips off of.
+#
+# Everything else checked out: 40 Hz loop (not bus-bound), never tips in the obs, IMU on the
+# MJCF root (pelvis), gyro honest + correct units, servo step-response clean 1st-order (matches
+# the actuator_lag model), and command-chatter / joint-stiffness / gyro-feedback tweaks did NOT
+# stop the sway -- because the sway is the policy fighting its own un-balanceable one-leg pose.
+#
+# FIX: new reward term stance_balance_weight -- rewards EVEN weight on both feet + a COM centered
+# horizontally over them, so the learned nominal stance becomes a balanced two-foot stand that
+# transfers. Plus push-recovery (random root velocity kicks): you cannot catch a shove on one
+# leg, so pushes reinforce two-foot balance and broaden the state distribution. Keeps the
+# smoothness penalty + measured actuator lag from the smooth run.
+#
+# Resumes the SMOOTH model and writes *_balanced outputs:
+#   python scripts/train_standing.py --config config/real_humanoid_balanced.yaml \
+#     --model models/final_real_standing_smooth.zip \
+#     --vecnorm models/vecnorm_real_standing_smooth.pkl \
+#     --timesteps 25000000
+#
+# SUCCESS GATE (before deploying): re-run the dry-run
+#   python scripts/deploy/deploy_standing.py --policy-npz <exported>.npz --dry-run
+# and confirm the commanded pose is now ~SYMMETRIC (L/R knee + hip within a few hundredths,
+# weight not shifted). Then the --freeze-after test must STAND when held, not tip onto one leg.
+
+standing:
+  # ========== ENVIRONMENT ==========
+  xml_file: models/humanoid_real_v2.xml
+  seed: 42
+  n_envs: 12
+  device: cuda
+  max_episode_steps: 5000
+
+  # ========== OBSERVATION (deployable proprioceptive, 228-dim) ==========
+  proprioceptive_obs: true
+  obs_foot_contact: false       # stance reward uses sim contact; obs stays 228-dim deployable
+  obs_history: 4
+  obs_include_com: false
+  obs_feature_norm: false
+
+  # ========== ACTION + SMOOTHNESS (keep the smooth-run gains) ==========
+  action_smoothing: true
+  action_smoothing_tau: 0.3
+  action_symmetry: false        # the built-in averager is wrong for this joint layout -- leave off
+  pd_assist: false
+  action_rate_penalty: 70.0
+  action_rate_cap: 100.0
+  # RAW action-rate penalty: charges the change in the pre-smoothing network output -- the term
+  # that actually lowers the policy's noise-amplifying gain (action_rate_penalty above is on the
+  # SMOOTHED action, which the tau-EMA hides jitter from). A sensitivity probe measured ~0.1 rad
+  # of raw command jitter from sensor noise; this pressures that down.
+  raw_action_rate_penalty: 25.0
+  raw_action_rate_cap: 50.0
+  yaw_rate_penalty: 30.0
+
+  # ========== BALANCED STANCE (the primary fix) ==========
+  stance_balance_weight: 8.0    # continuous per-step bonus for even-footed, COM-centered stance
+
+  # ========== PUSH-RECOVERY (reinforces two-foot balance) ==========
+  push_enabled: true
+  push_interval_steps: [60, 150]
+  push_lin_vel: 0.3
+  push_ang_vel: 1.0
+
+  # ========== CURRICULUM (pinned final stage) ==========
+  curriculum_start_stage: 5
+  curriculum_max_stage: 5
+  curriculum_advance_after: 20
+  curriculum_success_rate: 0.60
+
+  # ========== SIM2REAL RANDOMIZATION ==========
+  actuator_lag: true
+  actuator_delay_ms: [30.0, 70.0]
+  actuator_tau_ms: [90.0, 220.0]
+
+  actuator_rand: true
+  actuator_rand_range: [0.7, 1.3]      # widened from [0.8,1.2]: can't reproduce the real sway in
+                                       # sim, so harden against a WIDE plant range that contains it
+
+  domain_rand: true
+  curriculum_manage_domain_rand: false
+  rand_mass_range: [0.8, 1.2]          # widened from [0.9,1.1]
+  rand_friction_range: [0.6, 1.4]      # widened from [0.7,1.3]
+
+  obs_noise: true
+  noise_projgrav: 0.02
+  noise_angvel: 0.05
+  noise_jpos: 0.005
+  noise_jvel: 0.25
+  bias_jpos: 0.02
+  bias_angvel: 0.03
+
+  # ========== REWARD ==========
+  target_height: 1.40
+  height_error_threshold: 0.08
+  height_stability_threshold: 0.15
+  reward_caps:
+    max_height_maintenance_penalty: 15.0
+    recovery_bonus_scale: 50.0
+    termination_penalty_constant: 50.0
+
+  # ========== PPO (fine-tune from the smooth model) ==========
+  total_timesteps: 25_000_000
+  learning_rate: 0.0002
+  final_learning_rate: 0.00003
+  n_steps: 2048
+  batch_size: 2048
+  n_epochs: 5
+  gamma: 0.995
+  gae_lambda: 0.95
+  clip_range: 0.2
+  final_clip_range: 0.1
+  ent_coef: 0.004
+  final_ent_coef: 0.001
+  log_std_max: -1.5
+  log_std_min: -2.0
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+
+  # ========== VECNORMALIZE ==========
+  normalize: true
+  vecnormalize_clip_obs: 50.0
+  vecnormalize_clip_reward: 50.0
+
+  # ========== NETWORK (must match the smooth model to resume) ==========
+  policy_kwargs:
+    net_arch:
+      - pi: [512, 512, 256]
+        vf: [512, 512, 256]
+    activation_fn: SiLU
+    ortho_init: true
+
+  # ========== LOGGING / CHECKPOINTING (distinct *_balanced paths) ==========
+  verbose: 1
+  log_dir: data/logs/real_standing_balanced
+  use_tensorboard: true
+  n_eval_episodes: 5
+  eval_freq: 100_000
+  save_freq: 250_000
+  checkpoint_dir: data/checkpoints/real_standing_balanced
+  checkpoint_prefix: real_standing_balanced
+  best_model_path: models/best_real_standing_balanced
+  final_model_path: models/final_real_standing_balanced
+  vecnormalize_path: models/vecnorm_real_standing_balanced.pkl
+  target_reward_threshold: 5000
+  early_stop:
+    patience: 5
+
+  random_height_init: false
+  random_height_prob: 0.0
+  random_height_range: [-0.3, 0.1]
+
+  use_wandb: false
+  wandb_project: humanoid_real_standing_balanced
+  wandb_log_freq: 10000
+  video_freq: 500000
+  episode_print_freq: 1000

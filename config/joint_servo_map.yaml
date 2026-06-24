@@ -10,7 +10,9 @@
 #   target_units = servo_center + sign * (sim_rad) * units_per_rad
 #   target_units = clip(target_units, servo_min, servo_max)
 # servo_center = 512 (home = sim 0 = straight), units_per_rad ~= 195 (1.5708 rad = 306 units).
-# SCS servos are 10-bit (0..1023).
+# SCS servos are 10-bit (0..1023). A joint may override servo_center with a per-joint
+# `center:` when its physical-straight neutral differs from 512 (measured via hand re-zero,
+# saved in home.json). This corrects BOTH the ramp/command target AND the obs joint angle.
 #
 # sign_verified: true  = direction confirmed on the bare servo (only the 4 hinges so far).
 #                false = NOT yet tested; sign is a best guess, MUST verify on bare servo
@@ -31,32 +33,32 @@ default_joint_pos: [-0.06023, 0.95993, -0.32092, 0.0292, -0.0185, 1.13261, -0.09
 
 joints:
   # ---- RIGHT LEG (roll, yaw, pitch, knee) -- DOF high-confidence via axis ----
-  - {idx: 0,  mjcf: "Revolute 18", dof: "R_hip_roll",   axis: x, sim_range: [-1.5708, 0.3491], servo_id: 4,  sign: +1, sign_verified: false, servo_limit: [411, 613]}
-  - {idx: 1,  mjcf: "Revolute 26", dof: "R_hip_yaw",    axis: z, sim_range: [-1.5708, 0.9599], servo_id: 5,  sign: +1, sign_verified: false, servo_limit: [411, 613]}
-  - {idx: 2,  mjcf: "Revolute 23", dof: "R_hip_pitch",  axis: y, sim_range: [-1.5708, 0.3491], servo_id: 6,  sign: +1, sign_verified: false, servo_limit: [411, 613]}
+  - {idx: 0,  mjcf: "Revolute 18", dof: "R_hip_roll",   axis: x, sim_range: [-1.5708, 0.3491], servo_id: 4,  sign: +1, sign_verified: true, servo_limit: [411, 613]}
+  - {idx: 1,  mjcf: "Revolute 26", dof: "R_hip_yaw",    axis: z, sim_range: [-1.5708, 0.9599], servo_id: 5,  sign: +1, sign_verified: true, servo_limit: [411, 700]}  # hi widened: +55deg standing pose (6/21)
+  - {idx: 2,  mjcf: "Revolute 23", dof: "R_hip_pitch",  axis: y, sim_range: [-1.5708, 0.3491], servo_id: 6,  sign: -1, sign_verified: true, servo_limit: [411, 613]}
   - {idx: 3,  mjcf: "Revolute 21", dof: "R_knee",       axis: y, sim_range: [-1.5708, 1.5708], servo_id: 7,  sign: -1, sign_verified: true,  servo_limit: [206, 512]}  # hinge, INVERTED
 
   # ---- LEFT LEG ----
-  - {idx: 4,  mjcf: "Revolute 24", dof: "L_hip_roll",   axis: x, sim_range: [-1.5708, 0.1745], servo_id: 8,  sign: +1, sign_verified: false, servo_limit: [411, 613]}
-  - {idx: 5,  mjcf: "Revolute 28", dof: "L_hip_yaw",    axis: z, sim_range: [-0.9599, 1.5708], servo_id: 9,  sign: +1, sign_verified: false, servo_limit: [411, 613]}
-  - {idx: 6,  mjcf: "Revolute 25", dof: "L_hip_pitch",  axis: y, sim_range: [-1.5708, 0.3491], servo_id: 10, sign: +1, sign_verified: false, servo_limit: [411, 613]}
+  - {idx: 4,  mjcf: "Revolute 24", dof: "L_hip_roll",   axis: x, sim_range: [-1.5708, 0.1745], servo_id: 8,  sign: -1, sign_verified: true, servo_limit: [411, 613]}
+  - {idx: 5,  mjcf: "Revolute 28", dof: "L_hip_yaw",    axis: z, sim_range: [-0.9599, 1.5708], servo_id: 9,  sign: +1, sign_verified: true, servo_limit: [411, 735]}  # hi widened: +65deg standing pose (6/21)
+  - {idx: 6,  mjcf: "Revolute 25", dof: "L_hip_pitch",  axis: y, sim_range: [-1.5708, 0.3491], servo_id: 10, sign: +1, sign_verified: true, servo_limit: [411, 613]}
   - {idx: 7,  mjcf: "Revolute 27", dof: "L_knee",       axis: y, sim_range: [-1.5708, 1.5708], servo_id: 11, sign: +1, sign_verified: true,  servo_limit: [512, 818]}  # hinge, normal
 
   # ---- WAIST (roll, pitch, yaw) ----
-  - {idx: 8,  mjcf: "Revolute 22", dof: "waist_roll",   axis: x, sim_range: [-0.6109, 0.6109], servo_id: 3,  sign: +1, sign_verified: false, servo_limit: [411, 613]}
-  - {idx: 9,  mjcf: "Revolute 20", dof: "waist_pitch",  axis: y, sim_range: [-0.3491, 1.5708], servo_id: 2,  sign: +1, sign_verified: false, servo_limit: [411, 613]}
-  - {idx: 10, mjcf: "Revolute 19", dof: "waist_yaw",    axis: z, sim_range: [-1.5708, 1.5708], servo_id: 1,  sign: +1, sign_verified: false, servo_limit: [411, 613]}
+  - {idx: 8,  mjcf: "Revolute 22", dof: "waist_roll",   axis: x, sim_range: [-0.6109, 0.6109], servo_id: 3,  sign: -1, sign_verified: true, servo_limit: [411, 613], center: 485}  # physical-straight = 485 (hand re-zero 6/18), not 512
+  - {idx: 9,  mjcf: "Revolute 20", dof: "waist_pitch",  axis: y, sim_range: [-0.3491, 1.5708], servo_id: 2,  sign: +1, sign_verified: true, servo_limit: [411, 613]}
+  - {idx: 10, mjcf: "Revolute 19", dof: "waist_yaw",    axis: z, sim_range: [-1.5708, 1.5708], servo_id: 1,  sign: -1, sign_verified: true, servo_limit: [411, 613]}
 
-  # ---- RIGHT ARM (shoulder-pitch, shoulder-roll?, elbow) ----
-  # NOTE: MJCF arm kinematics = 2 shoulder DOF + elbow (NO wrist), but servo memory labels
-  # IDs 12/13/14 as shoulder/elbow/wrist. idx 12 (Rev 6) is most likely shoulder-ROLL, not a
-  # wrist. The servo_id<->DOF for the MIDDLE arm joint (14/17) must be RECONCILED with physical
-  # wiring before trusting it.
-  - {idx: 11, mjcf: "Revolute 2",  dof: "R_shoulder_pitch", axis: y, sim_range: [-2.0944, 2.0944], servo_id: 12, sign: +1, sign_verified: false, servo_limit: [411, 613]}
-  - {idx: 12, mjcf: "Revolute 6",  dof: "R_shoulder_roll?", axis: x, sim_range: [-1.5708, 0.4363], servo_id: 14, sign: +1, sign_verified: false, servo_limit: [411, 613]}  # DOF/ID unconfirmed
-  - {idx: 13, mjcf: "Revolute 1",  dof: "R_elbow",          axis: y, sim_range: [ 0.0000, 2.0944], servo_id: 13, sign: +1, sign_verified: true,  servo_limit: [512, 818]}  # hinge, normal
+  # ---- RIGHT ARM (shoulder-pitch, shoulder-roll, elbow) ----
+  # RECONCILED on hardware 6/22 (probe_sign): physical chain top->bottom is
+  # servo 12 (pitch) -> servo 13 (roll, "out") -> servo 14 (elbow, forearm).
+  # The map previously had roll<->elbow servo IDs swapped (roll=14, elbow=13) and the
+  # one-sided elbow EEPROM limit on the wrong servo; fixed here + via fix_arm_limits.py.
+  - {idx: 11, mjcf: "Revolute 2",  dof: "R_shoulder_pitch", axis: y, sim_range: [-2.0944, 2.0944], servo_id: 12, sign: +1, sign_verified: true,  servo_limit: [411, 613]}  # + = arm back
+  - {idx: 12, mjcf: "Revolute 6",  dof: "R_shoulder_roll",  axis: x, sim_range: [-1.5708, 0.4363], servo_id: 13, sign: +1, sign_verified: true,  servo_limit: [411, 613]}  # + = arm out (servo 14->13)
+  - {idx: 13, mjcf: "Revolute 1",  dof: "R_elbow",          axis: y, sim_range: [ 0.0000, 2.0944], servo_id: 14, sign: +1, sign_verified: true,  servo_limit: [512, 818]}  # hinge; + = forearm flex (servo 13->14)
 
-  # ---- LEFT ARM ----
-  - {idx: 14, mjcf: "Revolute 4",  dof: "L_shoulder_pitch", axis: y, sim_range: [-2.0944, 2.0944], servo_id: 15, sign: +1, sign_verified: false, servo_limit: [411, 613]}
-  - {idx: 15, mjcf: "Revolute 5",  dof: "L_shoulder_roll?", axis: x, sim_range: [-2.0071, 0.0000], servo_id: 17, sign: +1, sign_verified: false, servo_limit: [411, 613]}  # DOF/ID unconfirmed
-  - {idx: 16, mjcf: "Revolute 3",  dof: "L_elbow",          axis: y, sim_range: [-2.0944, 0.0000], servo_id: 16, sign: -1, sign_verified: true,  servo_limit: [206, 512]}  # hinge, INVERTED
+  # ---- LEFT ARM ----  (same swap as right: roll=servo 16, elbow=servo 17; reconciled 6/22)
+  - {idx: 14, mjcf: "Revolute 4",  dof: "L_shoulder_pitch", axis: y, sim_range: [-2.0944, 2.0944], servo_id: 15, sign: +1, sign_verified: true,  servo_limit: [411, 613]}  # + = arm forward
+  - {idx: 15, mjcf: "Revolute 5",  dof: "L_shoulder_roll",  axis: x, sim_range: [-2.0071, 0.0000], servo_id: 16, sign: +1, sign_verified: true,  servo_limit: [411, 613]}  # + = arm in (servo 17->16)
+  - {idx: 16, mjcf: "Revolute 3",  dof: "L_elbow",          axis: y, sim_range: [-2.0944, 0.0000], servo_id: 17, sign: +1, sign_verified: true,  servo_limit: [206, 512]}  # hinge; + = forearm flex (servo 16->17, sign -1->+1)

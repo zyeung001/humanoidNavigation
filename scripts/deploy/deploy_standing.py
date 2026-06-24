@@ -70,20 +70,38 @@ class _SB3Backend:
 class ObsBuilder:
     """Maintains history + finite-diff joint velocity, emits the 228-dim obs."""
 
-    def __init__(self, m: SimRealMap, dt: float):
+    def __init__(self, m: SimRealMap, dt: float, jvel_alpha: float = 0.35,
+                 jvel_clamp: float = 2.5, zero_jvel: bool = False):
         self.m = m
         self.dt = dt
+        self.jvel_alpha = float(jvel_alpha)
+        self.jvel_clamp = float(jvel_clamp)
+        self.zero_jvel = bool(zero_jvel)
         self.hist = deque(maxlen=HISTORY)
         self.prev_jpos = None
+        self.jvel_f = np.zeros(NJ, dtype=np.float32)      # low-passed joint velocity
+        self.last_jvel_raw = np.zeros(NJ, dtype=np.float32)  # for --debug
         self.last_action = np.zeros(NJ, dtype=np.float32)  # smoothed target (sim rad), env init=0
 
     def frame(self, proj_grav, ang_vel, jpos):
         if self.prev_jpos is None:
-            jvel = np.zeros(NJ, dtype=np.float32)
+            raw = np.zeros(NJ, dtype=np.float32)
         else:
-            jvel = ((jpos - self.prev_jpos) / self.dt).astype(np.float32)
+            raw = ((jpos - self.prev_jpos) / self.dt).astype(np.float32)
         self.prev_jpos = jpos.copy()
-        return np.concatenate([proj_grav, ang_vel, jpos, jvel, self.last_action]).astype(np.float32)
+        self.last_jvel_raw = raw   # keep the TRUE finite-diff for --debug (shows bus glitches)
+        # Reject non-physical spikes BEFORE filtering: the servos cap at ~2.1 rad/s, so any
+        # |jvel| past jvel_clamp is a garbled half-duplex read, not real motion. A single
+        # glitched position sample otherwise injects an 8-12 rad/s spike that the policy (which
+        # trained on clean near-zero jvel) amplifies into a 40 Hz seizure. Clamp kills it at
+        # the source so the low-pass doesn't have to be cranked so hard it goes sluggish.
+        jraw = np.clip(raw, -self.jvel_clamp, self.jvel_clamp) if self.jvel_clamp > 0 else raw
+        # Low-pass the (clamped) finite-diff velocity. Quantized-encoder differencing at 40 Hz
+        # is still noisier than sim; alpha=1.0 disables (raw), lower = smoother.
+        a = self.jvel_alpha
+        self.jvel_f = ((1.0 - a) * self.jvel_f + a * jraw).astype(np.float32)
+        jvel_out = np.zeros(NJ, dtype=np.float32) if self.zero_jvel else self.jvel_f
+        return np.concatenate([proj_grav, ang_vel, jpos, jvel_out, self.last_action]).astype(np.float32)
 
     def obs(self, frame):
         self.hist.append(frame)
@@ -105,15 +123,43 @@ def main():
     p.add_argument("--hz", type=float, default=40.0)
     p.add_argument("--ramp-secs", type=float, default=2.0, help="open-loop ramp to home before closed loop")
     p.add_argument("--tilt-cut", type=float, default=0.5, help="hold+cut torque if upright_cos < this (~60deg)")
+    p.add_argument("--tilt-debounce", type=int, default=3,
+                   help="require upright_cos < tilt-cut for this many CONSECUTIVE frames before "
+                        "cutting torque; rejects single-sample IMU/accel-transient glitches.")
+    p.add_argument("--projgrav-alpha", type=float, default=0.35,
+                   help="EMA low-pass on projected-gravity; 1.0=raw/off, lower=smoother. The IMU "
+                        "reports specific force (gravity - body accel), so motion corrupts it; "
+                        "gravity is quasi-static for standing, so smoothing rejects the transient.")
+    p.add_argument("--jvel-clamp", type=float, default=2.5,
+                   help="clamp finite-diff joint velocity to +/- this (rad/s) before the low-pass; "
+                        "rejects non-physical spikes from garbled bus reads (servo max ~2.1). 0=off")
     p.add_argument("--max-step-units", type=int, default=80, help="per-joint per-step servo move clamp")
     p.add_argument("--speed", type=int, default=0, help="servo move speed (0=max)")
+    p.add_argument("--jvel-alpha", type=float, default=0.35,
+                   help="low-pass on joint-velocity obs (1.0=raw/off, lower=smoother; anti-jitter)")
+    p.add_argument("--zero-angvel", action="store_true",
+                   help="DIAGNOSTIC: feed zeros for the base angular-velocity obs channel. If the "
+                        "limit-cycle sway STOPS, the gyro feedback is driving it (likely a flipped "
+                        "sign -> anti-damping). If it keeps swaying, the gyro is not the engine.")
+    p.add_argument("--zero-jvel", action="store_true",
+                   help="DIAGNOSTIC: feed zeros for the joint-velocity obs channel. A sensitivity "
+                        "probe shows the policy amplifies jvel noise into ~0.13 rad of command "
+                        "jitter; for a standing robot true jvel ~ 0, so if the jitter DROPS with "
+                        "jvel zeroed, the noisy finite-diff jvel is the jitter source.")
+    p.add_argument("--freeze-after", type=int, default=0,
+                   help="DIAGNOSTIC: run closed-loop for N steps to reach the policy's standing "
+                        "pose, then FREEZE the command and hold it open-loop (sensors still read "
+                        "for the safety cut). A fixed target can't limit-cycle, so this isolates "
+                        "static balance from control instability: if the frozen pose HOLDS (stands "
+                        "on release), the policy's pose is statically stable and the sway is a "
+                        "feedback instability; if it TIPS, the policy's target pose itself is not "
+                        "balanced on the real robot (mass/pose mismatch). 0 = off.")
+    p.add_argument("--debug", action="store_true", help="print obs/action diagnostics each --debug-every steps")
+    p.add_argument("--debug-every", type=int, default=10)
     p.add_argument("--require-verified", action="store_true",
                    help="refuse to drive joints whose sign is not bench-verified")
-    p.add_argument("--imu-on-chest", action="store_true",
-                   help="IMU is mounted on the chest (above the waist joints): rotate proj_grav/"
-                        "ang_vel into the pelvis frame using the live waist encoder angles.")
     p.add_argument("--imu-calib", default=str(ROOT / "config" / "imu_calib.yaml"),
-                   help="YAML with axis_remap (raw IMU axes -> chest frame). Identity if missing.")
+                   help="YAML with axis_remap (raw IMU axes -> pelvis/base frame). Identity if missing.")
     p.add_argument("--dry-run", action="store_true", help="no hardware: load, predict once with zero sensors, print")
     args = p.parse_args()
 
@@ -143,7 +189,8 @@ def main():
         infer = _SB3Backend(model, mean, var, eps, clip).predict
         print(f"Policy: SB3 {args.model} + vecnorm (obs_dim={OBS_DIM}, clip={clip})")
 
-    builder = ObsBuilder(m, dt)
+    builder = ObsBuilder(m, dt, jvel_alpha=args.jvel_alpha, jvel_clamp=args.jvel_clamp,
+                         zero_jvel=args.zero_jvel)
 
     def predict_units(proj_grav, ang_vel, jpos):
         frame = builder.frame(proj_grav, ang_vel, jpos)
@@ -182,22 +229,26 @@ def main():
     bus = ServoBus().connect()
     imu = IMU(axis_remap=axis_remap).connect()
 
-    # waist joint indices (for the chest->pelvis IMU transform)
-    dof_idx = {j.dof: j.idx for j in m.joints}
-    waist_ix = [dof_idx["waist_roll"], dof_idx["waist_pitch"], dof_idx["waist_yaw"]]
-    if args.imu_on_chest:
-        from imu_frame import chest_to_pelvis  # noqa: E402
-        print(f"IMU-on-chest: rotating proj_grav/ang_vel to pelvis frame via waist idx {waist_ix}")
+    pg_state = {"g": None}   # EMA-filtered projected gravity (closure state)
 
     def read_sensors():
+        # IMU is on the pelvis/base body, so proj_grav/ang_vel are already in the obs frame.
         pg = imu.projected_gravity()
         av = imu.angular_velocity()
+        # EMA low-pass proj_grav and renormalize. The accelerometer reports specific force
+        # (gravity - linear accel), so the robot's own motion swings the measured "gravity"
+        # direction; gravity is quasi-static while standing, so smoothing rejects that
+        # transient (and the false tilt-cuts it caused) without a gyro-fusion sign risk.
+        a = args.projgrav_alpha
+        if pg_state["g"] is None or a >= 1.0:
+            pg_state["g"] = pg
+        else:
+            g = (1.0 - a) * pg_state["g"] + a * pg
+            n = np.linalg.norm(g)
+            pg_state["g"] = (g / n).astype(np.float32) if n > 1e-6 else g.astype(np.float32)
+        pg = pg_state["g"]
         units = bus.read_all(m.servo_ids)
         abs_rad = m.units_to_rad(units)                    # absolute joint angles (sim, 0=straight)
-        if args.imu_on_chest:
-            R = chest_to_pelvis(*abs_rad[waist_ix])
-            pg = (R @ pg).astype(np.float32)
-            av = (R @ av).astype(np.float32)
         jpos = (abs_rad - m.default_joint_pos).astype(np.float32)
         return pg, av, jpos
 
@@ -218,24 +269,66 @@ def main():
             builder.obs(builder.frame(pg, av, jpos))
             time.sleep(dt)
 
-        print("Closed loop running (Ctrl-C to stop).")
+        print(f"Closed loop running (Ctrl-C to stop). jvel_alpha={args.jvel_alpha}, "
+              f"max_step_units={args.max_step_units}, tau={args.tau}")
         prev_units = home_units.copy().astype(float)
+        prev_applied = builder.last_action.copy()
+        tilt_bad = 0
+        step = 0
+        frozen_units = None   # set once --freeze-after fires; held thereafter
+        loop_ms_ema = dt * 1000.0   # EMA of realized loop period; flags if the bus can't keep 40 Hz
+        t_prev = time.time()
         while True:
             t0 = time.time()
+            loop_ms_ema = 0.9 * loop_ms_ema + 0.1 * (t0 - t_prev) * 1000.0
+            t_prev = t0
             pg, av, jpos = read_sensors()
+            if args.zero_angvel:
+                av = np.zeros(3, dtype=np.float32)
+            t_sense = time.time()
 
             upright_cos = -float(pg[2])
+            # Debounce: only cut after the (filtered) tilt stays past the threshold for
+            # several consecutive frames, so a lone glitch sample can't kill a good run.
             if upright_cos < args.tilt_cut:
-                print(f"\n[SAFETY] upright_cos={upright_cos:.2f} < {args.tilt_cut}: cutting torque.")
-                bus.set_torque(m.servo_ids, False)
-                break
+                tilt_bad += 1
+                if tilt_bad >= args.tilt_debounce:
+                    print(f"\n[SAFETY] upright_cos={upright_cos:.2f} < {args.tilt_cut} for "
+                          f"{tilt_bad} frames: cutting torque.")
+                    bus.set_torque(m.servo_ids, False)
+                    break
+            else:
+                tilt_bad = 0
 
-            units, _ = predict_units(pg, av, jpos)
-            # per-step move clamp (rate limit), then write
-            units = np.clip(units, prev_units - args.max_step_units, prev_units + args.max_step_units)
-            units = np.clip(units, m.lim_lo, m.lim_hi).round().astype(int)
+            if args.freeze_after and step >= args.freeze_after:
+                if frozen_units is None:
+                    frozen_units = prev_units.astype(int)
+                    print(f"\n[FREEZE] holding the policy's pose open-loop at step {step} "
+                          f"(feedback off). Ease your hands away: does it STAND or TIP?")
+                units = frozen_units
+                applied = prev_applied   # keep debug readout sane
+            else:
+                units, applied = predict_units(pg, av, jpos)
+                # per-step move clamp (rate limit), then write
+                units = np.clip(units, prev_units - args.max_step_units, prev_units + args.max_step_units)
+                units = np.clip(units, m.lim_lo, m.lim_hi).round().astype(int)
             bus.write_all(m.servo_ids, units, speed=args.speed)
             prev_units = units.astype(float)
+
+            if args.debug and step % args.debug_every == 0:
+                sense_ms = (t_sense - t0) * 1000.0
+                busy_ms = (time.time() - t0) * 1000.0   # sense+predict+write, before sleep
+                rate = 1000.0 / loop_ms_ema if loop_ms_ema > 0 else 0.0
+                slow = "  <<SLOW: bus-bound, real Hz < target" if busy_ms > dt * 1000.0 else ""
+                print(f"[{step:5d}] pg=[{pg[0]:+.2f},{pg[1]:+.2f},{pg[2]:+.2f}] "
+                      f"|av|={np.linalg.norm(av):.2f} "
+                      f"max|jvel_raw|={np.max(np.abs(builder.last_jvel_raw)):5.1f} "
+                      f"max|jvel_f|={np.max(np.abs(builder.jvel_f)):5.1f} "
+                      f"max|act|={np.max(np.abs(applied)):.2f} "
+                      f"d_act={np.max(np.abs(applied - prev_applied)):.3f} "
+                      f"| {rate:4.1f}Hz sense={sense_ms:4.1f}ms busy={busy_ms:4.1f}ms{slow}")
+            prev_applied = applied.copy()
+            step += 1
 
             time.sleep(max(0.0, dt - (time.time() - t0)))
     except KeyboardInterrupt:

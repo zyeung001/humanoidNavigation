@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # home.py  --  RUN ON THE PI
 """
-Standalone "everything back to home" / bench-reset for the SCS servo bus.
+Standalone "everything back to home" / bench-reset for the servo bus.
 
 Smoothly ramps all 17 servos to 512 (raw neutral), WAITS long enough for them to
 physically get there, then disables torque so the robot goes limp.
 
-Self-contained: only needs scservo_sdk (no repo imports). Copy-paste onto the Pi.
+Uses hardware.py's ServoBus (raw-serial SCS driver, same one deploy_standing.py
+uses) so it works on the Pi without scservo_sdk.
 
   python3 home.py                 # ramp to 512 over 2s, settle, torque off
   python3 home.py --hold          # ramp to 512, settle, KEEP torque on (holds pose)
@@ -15,12 +16,15 @@ Self-contained: only needs scservo_sdk (no repo imports). Copy-paste onto the Pi
 """
 
 import argparse
+import sys
 import time
+from pathlib import Path
 
-from scservo_sdk import PortHandler, scscl
+import numpy as np
 
-PORT = "/dev/ttyAMA0"
-BAUD = 1_000_000
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from hardware import ServoBus  # noqa: E402
+
 SERVO_IDS = list(range(1, 18))   # 1..17
 HOME = 512                       # raw neutral (10-bit center)
 
@@ -35,65 +39,41 @@ def main():
     p.add_argument("--hold", action="store_true", help="keep torque on after homing")
     args = p.parse_args()
 
-    ph = PortHandler(PORT)
-    if not ph.openPort():
-        raise RuntimeError(f"failed to open {PORT}")
-    if not ph.setBaudRate(BAUD):
-        raise RuntimeError(f"failed to set baud {BAUD}")
-    pk = scscl(ph)
-
     dt = 1.0 / args.hz
     steps = max(1, int(args.secs / dt))
 
-    # Enable torque so the servos actually drive to home.
-    for sid in SERVO_IDS:
-        try:
-            pk.write1ByteTxRx(sid, 40, 1)  # reg 40 = torque enable
-        except Exception as e:
-            print(f"  [warn] torque-enable id {sid}: {e}")
+    bus = ServoBus().connect()
+    try:
+        bus.set_torque(SERVO_IDS, True)             # so the servos actually drive home
 
-    # Read current positions (fall back to HOME if a servo doesn't answer).
-    start = {}
-    for sid in SERVO_IDS:
-        try:
-            pos, _, comm, err = pk.ReadPos(sid)
-            start[sid] = int(pos) if (comm == 0 and err == 0) else HOME
-        except Exception:
-            start[sid] = HOME
-    print("Start positions:", {k: start[k] for k in SERVO_IDS})
-
-    # Smooth linear ramp every servo from its current pos -> 512.
-    print(f"Ramping {len(SERVO_IDS)} servos to {HOME} over {args.secs:.1f}s...")
-    for k in range(1, steps + 1):
-        frac = k / steps
-        for sid in SERVO_IDS:
-            tgt = int(round(start[sid] + (HOME - start[sid]) * frac))
-            try:
-                pk.WritePos(sid, tgt, 0, args.speed)  # WritePos(id, pos, time=0, speed)
-            except Exception as e:
-                print(f"  [warn] WritePos id {sid}: {e}")
-        time.sleep(dt)
-
-    # Make sure they're all commanded exactly to home, then let them finish moving.
-    for sid in SERVO_IDS:
-        try:
-            pk.WritePos(sid, HOME, 0, args.speed)
-        except Exception:
-            pass
-    print(f"Settling {args.settle:.1f}s so servos reach home...")
-    time.sleep(args.settle)
-
-    if args.hold:
-        print("Done. Torque LEFT ON (holding home).")
-    else:
+        # Read current positions (fall back to HOME if a servo doesn't answer).
+        start = {}
         for sid in SERVO_IDS:
             try:
-                pk.write1ByteTxRx(sid, 40, 0)  # torque disable -> limp
+                start[sid] = int(bus.read_pos(sid))
             except Exception:
-                pass
-        print("Done. Torque OFF (robot is limp at home).")
+                start[sid] = HOME
+        print("Start positions:", start)
 
-    ph.closePort()
+        # Smooth linear ramp every servo from its current pos -> 512.
+        print(f"Ramping {len(SERVO_IDS)} servos to {HOME} over {args.secs:.1f}s...")
+        for k in range(1, steps + 1):
+            frac = k / steps
+            targets = [int(round(start[sid] + (HOME - start[sid]) * frac)) for sid in SERVO_IDS]
+            bus.write_all(SERVO_IDS, np.array(targets), speed=args.speed)
+            time.sleep(dt)
+
+        bus.write_all(SERVO_IDS, np.full(len(SERVO_IDS), HOME), speed=args.speed)
+        print(f"Settling {args.settle:.1f}s so servos reach home...")
+        time.sleep(args.settle)
+
+        if args.hold:
+            print("Done. Torque LEFT ON (holding home).")
+        else:
+            bus.set_torque(SERVO_IDS, False)
+            print("Done. Torque OFF (robot is limp at home).")
+    finally:
+        bus.close()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,148 @@
+# SMOOTHNESS retrain for the real humanoid standing policy.
+#
+# Context (6/23): the sim-to-real loop is now PROVEN CLEAN -- 17/17 servo signs verified,
+# IMU upright = [0,0,-1], and IMU lateral polarity confirmed by a tilt test (fwd->+x,
+# back->-x, right->-y, all matching the sim frame). So the hardware seizure is NOT a wiring
+# bug. It is the policy's intrinsic chatter (~0.4 sign-flips/joint/step even in clean sim)
+# exciting the bandwidth-limited / ringy real servo (~50 ms dead + ~120 ms tau, ~2.1 rad/s).
+# The plant CAN stand statically (open-loop home-hold test), so this is a controller problem.
+#
+# Why prior retrains stayed jerky: action_rate_penalty was 25 but the env capped the penalty
+# at 20.0 (hardcoded) AND that is tiny next to the ~300 standing bonus -> the smoothness term
+# was negligible and saturated, giving the policy no gradient to be smooth. This config makes
+# the cap configurable and raises BOTH the weight and the cap so smoothness actually shapes
+# behavior, while keeping the measured servo-lag model so the policy learns control a slow
+# servo can track.
+#
+# waist_yaw STAYS LIVE (no freeze) -- it is the paper's WTR DOF. Feet unchanged (the real
+# 120x80 feet already exceed the sim 80x80; matching sim->real is a separate fidelity task).
+#
+# Resumes the CLEAN 19M model and writes *_smooth outputs:
+#   python scripts/train_standing.py --config config/real_humanoid_smooth.yaml \
+#     --model models/final_real_standing_model.zip \
+#     --vecnorm models/vecnorm_real_standing.pkl \
+#     --timesteps 35000000
+#
+# SUCCESS GATE (before deploying): run the sign-flip diagnostic on the LAGGED plant -- the
+# retrained policy's sign-flips/joint/step must drop well below 0.4 (target <0.2) and d_act
+# should shrink. If it does not, the smoothness weight is still too weak (raise) or it is
+# starving balance (ep_len collapses -> lower). Measure, don't assume.
+
+standing:
+  # ========== ENVIRONMENT ==========
+  xml_file: models/humanoid_real_v2.xml
+  seed: 42
+  n_envs: 12
+  device: cuda
+  max_episode_steps: 5000
+
+  # ========== OBSERVATION (deployable proprioceptive, 228-dim) ==========
+  proprioceptive_obs: true
+  obs_foot_contact: false
+  obs_history: 4
+  obs_include_com: false
+  obs_feature_norm: false
+
+  # ========== ACTION + SMOOTHNESS (the point of this run) ==========
+  action_smoothing: true
+  action_smoothing_tau: 0.3       # deploy must EMA-smooth at this same tau
+  action_symmetry: false
+  pd_assist: false
+  action_rate_penalty: 70.0       # was 25; the smoothness weight, now meaningful vs ~300 bonus
+  action_rate_cap: 100.0          # was hardcoded 20; raise so the penalty isn't saturated/negligible
+  yaw_rate_penalty: 30.0
+
+  # ========== CURRICULUM (pinned final stage) ==========
+  curriculum_start_stage: 5
+  curriculum_max_stage: 5
+  curriculum_advance_after: 20
+  curriculum_success_rate: 0.60
+
+  # ========== SIM2REAL RANDOMIZATION ==========
+  # Measured servo dead time + first-order lag, randomized per episode. Training-only -- the
+  # real servo supplies the lag at deploy, so deploy_standing.py does NOT enable this.
+  actuator_lag: true
+  actuator_delay_ms: [30.0, 70.0]
+  actuator_tau_ms: [90.0, 220.0]
+
+  actuator_rand: true
+  actuator_rand_range: [0.8, 1.2]
+
+  domain_rand: true
+  curriculum_manage_domain_rand: false
+  rand_mass_range: [0.9, 1.1]
+  rand_friction_range: [0.7, 1.3]
+
+  obs_noise: true
+  noise_projgrav: 0.02
+  noise_angvel: 0.05
+  noise_jpos: 0.005
+  noise_jvel: 0.25
+  bias_jpos: 0.02
+  bias_angvel: 0.03
+
+  # ========== REWARD ==========
+  target_height: 1.40
+  height_error_threshold: 0.08
+  height_stability_threshold: 0.15
+  reward_caps:
+    max_height_maintenance_penalty: 15.0
+    recovery_bonus_scale: 50.0
+    termination_penalty_constant: 50.0
+
+  # ========== PPO (fine-tune from 19M clean) ==========
+  total_timesteps: 35_000_000
+  learning_rate: 0.0002
+  final_learning_rate: 0.00003
+  n_steps: 2048
+  batch_size: 2048
+  n_epochs: 5
+  gamma: 0.995
+  gae_lambda: 0.95
+  clip_range: 0.2
+  final_clip_range: 0.1
+  ent_coef: 0.004            # slightly below the actuator run's 0.005: less exploration jitter
+  final_ent_coef: 0.001
+  log_std_max: -1.5
+  log_std_min: -2.0
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+
+  # ========== VECNORMALIZE ==========
+  normalize: true
+  vecnormalize_clip_obs: 50.0
+  vecnormalize_clip_reward: 50.0
+
+  # ========== NETWORK (must match the clean model to resume) ==========
+  policy_kwargs:
+    net_arch:
+      - pi: [512, 512, 256]
+        vf: [512, 512, 256]
+    activation_fn: SiLU
+    ortho_init: true
+
+  # ========== LOGGING / CHECKPOINTING (distinct *_smooth paths; clean model preserved) ==========
+  verbose: 1
+  log_dir: data/logs/real_standing_smooth
+  use_tensorboard: true
+  n_eval_episodes: 5
+  eval_freq: 100_000
+  save_freq: 250_000
+  checkpoint_dir: data/checkpoints/real_standing_smooth
+  checkpoint_prefix: real_standing_smooth
+  best_model_path: models/best_real_standing_smooth
+  final_model_path: models/final_real_standing_smooth
+  vecnormalize_path: models/vecnorm_real_standing_smooth.pkl
+  target_reward_threshold: 5000
+  early_stop:
+    patience: 5
+
+  random_height_init: false
+  random_height_prob: 0.0
+  random_height_range: [-0.3, 0.1]
+
+  use_wandb: false
+  wandb_project: humanoid_real_standing_smooth
+  wandb_log_freq: 10000
+  video_freq: 500000
+  episode_print_freq: 1000
