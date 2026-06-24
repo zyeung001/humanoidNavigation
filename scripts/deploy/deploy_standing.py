@@ -71,11 +71,12 @@ class ObsBuilder:
     """Maintains history + finite-diff joint velocity, emits the 228-dim obs."""
 
     def __init__(self, m: SimRealMap, dt: float, jvel_alpha: float = 0.35,
-                 jvel_clamp: float = 2.5):
+                 jvel_clamp: float = 2.5, zero_jvel: bool = False):
         self.m = m
         self.dt = dt
         self.jvel_alpha = float(jvel_alpha)
         self.jvel_clamp = float(jvel_clamp)
+        self.zero_jvel = bool(zero_jvel)
         self.hist = deque(maxlen=HISTORY)
         self.prev_jpos = None
         self.jvel_f = np.zeros(NJ, dtype=np.float32)      # low-passed joint velocity
@@ -99,7 +100,8 @@ class ObsBuilder:
         # is still noisier than sim; alpha=1.0 disables (raw), lower = smoother.
         a = self.jvel_alpha
         self.jvel_f = ((1.0 - a) * self.jvel_f + a * jraw).astype(np.float32)
-        return np.concatenate([proj_grav, ang_vel, jpos, self.jvel_f, self.last_action]).astype(np.float32)
+        jvel_out = np.zeros(NJ, dtype=np.float32) if self.zero_jvel else self.jvel_f
+        return np.concatenate([proj_grav, ang_vel, jpos, jvel_out, self.last_action]).astype(np.float32)
 
     def obs(self, frame):
         self.hist.append(frame)
@@ -135,6 +137,23 @@ def main():
     p.add_argument("--speed", type=int, default=0, help="servo move speed (0=max)")
     p.add_argument("--jvel-alpha", type=float, default=0.35,
                    help="low-pass on joint-velocity obs (1.0=raw/off, lower=smoother; anti-jitter)")
+    p.add_argument("--zero-angvel", action="store_true",
+                   help="DIAGNOSTIC: feed zeros for the base angular-velocity obs channel. If the "
+                        "limit-cycle sway STOPS, the gyro feedback is driving it (likely a flipped "
+                        "sign -> anti-damping). If it keeps swaying, the gyro is not the engine.")
+    p.add_argument("--zero-jvel", action="store_true",
+                   help="DIAGNOSTIC: feed zeros for the joint-velocity obs channel. A sensitivity "
+                        "probe shows the policy amplifies jvel noise into ~0.13 rad of command "
+                        "jitter; for a standing robot true jvel ~ 0, so if the jitter DROPS with "
+                        "jvel zeroed, the noisy finite-diff jvel is the jitter source.")
+    p.add_argument("--freeze-after", type=int, default=0,
+                   help="DIAGNOSTIC: run closed-loop for N steps to reach the policy's standing "
+                        "pose, then FREEZE the command and hold it open-loop (sensors still read "
+                        "for the safety cut). A fixed target can't limit-cycle, so this isolates "
+                        "static balance from control instability: if the frozen pose HOLDS (stands "
+                        "on release), the policy's pose is statically stable and the sway is a "
+                        "feedback instability; if it TIPS, the policy's target pose itself is not "
+                        "balanced on the real robot (mass/pose mismatch). 0 = off.")
     p.add_argument("--debug", action="store_true", help="print obs/action diagnostics each --debug-every steps")
     p.add_argument("--debug-every", type=int, default=10)
     p.add_argument("--require-verified", action="store_true",
@@ -170,7 +189,8 @@ def main():
         infer = _SB3Backend(model, mean, var, eps, clip).predict
         print(f"Policy: SB3 {args.model} + vecnorm (obs_dim={OBS_DIM}, clip={clip})")
 
-    builder = ObsBuilder(m, dt, jvel_alpha=args.jvel_alpha, jvel_clamp=args.jvel_clamp)
+    builder = ObsBuilder(m, dt, jvel_alpha=args.jvel_alpha, jvel_clamp=args.jvel_clamp,
+                         zero_jvel=args.zero_jvel)
 
     def predict_units(proj_grav, ang_vel, jpos):
         frame = builder.frame(proj_grav, ang_vel, jpos)
@@ -255,9 +275,17 @@ def main():
         prev_applied = builder.last_action.copy()
         tilt_bad = 0
         step = 0
+        frozen_units = None   # set once --freeze-after fires; held thereafter
+        loop_ms_ema = dt * 1000.0   # EMA of realized loop period; flags if the bus can't keep 40 Hz
+        t_prev = time.time()
         while True:
             t0 = time.time()
+            loop_ms_ema = 0.9 * loop_ms_ema + 0.1 * (t0 - t_prev) * 1000.0
+            t_prev = t0
             pg, av, jpos = read_sensors()
+            if args.zero_angvel:
+                av = np.zeros(3, dtype=np.float32)
+            t_sense = time.time()
 
             upright_cos = -float(pg[2])
             # Debounce: only cut after the (filtered) tilt stays past the threshold for
@@ -272,20 +300,33 @@ def main():
             else:
                 tilt_bad = 0
 
-            units, applied = predict_units(pg, av, jpos)
-            # per-step move clamp (rate limit), then write
-            units = np.clip(units, prev_units - args.max_step_units, prev_units + args.max_step_units)
-            units = np.clip(units, m.lim_lo, m.lim_hi).round().astype(int)
+            if args.freeze_after and step >= args.freeze_after:
+                if frozen_units is None:
+                    frozen_units = prev_units.astype(int)
+                    print(f"\n[FREEZE] holding the policy's pose open-loop at step {step} "
+                          f"(feedback off). Ease your hands away: does it STAND or TIP?")
+                units = frozen_units
+                applied = prev_applied   # keep debug readout sane
+            else:
+                units, applied = predict_units(pg, av, jpos)
+                # per-step move clamp (rate limit), then write
+                units = np.clip(units, prev_units - args.max_step_units, prev_units + args.max_step_units)
+                units = np.clip(units, m.lim_lo, m.lim_hi).round().astype(int)
             bus.write_all(m.servo_ids, units, speed=args.speed)
             prev_units = units.astype(float)
 
             if args.debug and step % args.debug_every == 0:
+                sense_ms = (t_sense - t0) * 1000.0
+                busy_ms = (time.time() - t0) * 1000.0   # sense+predict+write, before sleep
+                rate = 1000.0 / loop_ms_ema if loop_ms_ema > 0 else 0.0
+                slow = "  <<SLOW: bus-bound, real Hz < target" if busy_ms > dt * 1000.0 else ""
                 print(f"[{step:5d}] pg=[{pg[0]:+.2f},{pg[1]:+.2f},{pg[2]:+.2f}] "
                       f"|av|={np.linalg.norm(av):.2f} "
                       f"max|jvel_raw|={np.max(np.abs(builder.last_jvel_raw)):5.1f} "
                       f"max|jvel_f|={np.max(np.abs(builder.jvel_f)):5.1f} "
                       f"max|act|={np.max(np.abs(applied)):.2f} "
-                      f"d_act={np.max(np.abs(applied - prev_applied)):.3f}")
+                      f"d_act={np.max(np.abs(applied - prev_applied)):.3f} "
+                      f"| {rate:4.1f}Hz sense={sense_ms:4.1f}ms busy={busy_ms:4.1f}ms{slow}")
             prev_applied = applied.copy()
             step += 1
 
