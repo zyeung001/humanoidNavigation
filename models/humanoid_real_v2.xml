@@ -85,24 +85,24 @@
     <light directional="true" diffuse=".8 .8 .8" pos="0 0 5" dir="0 0 -1" />
     <geom name="floor" type="plane" size="10 10 0.1" rgba=".9 .9 .9 1" condim="3" />
     <body name="base_link" pos="0 0 -0.0130">
-      <inertial pos="0.560728 0.059613 0.470217" mass="0.200499" fullinertia="5.192e-04 7.512e-05 5.196e-04 -1.825e-06 -1.382e-07 5.800e-06" />
+      <inertial pos="0.560728 0.059613 0.470217" mass="0.154201" fullinertia="3.9931e-04 5.7774e-05 3.9962e-04 -1.4036e-06 -1.0629e-07 4.4607e-06" />
       <joint name="base_joint" type="free" />
       <body name="0003_9" pos="0.540429 -0.527466 0.983811">
-        <inertial pos="0.019955 0.489201 -0.541609" mass="0.077681" fullinertia="5.745e-05 5.792e-05 2.458e-05 2.436e-08 8.064e-08 -7.047e-06" />
+        <inertial pos="0.019955 0.489201 -0.541609" mass="0.117744" fullinertia="8.7079e-05 8.7791e-05 3.7257e-05 3.6923e-08 1.2223e-07 -1.0681e-05" />
         <joint name="Revolute 18" pos="0.04570 0.49810 -0.50814" axis="1 0 0" range="-1.5708 0.349066" actuatorfrcrange="-100 100" />
         <body name="0003_11" pos="-0.437997 1.05685 -0.548399">
-          <inertial pos="0.473030 -0.550624 -0.031976" mass="0.206952" fullinertia="1.252e-04 1.328e-04 7.988e-05 6.713e-08 5.250e-06 -6.941e-06" />
+          <inertial pos="0.473030 -0.550624 -0.031976" mass="0.217164" fullinertia="1.3138e-04 1.3935e-04 8.3822e-05 7.0443e-08 5.5091e-06 -7.2835e-06" />
           <joint name="Revolute 26" pos="0.46038 -0.55657 -0.04412" axis="0 -0.013033 -0.999915" range="-1.5708 0.959931" actuatorfrcrange="-100 100" />
           <body name="0003_4" pos="-0.091932 -0.549871 0.341287">
-            <inertial pos="0.550018 -0.004388 -0.462059" mass="0.079407" fullinertia="1.425e-04 1.288e-04 2.370e-05 1.554e-09 9.021e-08 -1.706e-06" />
+            <inertial pos="0.550018 -0.004388 -0.462059" mass="0.119071" fullinertia="2.1368e-04 1.9314e-04 3.5538e-05 2.3302e-09 1.3527e-07 -2.5582e-06" />
             <joint name="Revolute 23" pos="0.55055 -0.02929 -0.40110" axis="0 -0.999915 0.013033" range="-1.5708 0.349066" actuatorfrcrange="-100 100" />
             <body name="0003_2" pos="0.80407 -0.037649 -1.06229">
-              <inertial pos="-0.253933 0.030426 0.401634" mass="0.022589" fullinertia="8.785e-05 8.514e-05 1.659e-05 3.285e-11 2.505e-09 -8.938e-07" />
+              <inertial pos="-0.253933 0.030426 0.401634" mass="0.075373" fullinertia="2.9313e-04 2.8409e-04 5.5356e-05 1.0961e-10 8.3585e-09 -2.9824e-06" />
               <joint name="Revolute 21" pos="-0.25655 0.05797 0.53529" axis="0 0.999915 -0.013033" range="-1.5708 1.5708" actuatorfrcrange="-100 100" />
               <geom class="visual" mesh="0003_2" pos="-0.81457 0.058137 0.28559" quat="1 0 0 0" />
               <geom class="visual" mesh="rightshin_2" pos="-0.81457 0.058137 0.28559" quat="1 0 0 0" />
               <geom class="visual" mesh="rightfoot_2" pos="-0.81457 0.058137 0.28559" quat="1 0 0 0" />
-              <geom class="collision" type="box" pos="-0.25393 0.02937 0.32068" quat="0.49673 -0.50325 -0.50325 -0.49673" size="0.00250 0.04000 0.04000" />
+              <geom class="collision" type="box" pos="-0.25393 0.02937 0.32068" quat="0.49673 -0.50325 -0.50325 -0.49673" size="0.00250 0.06000 0.04000" />
               <geom class="collision" type="capsule" pos="-0.25394 0.03084 0.43367" quat="0.00652 0.99998 0.00000 -0.00000" size="0.02140 0.08910" />
             </body>
             <geom class="visual" mesh="0003_4" pos="-0.0105 0.020488 -0.776699" quat="1 0 0 0" />
@@ -124,21 +124,21 @@
         <geom class="collision" type="capsule" pos="0.01990 0.48517 -0.54360" quat="0.00787 0.70706 0.70706 -0.00787" size="0.02578 0.02263" />
       </body>
       <body name="0003_1" pos="0.395242 0.737653 0.965035">
-        <inertial pos="0.165737 -0.580924 -0.525375" mass="0.077681" fullinertia="5.745e-05 5.827e-05 2.423e-05 2.225e-08 -8.125e-08 6.168e-06" />
+        <inertial pos="0.165737 -0.580924 -0.525375" mass="0.117744" fullinertia="8.7079e-05 8.8322e-05 3.6726e-05 3.3725e-08 -1.2315e-07 9.3490e-06" />
         <joint name="Revolute 24" pos="0.13999 -0.58809 -0.48698" axis="-1 0 0" range="-1.5708 0.174533" actuatorfrcrange="-100 100" />
         <body name="0003_3" pos="0.610997 -1.12513 -0.692973">
-          <inertial pos="-0.430406 0.526371 0.129303" mass="0.206952" fullinertia="1.253e-04 1.329e-04 7.986e-05 4.008e-07 5.240e-06 6.089e-06" />
+          <inertial pos="-0.430406 0.526371 0.129303" mass="0.217164" fullinertia="1.3148e-04 1.3946e-04 8.3801e-05 4.2058e-07 5.4986e-06 6.3895e-06" />
           <joint name="Revolute 28" pos="-0.44769 0.53181 0.11700" axis="0 -0.013033 -0.999915" range="-0.959931 1.5708" actuatorfrcrange="-100 100" />
           <body name="0003_10" pos="-0.995739 0.366978 0.502481">
-            <inertial pos="0.550418 0.161015 -0.462060" mass="0.079407" fullinertia="1.425e-04 1.288e-04 2.370e-05 1.552e-09 9.019e-08 -1.705e-06" />
+            <inertial pos="0.550418 0.161015 -0.462060" mass="0.119071" fullinertia="2.1368e-04 1.9314e-04 3.5538e-05 2.3272e-09 1.3524e-07 -2.5567e-06" />
             <joint name="Revolute 25" pos="0.55095 0.13619 -0.39521" axis="0 -0.999915 0.013033" range="-1.5708 0.349066" actuatorfrcrange="-100 100" />
             <body name="0003_5" pos="0.802314 0.293125 -1.06485">
-              <inertial pos="-0.251777 -0.135917 0.404203" mass="0.022589" fullinertia="8.786e-05 8.513e-05 1.661e-05 2.603e-11 2.537e-09 -1.416e-06" />
+              <inertial pos="-0.251777 -0.135917 0.404203" mass="0.075373" fullinertia="2.9316e-04 2.8405e-04 5.5423e-05 8.6855e-11 8.4652e-09 -4.7248e-06" />
               <joint name="Revolute 27" pos="-0.25335 -0.10745 0.53383" axis="0 0.999915 -0.013033" range="-1.5708 1.5708" actuatorfrcrange="-100 100" />
               <geom class="visual" mesh="0003_5" pos="-0.812814 -0.272623 0.290302" quat="1 0 0 0" />
               <geom class="visual" mesh="rightshin_1" pos="-0.812814 -0.272623 0.290302" quat="1 0 0 0" />
               <geom class="visual" mesh="rightfoot_1" pos="-0.812814 -0.272623 0.290302" quat="1 0 0 0" />
-              <geom class="collision" type="box" pos="-0.25177 -0.13750 0.32326" quat="0.50325 0.49673 0.49673 -0.50325" size="0.00250 0.04000 0.04000" />
+              <geom class="collision" type="box" pos="-0.25177 -0.13750 0.32326" quat="0.50325 0.49673 0.49673 -0.50325" size="0.00250 0.06000 0.04000" />
               <geom class="collision" type="capsule" pos="-0.25178 -0.13453 0.43623" quat="0.00000 0.00000 -0.00652 -0.99998" size="0.02140 0.08910" />
             </body>
             <geom class="visual" mesh="0003_10" pos="-0.0105 0.020502 -0.774543" quat="1 0 0 0" />
@@ -160,22 +160,22 @@
         <geom class="collision" type="capsule" pos="0.16579 -0.57694 -0.52747" quat="0.00135 0.70711 0.70711 -0.00135" size="0.02578 0.02263" />
       </body>
       <body name="0003_6" pos="0.482752 -0.417042 1.07481">
-        <inertial pos="0.085091 0.477962 -0.560107" mass="0.125775" fullinertia="5.098e-05 7.072e-05 5.090e-05 -3.132e-07 -8.412e-06 -1.070e-06" />
+        <inertial pos="0.085091 0.477962 -0.560107" mass="0.154732" fullinertia="6.2717e-05 8.7002e-05 6.2619e-05 -3.8531e-07 -1.0349e-05 -1.3163e-06" />
         <joint name="Revolute 22" pos="0.05248 0.47970 -0.58852" axis="-1 0 0" range="-0.610865 0.610865" actuatorfrcrange="-100 100" />
         <body name="0003_7" pos="-0.472252 0.395027 0.010165">
-          <inertial pos="0.562558 0.083961 -0.514154" mass="0.077598" fullinertia="5.961e-05 6.100e-05 2.794e-05 -4.182e-08 -8.307e-06 -2.577e-07" />
+          <inertial pos="0.562558 0.083961 -0.514154" mass="0.117680" fullinertia="9.0400e-05 9.2508e-05 4.2372e-05 -6.3421e-08 -1.2598e-05 -3.9081e-07" />
           <joint name="Revolute 20" pos="0.55329 0.05789 -0.55354" axis="0 -0.999979 0.006517" range="-0.349066 1.5708" actuatorfrcrange="-100 100" />
           <body name="0003_8" pos="0 0.677737 -0.408133">
-            <inertial pos="0.550157 -0.592797 0.015843" mass="0.065147" fullinertia="4.478e-04 1.905e-04 3.104e-04 -1.319e-08 -2.023e-06 7.815e-07" />
+            <inertial pos="0.550157 -0.592797 0.015843" mass="0.108104" fullinertia="7.4307e-04 3.1611e-04 5.1507e-04 -2.1887e-08 -3.3569e-06 1.2968e-06" />
             <joint name="Revolute 19" pos="0.55089 -0.59622 -0.05599" axis="0 0.006517 0.999979" range="-1.5708 1.5708" actuatorfrcrange="-100 100" />
             <body name="mount_6" pos="0.54596 -0.420605 0.079674">
-              <inertial pos="0.005405 -0.021997 -0.031355" mass="0.011150" fullinertia="2.820e-06 2.440e-06 1.638e-06 3.760e-08 7.296e-09 -1.018e-07" />
+              <inertial pos="0.005405 -0.021997 -0.031355" mass="0.021775" fullinertia="5.5073e-06 4.7652e-06 3.1989e-06 7.3431e-08 1.4249e-08 -1.9881e-07" />
               <joint name="Revolute 2" pos="0.01375 -0.01317 -0.00776" axis="0 0.999979 -0.006517" range="-2.0944 2.0944" actuatorfrcrange="-100 100" />
               <body name="mount_5" pos="-0.01447 -0.002339 -0.035059">
-                <inertial pos="0.021511 -0.010858 -0.078608" mass="0.014307" fullinertia="1.946e-05 2.018e-05 2.447e-06 -6.476e-08 1.376e-06 6.579e-07" />
+                <inertial pos="0.021511 -0.010858 -0.078608" mass="0.024203" fullinertia="3.2921e-05 3.4139e-05 4.1396e-06 -1.0956e-07 2.3278e-06 1.1130e-06" />
                 <joint name="Revolute 6" pos="0.00924 -0.02210 -0.01009" axis="-1 0 0" range="-1.5708 0.436332" actuatorfrcrange="-100 100" />
                 <body name="mount_2" pos="0.015106 -0.01 -0.12041">
-                  <inertial pos="0.005204 0.000366 -0.093340" mass="0.004760" fullinertia="1.169e-05 1.147e-05 5.962e-07 -1.497e-14 1.805e-13 1.731e-07" />
+                  <inertial pos="0.005204 0.000366 -0.093340" mass="0.016861" fullinertia="4.1408e-05 4.0629e-05 2.1119e-06 -5.3027e-14 6.3937e-13 6.1315e-07" />
                   <joint name="Revolute 1" pos="0.01410 -0.01319 -0.01023" axis="0 -1 0" range="0 2.0944" actuatorfrcrange="-100 100" />
                   <geom class="visual" mesh="mount_2" pos="-0.557096 -0.222778 -0.601051" quat="1 0 0 0" />
                   <geom class="visual" mesh="forearm_1" pos="-0.557096 -0.222778 -0.601051" quat="1 0 0 0" />
@@ -193,13 +193,13 @@
               <geom class="collision" type="box" pos="0.00571 -0.02411 -0.02833" quat="0.99420 0.10754 0.00000 0.00000" size="0.01498 0.01902 0.02729" />
             </body>
             <body name="mount_1" pos="0.54596 -0.737898 0.081742">
-              <inertial pos="0.005405 -0.004657 -0.031468" mass="0.011150" fullinertia="2.820e-06 2.442e-06 1.635e-06 -3.750e-08 7.787e-09 9.131e-08" />
+              <inertial pos="0.005405 -0.004657 -0.031468" mass="0.021775" fullinertia="5.5073e-06 4.7691e-06 3.1931e-06 -7.3235e-08 1.5208e-08 1.7832e-07" />
               <joint name="Revolute 4" pos="-0.00326 -0.01321 -0.01299" axis="0 -0.999979 0.006517" range="-2.0944 2.0944" actuatorfrcrange="-100 100" />
               <body name="mount_4" pos="-0.01447 0.001881 -0.035087">
-                <inertial pos="0.021469 -0.015745 -0.078502" mass="0.014307" fullinertia="1.946e-05 2.020e-05 2.429e-06 7.214e-08 1.361e-06 -6.921e-07" />
+                <inertial pos="0.021469 -0.015745 -0.078502" mass="0.024203" fullinertia="3.2921e-05 3.4173e-05 4.1092e-06 1.2204e-07 2.3024e-06 -1.1708e-06" />
                 <joint name="Revolute 5" pos="0.00923 -0.00436 -0.01105" axis="-1 0 0" range="-2.00713 0" actuatorfrcrange="-100 100" />
                 <body name="mount_3" pos="0.015106 0.01003 -0.12055">
-                  <inertial pos="0.005204 -0.027791 -0.093137" mass="0.004760" fullinertia="1.168e-05 1.147e-05 6.031e-07 1.560e-14 1.871e-13 -3.125e-07" />
+                  <inertial pos="0.005204 -0.027791 -0.093137" mass="0.016861" fullinertia="4.1373e-05 4.0629e-05 2.1363e-06 5.5258e-14 6.6275e-13 -1.1069e-06" />
                   <joint name="Revolute 3" pos="0.01398 -0.01721 -0.00904" axis="0 0.999915 -0.013033" range="-2.0944 0" actuatorfrcrange="-100 100" />
                   <geom class="visual" mesh="mount_3" pos="-0.557096 0.070265 -0.602951" quat="1 0 0 0" />
                   <geom class="visual" mesh="forearm_2" pos="-0.557096 0.070265 -0.602951" quat="1 0 0 0" />
@@ -223,6 +223,18 @@
             <geom class="visual" mesh="shoulderRight_1" pos="-0.0105 -0.655722 -0.676846" quat="1 0 0 0" />
             <geom class="visual" mesh="SCS0009_6" pos="-0.0105 -0.655722 -0.676846" quat="1 0 0 0" />
             <geom class="collision" type="box" pos="0.55039 -0.59294 -0.00681" quat="0.00000 0.00000 -0.70941 -0.70480" size="0.03750 0.10280 0.15865" />
+            <body name="pi" pos="0.5502 -0.5928 -0.0800">
+              <inertial pos="0 0 0" mass="0.0771" diaginertia="3.084e-05 3.084e-05 3.084e-05" />
+            </body>
+            <body name="dcdc" pos="0.5502 -0.6428 0.0000">
+              <inertial pos="0 0 0" mass="0.0318" diaginertia="1.272e-05 1.272e-05 1.272e-05" />
+            </body>
+            <body name="motor_ctrl" pos="0.5502 -0.5428 0.0000">
+              <inertial pos="0 0 0" mass="0.0227" diaginertia="1.000e-05 1.000e-05 1.000e-05" />
+            </body>
+            <body name="terminal" pos="0.5202 -0.5928 -0.1000">
+              <inertial pos="0 0 0" mass="0.0408" diaginertia="1.632e-05 1.632e-05 1.632e-05" />
+            </body>
           </body>
           <geom class="visual" mesh="0003_7" pos="-0.0105 0.022015 -1.08498" quat="1 0 0 0" />
           <geom class="visual" mesh="YZWaist_1" pos="-0.0105 0.022015 -1.08498" quat="1 0 0 0" />
@@ -244,6 +256,12 @@
       <geom class="visual" mesh="0004_11" pos="0 0 0" quat="1 0 0 0" />
       <geom class="visual" mesh="Servo_SC15_3" pos="0 0 0" quat="1 0 0 0" />
       <geom class="collision" type="capsule" pos="0.56083 0.05960 0.46925" quat="0.00122 0.00120 0.71170 0.70248" size="0.02664 0.07058" />
+      <body name="battery" pos="0.5607 0.0596 0.4102">
+        <inertial pos="0 0 0" mass="0.0862" diaginertia="3.448e-05 3.448e-05 3.448e-05" />
+      </body>
+      <body name="breadboard" pos="0.5307 0.0596 0.4702">
+        <inertial pos="0 0 0" mass="0.0680" diaginertia="2.720e-05 2.720e-05 2.720e-05" />
+      </body>
     </body>
   </worldbody>
   <option timestep="0.005" integrator="implicitfast" />
