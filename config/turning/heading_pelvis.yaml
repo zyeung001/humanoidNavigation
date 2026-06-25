@@ -1,0 +1,119 @@
+# FIX arm of the hardware WTR ablation: heading_source = PELVIS.
+# Rewards yaw-rate tracking measured at the PELVIS (base_link, the freejoint root) -> the policy
+# must actually rotate the lower body to satisfy the turn command; twisting only the waist earns
+# nothing. This is the lower-body-heading fix the paper validates. Pair with heading_torso.yaml.
+#
+# Built on the real-robot standing substrate (humanoid_real_v2.xml, 228-dim proprioceptive obs,
+# position actuators, action_smoothing_tau) + an 11-dim command block = 239-dim obs. The
+# heading_source toggle runs the SAME src.core.heading.HeadingYaw code path as the Humanoid-v5
+# ablation; only the body / DOFs / tau differ (morphology inversion handled: real root = pelvis,
+# so pelvis=base_link is read via qvel[5], torso=0003_8 via mj_objectVelocity).
+#
+# Run (USER runs training):
+#   python scripts/train_standing.py --config config/turning/heading_pelvis.yaml --timesteps 20000000
+# NOTE the FIX arm has a chicken-and-egg dependency: a clean pelvis-heading turn-in-place wants a
+# real step-turner to warm-start from (-> a real walker first). First pass: train from scratch /
+# from the standing model and see how far the pelvis-heading reward gets without a step prior.
+# Warm-start from models/final_real_standing_balanced.zip needs the 228->239 obs expansion first.
+
+turning:
+  env_kind: real_turning
+
+  # ========== ENVIRONMENT (real-robot substrate) ==========
+  xml_file: models/humanoid_real_v2.xml
+  seed: 42
+  n_envs: 12
+  device: cuda
+  max_episode_steps: 2000
+
+  # ========== HEADING SOURCE (the experimental variable) ==========
+  heading_source: pelvis         # FIX: reward pelvis yaw -> must turn the lower body
+  torso_body: "0003_8"           # chest, above the 3-joint waist chain
+  pelvis_body: "base_link"       # freejoint root (pelvis) on this morphology
+
+  # ========== COMMAND / TURN REWARD ==========
+  max_yaw_rate: 0.5              # rad/s command ceiling (turn-in-place)
+  max_lin_speed: 0.0             # 0 forward speed -> pure turn-in-place (no-ankle morphology)
+  reward_yaw_weight: 10.0
+  reward_yaw_bandwidth: 10.0     # matches the sim ablation's yaw sharpness
+  reward_upright_weight: 4.0
+  reward_height_weight: 2.0
+  tilt_rate_penalty: 0.5         # penalize roll/pitch wobble, NOT the commanded z-yaw
+
+  # ========== OBSERVATION (deployable proprioceptive 228 + command 11 = 239) ==========
+  proprioceptive_obs: true
+  obs_foot_contact: false
+  obs_history: 4
+  obs_include_com: false         # EXPLICIT: keep obs at 228 (script setdefault would add COM)
+  obs_feature_norm: false        # EXPLICIT: same reason
+
+  # ========== ACTION + SMOOTHNESS ==========
+  action_smoothing: true
+  action_smoothing_tau: 0.3
+  action_rate_penalty: 25.0
+  action_rate_cap: 100.0
+
+  # ========== SIM2REAL RANDOMIZATION (on for transfer robustness) ==========
+  actuator_lag: true
+  actuator_delay_ms: [30.0, 70.0]
+  actuator_tau_ms: [90.0, 220.0]
+  actuator_rand: true
+  actuator_rand_range: [0.7, 1.3]
+  domain_rand: true
+  rand_mass_range: [0.8, 1.2]
+  rand_friction_range: [0.6, 1.4]
+  obs_noise: true
+  noise_projgrav: 0.02
+  noise_angvel: 0.05
+  noise_jpos: 0.005
+  noise_jvel: 0.25
+  bias_jpos: 0.02
+  bias_angvel: 0.03
+
+  # ========== REWARD (height substrate) ==========
+  target_height: 1.40
+
+  # ========== PPO ==========
+  total_timesteps: 20_000_000
+  learning_rate: 0.0003
+  final_learning_rate: 0.00003
+  n_steps: 2048
+  batch_size: 2048
+  n_epochs: 5
+  gamma: 0.995
+  gae_lambda: 0.95
+  clip_range: 0.2
+  final_clip_range: 0.1
+  ent_coef: 0.005
+  final_ent_coef: 0.001
+  log_std_max: -1.5
+  log_std_min: -2.0
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+
+  # ========== VECNORMALIZE ==========
+  normalize: true
+  vecnormalize_clip_obs: 50.0
+  vecnormalize_clip_reward: 50.0
+
+  # ========== NETWORK (match standing for warm-start compatibility) ==========
+  policy_kwargs:
+    net_arch:
+      - pi: [512, 512, 256]
+        vf: [512, 512, 256]
+    activation_fn: SiLU
+    ortho_init: true
+
+  # ========== LOGGING / CHECKPOINTS ==========
+  verbose: 1
+  log_dir: data/logs/real_turn_fix
+  use_tensorboard: true
+  n_eval_episodes: 5
+  eval_freq: 100_000
+  save_freq: 250_000
+  checkpoint_dir: data/checkpoints/real_turn_fix
+  checkpoint_prefix: real_turn_fix
+  best_model_path: models/best_real_turn_fix
+  final_model_path: models/final_real_turn_fix
+  vecnormalize_path: models/vecnorm_real_turn_fix.pkl
+  use_wandb: false

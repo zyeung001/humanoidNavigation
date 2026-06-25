@@ -26,6 +26,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNorm
 from stable_baselines3.common.callbacks import CallbackList, BaseCallback
 
 from src.environments.standing_curriculum import make_standing_curriculum_env
+from src.environments.real_turning_env import make_real_turning_env
 from src.agents.diagnostics import DiagnosticsCallback
 from src.training.schedules import lr_schedule, clip_schedule
 from src.training.metrics_logger import JsonlMetricsCallback, default_metrics_path
@@ -37,10 +38,16 @@ def load_yaml(path: str):
 
 
 def make_env_fns(n_envs: int, seed: int, cfg: dict):
+    # env_kind selects the factory: 'standing' (default, height curriculum) or
+    # 'real_turning' (the WTR turning env on the real body). Absent -> standing, so
+    # existing standing configs are unaffected.
+    factory = (make_real_turning_env if cfg.get('env_kind') == 'real_turning'
+               else make_standing_curriculum_env)
+
     def make(rank: int):
         def _init():
             configure_mujoco_gl()
-            env = make_standing_curriculum_env(render_mode=None, config=cfg)
+            env = factory(render_mode=None, config=cfg)
             if hasattr(env, 'reset'):
                 env.reset(seed=seed + rank)
             try:
@@ -131,7 +138,9 @@ def main():
 
     print(f"Loading config: {args.config}")
     cfg = load_yaml(args.config)
-    standing = cfg.get('standing', {}).copy()
+    # Read a 'turning' block if present (real turning env), else 'standing' (default).
+    # The variable stays named `standing` since the rest of the script is task-agnostic.
+    standing = (cfg.get('turning') or cfg.get('standing') or {}).copy()
 
     # Overrides / advanced defaults
     n_envs = int(standing.get('n_envs', 8))
