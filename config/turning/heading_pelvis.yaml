@@ -40,6 +40,12 @@ turning:
   reward_height_weight: 2.0
   tilt_rate_penalty: 0.5         # penalize roll/pitch wobble, NOT the commanded z-yaw
 
+  # --- turn-enabling terms ported from the v5 walking turn recipe (see real_turning_env) ---
+  feet_air_time_weight: 1.0      # reward foot-lifting -> lets the policy pivot (planted feet can't rotate)
+  min_air_time: 0.15
+  turn_survival_floor: 0.3       # upright+height floor scaled 0.3..1.0 by actual turn (kills stand-still exploit)
+  yaw_wrong_dir_penalty: 1.5     # gradient past err=0.5: penalize turning the wrong way
+
   # ========== OBSERVATION (deployable proprioceptive 228 + command 11 = 239) ==========
   proprioceptive_obs: true
   obs_foot_contact: false
