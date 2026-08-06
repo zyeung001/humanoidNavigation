@@ -21,7 +21,17 @@ import time
 PORT = "/dev/ttyAMA0"
 BAUD = 1_000_000
 
-LIMITS = {13: (411, 613), 14: (512, 818), 16: (411, 613), 17: (206, 512)}
+# 8/4: servos 16 and 17 were found SWAPPED IN THEIR SLOTS after the arm rebuild -- servo 16
+# now sits in the L elbow and servo 17 in the L shoulder roll (confirmed on hardware: idx 15
+# articulated the forearm). EEPROM limits live in the servo, so they travelled with it and
+# are now on the wrong joints; left as-is both joints keep only 411..512 of usable travel.
+# Limits below follow the PHYSICAL SLOT, so 16 and 17 are swapped relative to 6/22:
+#   servo 13  R_elbow         : [512, 818]  one-sided +   (was 411..613 roll)
+#   servo 14  R_shoulder_roll : [411, 613]  symmetric     (was 512..818 elbow)
+#   servo 16  L_elbow         : [206, 512]  one-sided -   (was 411..613 roll)
+#   servo 17  L_shoulder_roll : [411, 613]  symmetric     (was 206..512 elbow)
+# BOTH arms turned out to be swapped roll<->elbow by the rebuild, not just the left.
+LIMITS = {13: (512, 818), 14: (411, 613), 16: (206, 512), 17: (411, 613)}
 
 
 def checksum(body):
