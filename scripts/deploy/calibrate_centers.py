@@ -224,7 +224,13 @@ def main():
     print("=" * 100)
     print(f"{'idx':>3} {'dof':<18} {'srv':>3} {'straight':>8} {'in use':>7} "
           f"{'offset':>7} {'deg':>7} {'sim-rad':>8} {'pose+-':>6}  flags")
-    for r in rows:
+    by_idx = {r["j"]["idx"]: r for r in rows}
+    for j in joints:                       # index order, gaps included -- a missing joint
+        r = by_idx.get(j["idx"])           # must be visible in place, not buried below
+        if r is None:
+            print(f"{j['idx']:>3} {j['dof']:<18} {j['servo_id']:>3}"
+                  "    NO VALID READS -- check the bus, re-run")
+            continue
         flags = []
         if r["map_clip"]:
             flags.append("MAP-CLIP")
@@ -237,8 +243,6 @@ def main():
         print(f"{r['j']['idx']:>3} {r['j']['dof']:<18} {r['sid']:>3} {r['med']:>8} "
               f"{r['cur_center']:>7} {r['off_units']:>+7d} {r['off_deg']:>+7.1f} "
               f"{r['off_rad']:>+8.3f} {r['pose_spread']:>6}  {' '.join(flags)}")
-    for j in bad:
-        print(f"{j['idx']:>3} {j['dof']:<18}  NO VALID READS -- check the bus, re-run")
 
     if any(r["map_clip"] or r["ee_clip"] for r in rows):
         print("\n!! CLIP: a joint's measured straight pose lies OUTSIDE its own limits, so it")
@@ -274,18 +278,28 @@ def main():
 
     # ---------------- the verdict this run exists to deliver ----------------
     print("\n" + "=" * 100)
-    print("VERDICT -- were the standing runs measured on correct zeros?")
+    print(f"VERDICT ({label}) -- were the standing runs measured on correct zeros?")
     print("=" * 100)
+    if bad:
+        print("INCOMPLETE: " + ", ".join(j["dof"] for j in bad) + " never answered, so those")
+        print("joints are UNMEASURED. Nothing below rules them out -- re-run before concluding.")
+    if set(want) < set(GROUPS["lower"]):
+        missing = [i for i in GROUPS["lower"] if i not in want]
+        print(f"PARTIAL: this run covered {label} only; action indices {missing} of the lower")
+        print("body were not measured. A clean verdict here does not clear those.")
     if rows:
         w = max(rows, key=lambda r: abs(r["off_rad"]))
-        print(f"Worst joint: {w['j']['dof']}  {w['off_units']:+d} units = "
+        print(f"Worst measured joint: {w['j']['dof']}  {w['off_units']:+d} units = "
               f"{w['off_deg']:+.1f} deg = {w['off_rad']:+.3f} sim-rad")
         print("A wrong centre displaces the residual policy's whole 'straight' baseline AND its")
         print("+/-0.20 rad clamp box by that much, and biases the joint-angle obs by the same")
         print("amount. For scale: 0.20 rad = 39 units = 11.5 deg is the full clamp half-width,")
         print("and one encoder count = 0.0051 rad.")
         m = abs(w["off_rad"])
-        if m < 0.02:
+        if bad or set(want) < set(GROUPS["lower"]):
+            print(f"\n=> worst of what WAS measured is {m:.3f} rad, but the run is not complete "
+                  "(see above).")
+        elif m < 0.02:
             print("\n=> CLEAN (< 0.02 rad everywhere). The zeros were right. The standing")
             print("   negative result is NOT confounded by leg/waist calibration -- which")
             print("   strengthens it, and leaves the 8/5 loop-delay / phase-margin diagnosis")
