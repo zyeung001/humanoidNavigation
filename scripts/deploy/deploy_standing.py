@@ -79,14 +79,33 @@ class ObsBuilder:
         self.zero_jvel = bool(zero_jvel)
         self.hist = deque(maxlen=HISTORY)
         self.prev_jpos = None
+        self.reject_count = np.zeros(NJ, dtype=np.int32)  # consecutive implausible reads per joint
+        self.rejects_total = 0                            # frames-with-a-reject, for --debug
         self.jvel_f = np.zeros(NJ, dtype=np.float32)      # low-passed joint velocity
         self.last_jvel_raw = np.zeros(NJ, dtype=np.float32)  # for --debug
         self.last_action = np.zeros(NJ, dtype=np.float32)  # smoothed target (sim rad), env init=0
 
     def frame(self, proj_grav, ang_vel, jpos):
+        jpos = np.asarray(jpos, dtype=np.float32)
         if self.prev_jpos is None:
+            jpos = np.where(np.isfinite(jpos), jpos, 0.0).astype(np.float32)
             raw = np.zeros(NJ, dtype=np.float32)
         else:
+            # Plausibility gate on the POSITION itself, not just jvel: a reading that
+            # implies |speed| > jvel_clamp (servo hw max ~2.1 rad/s) or a failed read
+            # (NaN) is a corrupted reply -- clamping jvel alone still let the garbage
+            # position into the jpos obs (the run-B residual oscillation). Hold the
+            # last good value; if the same implausible value persists 3 frames it is
+            # real motion (e.g. an external shove), so accept it then.
+            bad = ~np.isfinite(jpos)
+            if self.jvel_clamp > 0:
+                bad |= np.abs(np.nan_to_num(jpos) - self.prev_jpos) / self.dt > self.jvel_clamp
+            self.reject_count = np.where(bad, self.reject_count + 1, 0)
+            hold = bad & (self.reject_count < 3)
+            hold |= ~np.isfinite(jpos)           # NaN can never be accepted
+            if hold.any():
+                self.rejects_total += 1
+            jpos = np.where(hold, self.prev_jpos, jpos).astype(np.float32)
             raw = ((jpos - self.prev_jpos) / self.dt).astype(np.float32)
         self.prev_jpos = jpos.copy()
         self.last_jvel_raw = raw   # keep the TRUE finite-diff for --debug (shows bus glitches)
@@ -134,9 +153,19 @@ def main():
                    help="clamp finite-diff joint velocity to +/- this (rad/s) before the low-pass; "
                         "rejects non-physical spikes from garbled bus reads (servo max ~2.1). 0=off")
     p.add_argument("--max-step-units", type=int, default=80, help="per-joint per-step servo move clamp")
+    p.add_argument("--arm-step-units", type=int, default=None,
+                   help="tighter per-step move clamp for the ARM servos (12-17) only; defaults to "
+                        "--max-step-units. Arms are light and not balance-critical, so throttling "
+                        "them kills the whip that pops the horns off without slowing the legs' "
+                        "fall-catching. Try 3-5 with legs at 10.")
     p.add_argument("--speed", type=int, default=0, help="servo move speed (0=max)")
     p.add_argument("--jvel-alpha", type=float, default=0.35,
                    help="low-pass on joint-velocity obs (1.0=raw/off, lower=smoother; anti-jitter)")
+    p.add_argument("--angvel-alpha", type=float, default=1.0,
+                   help="EMA low-pass on the base angular-velocity obs (1.0=raw/off, lower=smoother). "
+                        "The angvel channel does double duty: its slow part catches the fall, its fast "
+                        "part (amplified by servo lag) drives the limit-cycle jitter. Smoothing keeps "
+                        "the fall-catching signal while killing the jitter. Try 0.2-0.3.")
     p.add_argument("--zero-angvel", action="store_true",
                    help="DIAGNOSTIC: feed zeros for the base angular-velocity obs channel. If the "
                         "limit-cycle sway STOPS, the gyro feedback is driving it (likely a flipped "
@@ -154,6 +183,35 @@ def main():
                         "on release), the policy's pose is statically stable and the sway is a "
                         "feedback instability; if it TIPS, the policy's target pose itself is not "
                         "balanced on the real robot (mass/pose mismatch). 0 = off.")
+    p.add_argument("--hold-pose", action="store_true",
+                   help="DIAGNOSTIC: drive straight to the policy's NOMINAL standing pose (the "
+                        "deterministic action at a perfect upright obs == the --dry-run pose) and HOLD "
+                        "it open-loop forever (sensors read only for the safety cut). NO closed-loop "
+                        "feedback runs, so it cannot limit-cycle/seize -- this is a pure test of "
+                        "whether the policy's INTENDED stance is statically balanced on the real "
+                        "robot, with the seizure removed entirely. Combine with --lean-back.")
+    p.add_argument("--lean-back", type=float, default=0.0,
+                   help="DIAGNOSTIC (with --hold-pose or --freeze-after): lean the torso back by this "
+                        "many DEGREES at the waist_pitch joint before holding. The policy commands a "
+                        "forward-leaning waist (~15 deg past neutral) that drops the real chest mass "
+                        "past the toes and tips it. Dial this up until the held pose STANDS unaided to "
+                        "measure how much the learned pose over-leans (confirms an upright-posture "
+                        "retrain will fix it). Positive = lean back/upright.")
+    p.add_argument("--residual-config", default=None,
+                   help="YAML with standing.residual_clamp + standing.residual_baseline (e.g. "
+                        "config/real_humanoid_residual.yaml). Mirrors training: clamps the raw "
+                        "policy action to baseline +/- clamp BEFORE the tau-EMA, and ramps to "
+                        "the BASELINE pose (the settled attractor) instead of straight. Use with "
+                        "a model TRAINED in residual mode.")
+    p.add_argument("--trim", default=None,
+                   help="ON-ROBOT static calibration (residual mode only): comma-separated "
+                        "joint=degrees offsets added to the residual baseline (shifts the ramp "
+                        "target AND the clamp box together), e.g. "
+                        "--trim \"R_hip_pitch=-2,L_hip_pitch=-2\" to lean the body 2 deg forward "
+                        "or \"R_hip_roll=1,L_hip_roll=1\" for lateral trim. Keep trims small "
+                        "(<=3 deg): the policy trained with baseline offsets up to ~3 deg "
+                        "(residual_baseline_rand), so small trims are in-distribution. Iterate: "
+                        "run, watch which way it leans, trim against it, run again.")
     p.add_argument("--debug", action="store_true", help="print obs/action diagnostics each --debug-every steps")
     p.add_argument("--debug-every", type=int, default=10)
     p.add_argument("--require-verified", action="store_true",
@@ -192,13 +250,55 @@ def main():
     builder = ObsBuilder(m, dt, jvel_alpha=args.jvel_alpha, jvel_clamp=args.jvel_clamp,
                          zero_jvel=args.zero_jvel)
 
+    res_lo = res_hi = None
+    res_baseline = None
+    if args.residual_config:
+        import yaml  # noqa: E402
+        with open(args.residual_config) as f:
+            rc = yaml.safe_load(f)["standing"]
+        # scalar OR per-joint vector -- must mirror standing_env.py exactly or deploy clamps
+        # to a different box than training did.
+        clamp = np.asarray(rc["residual_clamp"], dtype=np.float32)
+        assert clamp.ndim == 0 or clamp.shape == (NJ,), \
+            f"residual_clamp len {clamp.shape} != {NJ}"
+        res_baseline = np.asarray(rc["residual_baseline"], dtype=np.float32)
+        assert res_baseline.shape == (NJ,), f"residual_baseline len {res_baseline.shape} != {NJ}"
+        if args.trim:
+            dofs = [j.dof for j in m.joints]
+            for part in args.trim.split(","):
+                name, deg = part.split("=")
+                name = name.strip()
+                assert name in dofs, f"--trim: unknown joint '{name}' (choices: {dofs})"
+                res_baseline[dofs.index(name)] += np.deg2rad(float(deg))
+                print(f"TRIM: {name} {float(deg):+.1f} deg")
+        res_lo = res_baseline - clamp
+        res_hi = res_baseline + clamp
+        _cd = (f"{float(clamp):.2f}" if clamp.ndim == 0
+               else f"per-joint {float(clamp.min()):.2f}..{float(clamp.max()):.2f}")
+        print(f"RESIDUAL mode: baseline +/- {_cd} rad from {args.residual_config}")
+
+    # Per-joint residual diagnostics. The debug line's max|act| is a max over all 17 joints,
+    # so a saturated run cannot be read: it does not say WHICH joints ride the clamp box or
+    # in which direction. That distinction decides the fix -- a policy pinned on a few joints
+    # in a consistent direction wants a wider box; one pinned on many joints in alternating
+    # directions is chasing a pose the box cannot reach, and widening it only buys bigger
+    # excursions. These counters separate the two.
+    dofs = [j.dof for j in m.joints]
+    sat_hi = np.zeros(NJ, dtype=int)
+    sat_lo = np.zeros(NJ, dtype=int)
+    dev_sum = np.zeros(NJ, dtype=float)
+    n_dev = 0
+    EDGE = 0.005   # rad of slack when calling a joint "at the edge"
+
     def predict_units(proj_grav, ang_vel, jpos):
         frame = builder.frame(proj_grav, ang_vel, jpos)
         obs = builder.obs(frame)
         raw_action = np.asarray(infer(obs), dtype=np.float32).ravel()
         # Match StandingEnv._process_action: SB3 clips the action to the space BEFORE the
-        # env smooths it, so clip raw -> EMA-smooth -> clip again.
+        # env smooths it, so clip raw -> (residual clamp) -> EMA-smooth -> clip again.
         raw_action = np.clip(raw_action, m.range_lo, m.range_hi)
+        if res_lo is not None:
+            raw_action = np.clip(raw_action, res_lo, res_hi)
         applied = (1.0 - args.tau) * builder.last_action + args.tau * raw_action
         applied = np.clip(applied, m.range_lo, m.range_hi)
         builder.last_action = applied
@@ -229,12 +329,27 @@ def main():
     bus = ServoBus().connect()
     imu = IMU(axis_remap=axis_remap).connect()
 
+    def read_units_or(fallback):
+        """read_all with NaN (validation-failed read) replaced by a safe fallback, so a
+        dropped reply can't NaN-poison a ramp computation."""
+        u = bus.read_all(m.servo_ids)
+        return np.where(np.isfinite(u), u, np.asarray(fallback, dtype=float))
+
     pg_state = {"g": None}   # EMA-filtered projected gravity (closure state)
+    av_state = {"w": None}   # EMA-filtered angular velocity (closure state)
 
     def read_sensors():
         # IMU is on the pelvis/base body, so proj_grav/ang_vel are already in the obs frame.
         pg = imu.projected_gravity()
         av = imu.angular_velocity()
+        # Low-pass the angular velocity: keep the slow fall-catching component, drop the fast
+        # jitter the servo lag amplifies into the limit cycle. 1.0 = raw (off).
+        aw = args.angvel_alpha
+        if av_state["w"] is None or aw >= 1.0:
+            av_state["w"] = av
+        else:
+            av_state["w"] = ((1.0 - aw) * av_state["w"] + aw * av).astype(np.float32)
+        av = av_state["w"]
         # EMA low-pass proj_grav and renormalize. The accelerometer reports specific force
         # (gravity - linear accel), so the robot's own motion swings the measured "gravity"
         # direction; gravity is quasi-static while standing, so smoothing rejects that
@@ -252,10 +367,34 @@ def main():
         jpos = (abs_rad - m.default_joint_pos).astype(np.float32)
         return pg, av, jpos
 
+    # Ramp target = SIM-STRAIGHT: all joints at sim 0 = the per-joint centers. Measured in sim,
+    # the balanced policy's settled standing attractor is joints ~= 0 (symmetric to ~0.003 rad,
+    # upright, low-gain), where the obs jpos = (0 - default_joint_pos) = -default -- the actual
+    # IN-DISTRIBUTION standing observation. default_joint_pos (the keyframe) is only the sim
+    # RESET pose; the policy drives away from it to straight. Do NOT ramp to a pose computed from
+    # a synthetic jpos=0 obs (the old --dry-run/nominal-pose ramp): that obs corresponds to the
+    # robot being AT the keyframe, which the policy does not stand in, so it returns a spurious
+    # off-distribution asymmetric command. Starting AT straight puts the robot directly at the
+    # settled obs, so the policy should just hold (calm, symmetric) like it does in sim.
+    # RESIDUAL mode: ramp to the BASELINE pose instead -- the measured settled attractor of the
+    # post-mass-fix model is NOT straight (e.g. one knee at -0.5 rad), so ramping to straight
+    # started every run off-attractor and the policy lurched toward its real stance.
+    if res_baseline is not None:
+        home_units = np.clip(m.rad_to_units(res_baseline), m.lim_lo, m.lim_hi)
+    else:
+        home_units = m.rad_to_units(np.zeros(m.n, dtype=np.float32))
+
+    # Per-joint per-step move clamp: legs/waist at --max-step-units (they need speed to catch a
+    # fall), arms (shoulder/elbow) at the tighter --arm-step-units so they can't whip/pop a horn.
+    arm_step = args.arm_step_units if args.arm_step_units is not None else args.max_step_units
+    step_cap = np.full(NJ, float(args.max_step_units))
+    arm_mask = np.array(["shoulder" in j.dof or "elbow" in j.dof for j in m.joints])
+    step_cap[arm_mask] = float(arm_step)
+
     try:
         print("Enabling torque, calibrating gyro, ramping to home...")
         bus.set_torque(m.servo_ids, True)
-        cur = bus.read_all(m.servo_ids)
+        cur = read_units_or(home_units)
         steps = max(1, int(args.ramp_secs / dt))
         for k in range(1, steps + 1):
             u = (cur + (home_units - cur) * k / steps).round().astype(int)
@@ -268,6 +407,45 @@ def main():
             pg, av, jpos = read_sensors()
             builder.obs(builder.frame(pg, av, jpos))
             time.sleep(dt)
+
+        if args.hold_pose:
+            # Compute the policy's nominal pose deterministically (synthetic upright + home obs,
+            # like --dry-run). Feed it long enough for the tau-EMA to settle to the raw target.
+            pg0 = np.array([0, 0, -1], dtype=np.float32)
+            av0 = np.zeros(3, dtype=np.float32)
+            jp0 = np.zeros(NJ, dtype=np.float32)
+            for _ in range(40):
+                units, applied = predict_units(pg0, av0, jp0)
+            target = np.asarray(units, dtype=int).copy()
+            if args.lean_back != 0.0:
+                wp = next(i for i, j in enumerate(m.joints) if j.dof == "waist_pitch")
+                d = int(round(m.signs[wp] * np.deg2rad(args.lean_back) * m.units_per_rad))
+                target[wp] = int(np.clip(target[wp] + d, m.lim_lo[wp], m.lim_hi[wp]))
+                print(f"[hold-pose] lean-back {args.lean_back:+.1f} deg: waist_pitch "
+                      f"servo {m.servo_ids[wp]} {int(units[wp])} -> {target[wp]}")
+            cur = read_units_or(target)
+            steps = max(1, int(args.ramp_secs / dt))
+            for k in range(1, steps + 1):
+                u = (cur + (target - cur) * k / steps).round().astype(int)
+                bus.write_all(m.servo_ids, u, speed=args.speed)
+                time.sleep(dt)
+            print("[hold-pose] HOLDING nominal pose open-loop (NO feedback -- cannot seize). "
+                  "Ease your hands away: does it STAND or TIP?")
+            tilt_bad = 0
+            while True:
+                pg, av, jpos = read_sensors()
+                upright_cos = -float(pg[2])
+                if upright_cos < args.tilt_cut:
+                    tilt_bad += 1
+                    if tilt_bad >= args.tilt_debounce:
+                        print(f"\n[SAFETY] upright_cos={upright_cos:.2f} < {args.tilt_cut}: cutting torque.")
+                        bus.set_torque(m.servo_ids, False)
+                        break
+                else:
+                    tilt_bad = 0
+                bus.write_all(m.servo_ids, target, speed=args.speed)
+                time.sleep(dt)
+            return
 
         print(f"Closed loop running (Ctrl-C to stop). jvel_alpha={args.jvel_alpha}, "
               f"max_step_units={args.max_step_units}, tau={args.tau}")
@@ -302,7 +480,13 @@ def main():
 
             if args.freeze_after and step >= args.freeze_after:
                 if frozen_units is None:
-                    frozen_units = prev_units.astype(int)
+                    frozen_units = prev_units.astype(int).copy()
+                    if args.lean_back != 0.0:
+                        wp = next(i for i, j in enumerate(m.joints) if j.dof == "waist_pitch")
+                        d = int(round(m.signs[wp] * np.deg2rad(args.lean_back) * m.units_per_rad))
+                        frozen_units[wp] = int(np.clip(frozen_units[wp] + d, m.lim_lo[wp], m.lim_hi[wp]))
+                        print(f"[FREEZE] lean-back {args.lean_back:+.1f} deg: waist_pitch "
+                              f"servo {m.servo_ids[wp]} {int(prev_units[wp])} -> {frozen_units[wp]}")
                     print(f"\n[FREEZE] holding the policy's pose open-loop at step {step} "
                           f"(feedback off). Ease your hands away: does it STAND or TIP?")
                 units = frozen_units
@@ -310,10 +494,17 @@ def main():
             else:
                 units, applied = predict_units(pg, av, jpos)
                 # per-step move clamp (rate limit), then write
-                units = np.clip(units, prev_units - args.max_step_units, prev_units + args.max_step_units)
+                units = np.clip(units, prev_units - step_cap, prev_units + step_cap)
                 units = np.clip(units, m.lim_lo, m.lim_hi).round().astype(int)
             bus.write_all(m.servo_ids, units, speed=args.speed)
             prev_units = units.astype(float)
+
+            if res_baseline is not None:
+                dev = np.asarray(applied, dtype=float) - res_baseline
+                sat_hi += (dev >= clamp - EDGE)
+                sat_lo += (dev <= -clamp + EDGE)
+                dev_sum += dev
+                n_dev += 1
 
             if args.debug and step % args.debug_every == 0:
                 sense_ms = (t_sense - t0) * 1000.0
@@ -326,7 +517,14 @@ def main():
                       f"max|jvel_f|={np.max(np.abs(builder.jvel_f)):5.1f} "
                       f"max|act|={np.max(np.abs(applied)):.2f} "
                       f"d_act={np.max(np.abs(applied - prev_applied)):.3f} "
+                      f"rej={builder.rejects_total} "
                       f"| {rate:4.1f}Hz sense={sense_ms:4.1f}ms busy={busy_ms:4.1f}ms{slow}")
+                if res_baseline is not None:
+                    dev = np.asarray(applied, dtype=float) - res_baseline
+                    top = np.argsort(-np.abs(dev))[:4]
+                    print("          resid: "
+                          + "  ".join(f"{dofs[i]}{dev[i]:+.2f}" for i in top)
+                          + f"   at-edge {int(np.sum(np.abs(dev) >= clamp - EDGE))}/{NJ}")
             prev_applied = applied.copy()
             step += 1
 
@@ -334,7 +532,7 @@ def main():
     except KeyboardInterrupt:
         print("\nStopping: ramping to home and disabling torque.")
         try:
-            cur = bus.read_all(m.servo_ids)
+            cur = read_units_or(home_units)
             steps = max(1, int(1.0 / dt))
             for k in range(1, steps + 1):
                 u = (cur + (home_units - cur) * k / steps).round().astype(int)
@@ -343,6 +541,14 @@ def main():
         except Exception:
             pass
     finally:
+        if n_dev > 0:
+            print(f"\n--- residual saturation summary ({n_dev} frames, clamp {clamp}) ---")
+            print(f"{'joint':<18} {'mean dev':>9} {'at +edge':>9} {'at -edge':>9}")
+            for i in np.argsort(-(sat_hi + sat_lo)):
+                if sat_hi[i] + sat_lo[i] == 0 and abs(dev_sum[i] / n_dev) < 0.02:
+                    continue
+                print(f"{dofs[i]:<18} {dev_sum[i]/n_dev:+9.3f} "
+                      f"{100.0*sat_hi[i]/n_dev:8.0f}% {100.0*sat_lo[i]/n_dev:8.0f}%")
         bus.set_torque(m.servo_ids, False)
         bus.close()
         imu.close()

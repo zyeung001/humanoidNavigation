@@ -1,0 +1,181 @@
+# RESIDUAL retrain (PD-baseline + bounded RL corrections) for real-humanoid standing.
+#
+# WHY (7/28): the balanced policy's code path is proven faithful (npz parity exact, offline
+# emulation + sim reproduce hardware behavior), but the unassisted slack-tether ground test
+# fails in 1-3 s every time -- the policy's unbounded corrections diverge on the real plant
+# (unmodeled backlash/sag; static-lean envelope only ~6 deg). Sim probes (7/28):
+#   - the settled standing COMMAND (not pose: includes gravity-holding offsets) STANDS
+#     open-loop when frozen (400/400, both seeds) -> statically feasible baseline;
+#   - the balanced policy clamped to baseline +/- 0.10..0.25 rad still stands quietly and
+#     is CALMER than unclamped (|av| 0.06-0.08 vs 0.09) -> valid warm start;
+#   - kick recovery at the old trained magnitude (lin 0.3) is impossible under any clamp,
+#     so pushes here are milder -- the policy learns the best recovery available INSIDE
+#     the bounds, which matches the real failure mode (slow drift, not shoves).
+#
+# MECHANISM: standing_env residual_clamp clips the policy action to residual_baseline +/-
+# residual_clamp BEFORE smoothing; the action space is unchanged, so this resumes the
+# balanced model directly. Deploy mirrors the clamp (deploy_standing.py --residual-config)
+# and ramps to the BASELINE pose (the true settled attractor -- the old ramp-to-straight
+# started every hardware run off-attractor).
+#
+# Resumes the BALANCED model, writes *_residual outputs. --timesteps is CUMULATIVE and the
+# balanced model sits at 80,019,456 steps (35M smooth 6/23 + ~25M balanced 6/24 + ~20M
+# corrected-mass balanced retrain 7/2 -- same file overwritten), so 90M adds ~10M:
+#   python scripts/train_standing.py --config config/real_humanoid_residual.yaml \
+#     --model models/final_real_standing_balanced.zip \
+#     --vecnorm models/vecnorm_real_standing_balanced.pkl \
+#     --timesteps 90000000
+#
+# GATES before deploying: scripts/gate_standing_kick.py at the TRAINED magnitude here
+# (lin 0.15 / yaw 0.5, not 0.3/1.0), then export npz, md5-verify the Pi copy.
+
+standing:
+  # ========== ENVIRONMENT ==========
+  xml_file: models/humanoid_real_v2.xml
+  seed: 42
+  n_envs: 12
+  device: cuda
+  max_episode_steps: 5000
+
+  # ========== OBSERVATION (deployable proprioceptive, 228-dim) ==========
+  proprioceptive_obs: true
+  obs_foot_contact: false
+  obs_history: 4
+  obs_include_com: false
+  obs_feature_norm: false
+
+  # ========== RESIDUAL MODE (the point of this config) ==========
+  # Baseline = the balanced policy's settled standing command, measured in sim 7/28
+  # (settle 300 steps, mean smoothed applied action over the last 100). Stands frozen.
+  residual_clamp: 0.2
+  residual_baseline: [
+    0.0281,
+    0.2744,
+    0.2973,
+    0.1203,
+    -0.2290,
+    -0.0865,
+    0.0334,
+    -0.0034,
+    0.1136,
+    -0.1109,
+    -0.5047,
+    -0.0497,
+    -0.0004,
+    0.0585,
+    -0.1704,
+    -0.0000,
+    -0.0000]
+
+  # ========== ACTION + SMOOTHNESS (unchanged from balanced) ==========
+  action_smoothing: true
+  action_smoothing_tau: 0.3
+  action_symmetry: false
+  pd_assist: false
+  action_rate_penalty: 70.0
+  action_rate_cap: 100.0
+  raw_action_rate_penalty: 25.0
+  raw_action_rate_cap: 50.0
+  yaw_rate_penalty: 30.0
+
+  # ========== BALANCED STANCE ==========
+  stance_balance_weight: 8.0
+
+  # ========== PUSH-RECOVERY (milder: recovery must fit inside the clamp) ==========
+  push_enabled: true
+  push_interval_steps: [60, 150]
+  push_lin_vel: 0.15
+  push_ang_vel: 0.5
+
+  # ========== CURRICULUM (pinned final stage) ==========
+  curriculum_start_stage: 5
+  curriculum_max_stage: 5
+  curriculum_advance_after: 20
+  curriculum_success_rate: 0.60
+
+  # ========== SIM2REAL RANDOMIZATION (unchanged from balanced) ==========
+  actuator_lag: true
+  actuator_delay_ms: [30.0, 70.0]
+  actuator_tau_ms: [90.0, 220.0]
+
+  actuator_rand: true
+  actuator_rand_range: [0.7, 1.3]
+
+  domain_rand: true
+  curriculum_manage_domain_rand: false
+  rand_mass_range: [0.8, 1.2]
+  rand_friction_range: [0.6, 1.4]
+
+  obs_noise: true
+  noise_projgrav: 0.02
+  noise_angvel: 0.05
+  noise_jpos: 0.005
+  noise_jvel: 0.25
+  bias_jpos: 0.02
+  bias_angvel: 0.03
+
+  # ========== REWARD ==========
+  target_height: 1.40
+  height_error_threshold: 0.08
+  height_stability_threshold: 0.15
+  reward_caps:
+    max_height_maintenance_penalty: 15.0
+    recovery_bonus_scale: 50.0
+    termination_penalty_constant: 50.0
+
+  # ========== PPO (short fine-tune from the balanced model) ==========
+  total_timesteps: 10_000_000
+  learning_rate: 0.0001
+  final_learning_rate: 0.00003
+  n_steps: 2048
+  batch_size: 2048
+  n_epochs: 5
+  gamma: 0.995
+  gae_lambda: 0.95
+  clip_range: 0.2
+  final_clip_range: 0.1
+  ent_coef: 0.004
+  final_ent_coef: 0.001
+  log_std_max: -1.5
+  log_std_min: -2.0
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+
+  # ========== VECNORMALIZE ==========
+  normalize: true
+  vecnormalize_clip_obs: 50.0
+  vecnormalize_clip_reward: 50.0
+
+  # ========== NETWORK (must match the balanced model to resume) ==========
+  policy_kwargs:
+    net_arch:
+      - pi: [512, 512, 256]
+        vf: [512, 512, 256]
+    activation_fn: SiLU
+    ortho_init: true
+
+  # ========== LOGGING / CHECKPOINTING (distinct *_residual paths) ==========
+  verbose: 1
+  log_dir: data/logs/real_standing_residual
+  use_tensorboard: true
+  n_eval_episodes: 5
+  eval_freq: 100_000
+  save_freq: 250_000
+  checkpoint_dir: data/checkpoints/real_standing_residual
+  checkpoint_prefix: real_standing_residual
+  best_model_path: models/best_real_standing_residual
+  final_model_path: models/final_real_standing_residual
+  vecnormalize_path: models/vecnorm_real_standing_residual.pkl
+  target_reward_threshold: 5000
+  early_stop:
+    patience: 5
+
+  random_height_init: false
+  random_height_prob: 0.0
+  random_height_range: [-0.3, 0.1]
+
+  use_wandb: false
+  wandb_project: humanoid_real_standing_residual
+  wandb_log_freq: 10000
+  video_freq: 500000
+  episode_print_freq: 1000

@@ -1,0 +1,203 @@
+# RESIDUAL v3: PER-JOINT clamp, widened at the WAIST only.
+#
+# WHY (runN, 8/1, first run with per-joint deploy instrumentation). The residual2 policy
+# spent its whole run pinned at the clamp, but max|act| is a max over 17 joints and could
+# not say where. The per-joint summary over 299 frames finally did:
+#
+#   joint          mean dev   at +edge   at -edge
+#   waist_yaw        -0.171        0%       46%
+#   waist_pitch      -0.121        0%       25%
+#   L_shoulder_roll  -0.077        0%       13%
+#   R_shoulder_pitch +0.089       11%        0%
+#   R_hip_yaw        +0.035        7%        1%
+#   R_hip_roll       -0.109        0%        3%
+#   (everything else ~0%)
+#
+# TWO things follow, and they pick this config over the alternatives:
+#
+#   1. The saturation is ENTIRELY ONE-SIDED -- every joint is 0% at one edge and non-zero
+#      at the other, not one alternates. That rules out the relay/bang-bang reading, where
+#      the clamp itself would be generating the ~2 Hz limit cycle and widening it would be
+#      exactly wrong. The policy is pushing steadily in one direction into a wall, which is
+#      the case where more authority is the right answer.
+#   2. It is the WAIST, and only the waist. waist_yaw holds 86% of the full +-0.2 envelope
+#      as a MEAN, pinned nearly half the time; waist_pitch is second. The legs barely touch
+#      their limits. So widen those two and leave the other 15 alone -- a uniform widen
+#      would hand the legs excursion room they never asked for, and bounded leg excursion
+#      is the property that made residual v1 a control win in the first place (runI: d_act
+#      halved, |av| 0.34 vs 0.7-1.0).
+#
+# Note the history this sits in: v1's measured baseline had waist_yaw at -0.505 (a 29 deg
+# twist) and hung crooked on the tether; v2 zeroed it and the policy immediately strained
+# back toward that twist, as far as -0.2 would let it. Sim believes this robot needs a
+# substantially twisted waist to stand. v3 tests whether GIVING it that authority (while
+# keeping the anchor straight and symmetric) is enough -- it does NOT re-center the box on
+# the twist, because that is what v1 did and hardware rejected it.
+#
+# HONEST CAVEAT: the waist is also the mechanically weakest part of this robot -- three
+# servos stacked in series, and the user observed the chest deflecting forward under load
+# with NO servo leaving position (structural compliance, invisible to a policy whose obs is
+# pelvis proj_grav + joint angles). If that compliance is the real driver, no clamp width
+# fixes it, and the saturation measured here is a symptom: commanded waist motion does not
+# produce the expected body response, so the policy keeps pushing until it saturates.
+# This config is worth running because it is cheap and falsifiable, not because it is
+# likely to be sufficient on its own.
+#
+# ONE VARIABLE vs residual2: residual_clamp scalar 0.2 -> per-joint vector. Baseline stays
+# zeros, baseline_rand stays 0.05, noise/DR/PPO all unchanged, so the comparison is clean.
+#
+# Resumes the RESIDUAL v2 model (100,024,320 steps; --timesteps is CUMULATIVE -> adds ~10M):
+#   python scripts/train_standing.py --config config/real_humanoid_residual3.yaml \
+#     --model models/final_real_standing_residual2.zip \
+#     --vecnorm models/vecnorm_real_standing_residual2.pkl \
+#     --timesteps 110000000
+#
+# GATE before deploying: scripts/gate_standing_kick.py at lin 0.15 / yaw 0.5 with THIS
+# config, then export npz, md5-push (verify the hash BEFORE running -- runM was lost to a
+# skipped scp), deploy with --residual-config config/real_humanoid_residual3.yaml.
+
+standing:
+  # ========== ENVIRONMENT ==========
+  xml_file: models/humanoid_real_v2.xml
+  seed: 42
+  n_envs: 12
+  device: cuda
+  max_episode_steps: 5000
+
+  # ========== OBSERVATION (deployable proprioceptive, 228-dim) ==========
+  proprioceptive_obs: true
+  obs_foot_contact: false
+  obs_history: 4
+  obs_include_com: false
+  obs_feature_norm: false
+
+  # ========== RESIDUAL MODE v3 ==========
+  # Per-joint, in ACTION INDEX order (= joint_servo_map.yaml idx order):
+  #   0-3   R leg: hip_roll, hip_yaw, hip_pitch, knee
+  #   4-7   L leg: hip_roll, hip_yaw, hip_pitch, knee
+  #   8-10  waist: roll, pitch, yaw
+  #   11-13 R arm: shoulder_pitch, shoulder_roll, elbow
+  #   14-16 L arm: shoulder_pitch, shoulder_roll, elbow
+  residual_clamp: [
+    0.20, 0.20, 0.20, 0.20,
+    0.20, 0.20, 0.20, 0.20,
+    0.20, 0.30, 0.35,
+    0.20, 0.20, 0.20,
+    0.20, 0.20, 0.20]
+  residual_baseline: [
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  residual_baseline_rand: 0.05
+
+  # ========== ACTION + SMOOTHNESS (unchanged) ==========
+  action_smoothing: true
+  action_smoothing_tau: 0.3
+  action_symmetry: false
+  pd_assist: false
+  action_rate_penalty: 70.0
+  action_rate_cap: 100.0
+  raw_action_rate_penalty: 25.0
+  raw_action_rate_cap: 50.0
+  yaw_rate_penalty: 30.0
+
+  # ========== BALANCED STANCE ==========
+  stance_balance_weight: 8.0
+
+  # ========== PUSH-RECOVERY (unchanged) ==========
+  push_enabled: true
+  push_interval_steps: [60, 150]
+  push_lin_vel: 0.15
+  push_ang_vel: 0.5
+
+  # ========== CURRICULUM (pinned final stage) ==========
+  curriculum_start_stage: 5
+  curriculum_max_stage: 5
+  curriculum_advance_after: 20
+  curriculum_success_rate: 0.60
+
+  # ========== SIM2REAL RANDOMIZATION ==========
+  actuator_lag: true
+  actuator_delay_ms: [30.0, 70.0]
+  actuator_tau_ms: [90.0, 220.0]
+
+  actuator_rand: true
+  actuator_rand_range: [0.7, 1.3]
+
+  domain_rand: true
+  curriculum_manage_domain_rand: false
+  rand_mass_range: [0.8, 1.2]
+  rand_friction_range: [0.6, 1.4]
+
+  obs_noise: true
+  noise_projgrav: 0.02
+  noise_angvel: 0.05
+  noise_jpos: 0.005
+  noise_jvel: 0.25
+  bias_jpos: 0.04
+  bias_angvel: 0.03
+
+  # ========== REWARD ==========
+  target_height: 1.40
+  height_error_threshold: 0.08
+  height_stability_threshold: 0.15
+  reward_caps:
+    max_height_maintenance_penalty: 15.0
+    recovery_bonus_scale: 50.0
+    termination_penalty_constant: 50.0
+
+  # ========== PPO (short fine-tune from residual v2) ==========
+  total_timesteps: 10_000_000
+  learning_rate: 0.0001
+  final_learning_rate: 0.00003
+  n_steps: 2048
+  batch_size: 2048
+  n_epochs: 5
+  gamma: 0.995
+  gae_lambda: 0.95
+  clip_range: 0.2
+  final_clip_range: 0.1
+  ent_coef: 0.004
+  final_ent_coef: 0.001
+  log_std_max: -1.5
+  log_std_min: -2.0
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+
+  # ========== VECNORMALIZE ==========
+  normalize: true
+  vecnormalize_clip_obs: 50.0
+  vecnormalize_clip_reward: 50.0
+
+  # ========== NETWORK (must match to resume) ==========
+  policy_kwargs:
+    net_arch:
+      - pi: [512, 512, 256]
+        vf: [512, 512, 256]
+    activation_fn: SiLU
+    ortho_init: true
+
+  # ========== LOGGING / CHECKPOINTING (distinct *_residual3 paths) ==========
+  verbose: 1
+  log_dir: data/logs/real_standing_residual3
+  use_tensorboard: true
+  n_eval_episodes: 5
+  eval_freq: 100_000
+  save_freq: 250_000
+  checkpoint_dir: data/checkpoints/real_standing_residual3
+  checkpoint_prefix: real_standing_residual3
+  best_model_path: models/best_real_standing_residual3
+  final_model_path: models/final_real_standing_residual3
+  vecnormalize_path: models/vecnorm_real_standing_residual3.pkl
+  target_reward_threshold: 5000
+  early_stop:
+    patience: 5
+
+  random_height_init: false
+  random_height_prob: 0.0
+  random_height_range: [-0.3, 0.1]
+
+  use_wandb: false
+  wandb_project: humanoid_real_standing_residual3
+  wandb_log_freq: 10000
+  video_freq: 500000
+  episode_print_freq: 1000

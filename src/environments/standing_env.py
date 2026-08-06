@@ -193,6 +193,37 @@ class StandingEnv(gym.Wrapper):
         self._prev_raw_action = np.zeros(self.env.action_space.shape, dtype=np.float32)
         self._last_raw_action_rate = np.zeros(self.env.action_space.shape, dtype=np.float32)
 
+        # RESIDUAL mode (PD-baseline + bounded RL corrections): clamp the policy's action to
+        # residual_baseline +/- residual_clamp before smoothing. The baseline is the settled
+        # standing COMMAND (includes gravity-holding offsets, not just the pose), which stands
+        # open-loop on its own; the policy can only nudge around it, so it is structurally
+        # unable to command the large excursions that topple the real robot. 0.0 = off.
+        # residual_clamp is a scalar OR a per-joint vector. Per-joint exists because the
+        # 8/1 hardware run (runN) measured WHERE the policy saturates: waist_yaw pinned at
+        # its edge 46% of frames (mean dev -0.171 of a 0.2 box) and waist_pitch 25%, while
+        # the legs barely touched their limits (hip yaw 7%, hip roll 3%). The saturation was
+        # entirely one-sided -- no joint alternated edges -- so the policy wants sustained
+        # authority in a specific direction, in the waist, and only there. Widening every
+        # joint to buy that would also hand the legs excursion room they never asked for.
+        rc = self.cfg.get('residual_clamp', 0.0)
+        self.residual_clamp = np.asarray(rc, dtype=np.float32)
+        rb = self.cfg.get('residual_baseline', None)
+        self.residual_baseline = (np.zeros(self.env.action_space.shape, dtype=np.float32)
+                                  if rb is None else np.asarray(rb, dtype=np.float32))
+        if np.any(self.residual_clamp > 0.0):
+            assert self.residual_baseline.shape == self.env.action_space.shape, \
+                f"residual_baseline shape {self.residual_baseline.shape} != action space"
+            if self.residual_clamp.ndim > 0:
+                assert self.residual_clamp.shape == self.env.action_space.shape, \
+                    f"residual_clamp shape {self.residual_clamp.shape} != action space"
+        # Per-episode uniform offset added to the baseline (and its clamp box). The 7/30
+        # tether run showed sim's static balance point differs from the real robot's by
+        # ~10 deg; training across a family of shifted baselines forces the policy to find
+        # true vertical from proj_grav instead of trusting the anchor, and makes small
+        # on-robot baseline trims (deploy --trim) in-distribution. 0.0 = off.
+        self.residual_baseline_rand = float(self.cfg.get('residual_baseline_rand', 0.0))
+        self._res_base_ep = self.residual_baseline.copy()
+
         # Yaw-rate damping. Penalizes (base yaw rate)^2 to discourage the slow
         # in-place spin that proprioceptive obs can't correct via heading
         # (projected gravity is yaw-invariant) but CAN sense via the gyro
@@ -279,6 +310,12 @@ class StandingEnv(gym.Wrapper):
         print(f"  = FROZEN dimension: {self.frozen_obs_dim}")
         print(f"  Feature normalization: {self.feature_norm}")
         print(f"  Action smoothing tau: {self.action_smoothing_tau}")
+        if np.any(self.residual_clamp > 0.0):
+            rc = self.residual_clamp
+            desc = (f"{float(rc):.2f}" if rc.ndim == 0
+                    else f"per-joint {float(rc.min()):.2f}..{float(rc.max()):.2f}")
+            print(f"  RESIDUAL mode: baseline +/- {desc} rad "
+                  f"(baseline max|.|={np.abs(self.residual_baseline).max():.3f})")
         print(f"  Random height init: {self.random_height_init} (prob={self.random_height_prob})")
         print(f"  Max height maintenance penalty: {self.max_height_maintenance_penalty}")
         print(f"  Recovery bonus scale: {self.recovery_bonus_scale}")
@@ -331,6 +368,11 @@ class StandingEnv(gym.Wrapper):
                 self.rand_friction_range[0], self.rand_friction_range[1],
                 size=m.geom_friction.shape[0]
             )
+
+        if np.any(self.residual_clamp > 0.0) and self.residual_baseline_rand > 0.0:
+            self._res_base_ep = (self.residual_baseline + np.random.uniform(
+                -self.residual_baseline_rand, self.residual_baseline_rand,
+                size=self.residual_baseline.shape)).astype(np.float32)
 
         # Per-episode constant sensor biases (the offset a real IMU/encoder set holds for a
         # whole power-cycle). Sampled once here, added in _proprioceptive_features.
@@ -686,6 +728,10 @@ class StandingEnv(gym.Wrapper):
 
     def _process_action(self, action: np.ndarray) -> np.ndarray:
         """Process actions with optional smoothing, symmetry, and PD control."""
+        if np.any(self.residual_clamp > 0.0):
+            action = np.clip(action, self._res_base_ep - self.residual_clamp,
+                             self._res_base_ep + self.residual_clamp)
+
         if self.enable_action_symmetry:
             half = action.shape[-1] // 2
             if half > 0:
