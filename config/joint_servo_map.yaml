@@ -54,7 +54,7 @@ joints:
   # servo 12 (pitch) -> servo 13 (roll, "out") -> servo 14 (elbow, forearm).
   # The map previously had roll<->elbow servo IDs swapped (roll=14, elbow=13) and the
   # one-sided elbow EEPROM limit on the wrong servo; fixed here + via fix_arm_limits.py.
-  # 8/5 re-zero (calibrate_arm_centers.py, torque off, hand-posed straight, 15 reads/joint,
+  # 8/5 re-zero (calibrate_centers.py, torque off, hand-posed straight, 15 reads/joint,
   # spread 0 on every joint): the arm `center:` values below are the MEASURED physical-straight
   # encoder positions. Each servo_limit is the old span shifted by the same offset, so the
   # physical travel arc is unchanged and merely re-labelled. EEPROM limits shifted to match

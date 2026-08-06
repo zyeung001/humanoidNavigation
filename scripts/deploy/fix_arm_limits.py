@@ -8,7 +8,7 @@ big-endian units), reads them back to confirm, and moves nothing.
   python3 fix_arm_limits.py
 
 WHY THIS CHANGED 8/5. Every previous version of this table assumed the arms are
-straight at 512. `calibrate_arm_centers.py` measured the real straight pose and
+straight at 512. `calibrate_centers.py` measured the real straight pose and
 that assumption was wrong by up to 40 deg, so the limits were centred on the
 wrong point and THREE joints could not reach straight at all:
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""calibrate_arm_centers.py  --  RUN ON THE PI
+"""calibrate_centers.py  --  RUN ON THE PI
 
 Measure the true STRAIGHT position of the six arm joints and emit the `center:` values for
 config/joint_servo_map.yaml.
@@ -13,8 +13,8 @@ on the spline, so swapping servos between slots invalidates the zeros too. Sympt
 Torque is OFF the whole time; nothing is driven. You pose the arms by hand, this reads the
 encoders, medians several samples per joint to reject bus noise, and prints YAML to paste.
 
-    python3 scripts/deploy/calibrate_arm_centers.py
-    python3 scripts/deploy/calibrate_arm_centers.py --samples 15
+    python3 scripts/deploy/calibrate_centers.py
+    python3 scripts/deploy/calibrate_centers.py --samples 15
 """
 import argparse
 import statistics
