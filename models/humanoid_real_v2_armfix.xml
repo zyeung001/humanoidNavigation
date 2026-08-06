@@ -1,4 +1,8 @@
 <?xml version='1.0' encoding='utf-8'?>
+<!-- ARMFIX 7/28: L_shoulder_roll (Revolute 5) joint+ctrl range corrected from the
+     mis-converted [-2.007, 0] (zero OUTWARD travel) to the mirror of the right arm
+     [-0.4363, +1.5708] (out = +, 90 deg out / 25 deg in). Geometry untouched.
+     Arm-reach track only; the standing track keeps humanoid_real_v2.xml. -->
 <mujoco model="HumanoidReal">
   <compiler angle="radian" meshdir="humanoid_meshes_obj" autolimits="true" />
   <default>
@@ -197,7 +201,7 @@
               <joint name="Revolute 4" pos="-0.00326 -0.01321 -0.01299" axis="0 -0.999979 0.006517" range="-2.0944 2.0944" actuatorfrcrange="-100 100" />
               <body name="mount_4" pos="-0.01447 0.001881 -0.035087">
                 <inertial pos="0.021469 -0.015745 -0.078502" mass="0.024203" fullinertia="3.2921e-05 3.4173e-05 4.1092e-06 1.2204e-07 2.3024e-06 -1.1708e-06" />
-                <joint name="Revolute 5" pos="0.00923 -0.00436 -0.01105" axis="-1 0 0" range="-2.00713 0" actuatorfrcrange="-100 100" />
+                <joint name="Revolute 5" pos="0.00923 -0.00436 -0.01105" axis="-1 0 0" range="-0.4363 1.5708" actuatorfrcrange="-100 100" />
                 <body name="mount_3" pos="0.015106 0.01003 -0.12055">
                   <inertial pos="0.005204 -0.027791 -0.093137" mass="0.016861" fullinertia="4.1373e-05 4.0629e-05 2.1363e-06 5.5258e-14 6.6275e-13 -1.1069e-06" />
                   <joint name="Revolute 3" pos="0.01398 -0.01721 -0.00904" axis="0 0.999915 -0.013033" range="-2.0944 0" actuatorfrcrange="-100 100" />
@@ -305,7 +309,7 @@
     <position name="Revolute 6" joint="Revolute 6" kp="5.0" kv="0.5" ctrlrange="-1.5708 0.4363" forcerange="-0.226 0.226" />
     <position name="Revolute 1" joint="Revolute 1" kp="5.0" kv="0.5" ctrlrange="0.0000 2.0944" forcerange="-0.226 0.226" />
     <position name="Revolute 4" joint="Revolute 4" kp="5.0" kv="0.5" ctrlrange="-2.0944 2.0944" forcerange="-0.226 0.226" />
-    <position name="Revolute 5" joint="Revolute 5" kp="5.0" kv="0.5" ctrlrange="-2.0071 0.0000" forcerange="-0.226 0.226" />
+    <position name="Revolute 5" joint="Revolute 5" kp="5.0" kv="0.5" ctrlrange="-0.4363 1.5708" forcerange="-0.226 0.226" />
     <position name="Revolute 3" joint="Revolute 3" kp="5.0" kv="0.5" ctrlrange="-2.0944 0.0000" forcerange="-0.226 0.226" />
   </actuator>
   <keyframe>

@@ -5,8 +5,11 @@ from .standing_curriculum import StandingCurriculumEnv, make_standing_curriculum
 from .walking_env import WalkingEnv, make_walking_env
 from .walking_curriculum import WalkingCurriculumEnv, make_walking_curriculum_env
 from .humanoid_velocity_env import HumanoidVelocityEnv, make_humanoid_velocity_env
+from .real_turning_env import RealTurningEnv, make_real_turning_env
 
 __all__ = [
+    'RealTurningEnv',
+    'make_real_turning_env',
     'StandingEnv',
     'make_standing_env',
     'StandingCurriculumEnv', 

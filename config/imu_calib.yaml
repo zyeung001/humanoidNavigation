@@ -1,16 +1,10 @@
 # IMU mounting calibration for the real robot.
-# axis_remap maps the raw IMU sensor axes -> the chest body frame:
-#     proj_grav  = axis_remap @ (-accel_normalized)
-#     ang_vel    = axis_remap @ gyro_rads - gyro_bias
-#
-# Derived 2026-06-18 by hand-tilt calibration: the IMU/breadboard is mounted rotated
-# 180 deg about the vertical (Z) axis (it faces backward), so X and Y are negated and
-# Z is unchanged. Confirmed by pitch-forward (X sign) + left/right-roll (Y sign) tilt
-# tests against the MJCF ground truth; end-to-end upright read ~9.5 deg (mostly hand-hold).
-#
-# TODO refine the residual static tilt (~few deg) once the robot can be held truly level
-# on a stand — average corrected proj_grav at known-upright and fold the offset in here.
+# axis_remap maps raw IMU sensor axes -> the PELVIS/base frame:
+#     proj_grav = axis_remap @ (-accel_normalized)
+#     ang_vel   = axis_remap @ gyro_rads - gyro_bias
+# Derived 2026-06-21 by calibrate_imu.py (3-pose gravity method).
+# IMU mounted on the PELVIS/base block (obs frame), so no waist correction is needed.
 axis_remap:
-  - [-1, 0, 0]
+  - [0, 0, -1]
   - [0, -1, 0]
-  - [0, 0, 1]
+  - [-1, 0, 0]

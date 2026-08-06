@@ -1,0 +1,138 @@
+# Sim2real ROBUSTNESS retrain for the real humanoid standing policy.
+#
+# The clean policy (models/final_real_standing_model.zip) stands 100% in sim but
+# limit-cycles on hardware: it was trained on a perfect plant (domain_rand off, no
+# sensor noise), so the real robot's mass/friction/servo-response/sensor-noise are
+# all out of distribution. This config FINE-TUNES that working policy with heavy
+# domain randomization + observation noise + actuator-gain randomization so it
+# learns a controller robust to the real plant.
+#
+# Run (USER runs training; resumes the clean 19M model, writes *_robust outputs so
+# the clean model is preserved):
+#   python scripts/train_standing.py --config config/real_humanoid_robust.yaml \
+#     --model models/final_real_standing_model.zip \
+#     --vecnorm models/vecnorm_real_standing.pkl \
+#     --timesteps 35000000
+#
+# Watch: approx_kl should stay < ~0.1 and ep_len recover toward ~5000 within a few M
+# steps. If it collapses (ep_len stuck low, KL spiking), the randomization is too hot
+# -- dial back noise_jvel / actuator_rand_range / rand_friction_range first.
+
+standing:
+  # ========== ENVIRONMENT (identical plant to the clean run) ==========
+  xml_file: models/humanoid_real_v2.xml
+  seed: 42
+  n_envs: 12
+  device: cuda
+  max_episode_steps: 5000
+
+  # ========== OBSERVATION (deployable proprioceptive, same 228-dim) ==========
+  proprioceptive_obs: true
+  obs_foot_contact: false
+  obs_history: 4
+  obs_include_com: false
+  obs_feature_norm: false
+
+  # ========== ACTION ==========
+  action_smoothing: true
+  action_smoothing_tau: 0.3      # deploy must EMA-smooth at this same tau
+  action_symmetry: false
+  pd_assist: false
+  action_rate_penalty: 15.0
+  yaw_rate_penalty: 30.0
+
+  # ========== CURRICULUM (pinned final stage, as the clean run) ==========
+  curriculum_start_stage: 5
+  curriculum_max_stage: 5
+  curriculum_advance_after: 20
+  curriculum_success_rate: 0.60
+
+  # ========== SIM2REAL RANDOMIZATION (the whole point of this config) ==========
+  # Domain randomization: real masses/inertias are only approximate, contact friction
+  # is unknown. Much wider than the clean run's +/-3%.
+  domain_rand: true
+  curriculum_manage_domain_rand: false   # honor these explicit ranges at stage 5
+  rand_mass_range: [0.85, 1.15]          # +/-15% body mass
+  rand_friction_range: [0.6, 1.4]        # foot friction is the biggest unknown
+
+  # Actuator-gain randomization: real SCS servos differ from the MJCF kp/kv and vary
+  # unit-to-unit. Scale each servo's kp/kv per episode.
+  actuator_rand: true
+  actuator_rand_range: [0.7, 1.3]        # +/-30% servo stiffness/damping
+
+  # Observation noise + per-episode sensor BIASES (the offsets a real IMU/encoder set
+  # holds for a whole power-cycle). This is the dominant fix: the clean policy never
+  # saw a noisy/biased obs, so it never recognized its hardware state.
+  obs_noise: true
+  noise_projgrav: 0.02     # IMU tilt jitter (unit-vector)
+  noise_angvel: 0.05       # gyro per-step noise (rad/s)
+  noise_jpos: 0.005        # encoder per-step noise (rad)
+  noise_jvel: 0.25         # finite-diff velocity noise (rad/s); deploy low-passes this
+  bias_jpos: 0.02          # per-episode encoder zero offset (~1.1 deg/joint)
+  bias_angvel: 0.03        # per-episode gyro bias (rad/s)
+
+  # ========== REWARD (same regime) ==========
+  target_height: 1.40
+  height_error_threshold: 0.08
+  height_stability_threshold: 0.15
+  reward_caps:
+    max_height_maintenance_penalty: 15.0
+    recovery_bonus_scale: 50.0
+    termination_penalty_constant: 50.0
+
+  # ========== PPO (fine-tune from 19M; LR sized so the resumed portion still learns) ==========
+  total_timesteps: 35_000_000
+  learning_rate: 0.0002
+  final_learning_rate: 0.00003
+  n_steps: 2048
+  batch_size: 2048
+  n_epochs: 5
+  gamma: 0.995
+  gae_lambda: 0.95
+  clip_range: 0.2
+  final_clip_range: 0.1
+  ent_coef: 0.005
+  final_ent_coef: 0.001
+  log_std_max: -1.5
+  log_std_min: -2.0
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+
+  # ========== VECNORMALIZE ==========
+  normalize: true
+  vecnormalize_clip_obs: 50.0
+  vecnormalize_clip_reward: 50.0
+
+  # ========== NETWORK (must match the clean model to resume) ==========
+  policy_kwargs:
+    net_arch:
+      - pi: [512, 512, 256]
+        vf: [512, 512, 256]
+    activation_fn: SiLU
+    ortho_init: true
+
+  # ========== LOGGING / CHECKPOINTING (distinct paths; clean model preserved) ==========
+  verbose: 1
+  log_dir: data/logs/real_standing_robust
+  use_tensorboard: true
+  n_eval_episodes: 5
+  eval_freq: 100_000
+  save_freq: 250_000
+  checkpoint_dir: data/checkpoints/real_standing_robust
+  checkpoint_prefix: real_standing_robust
+  best_model_path: models/best_real_standing_robust
+  final_model_path: models/final_real_standing_robust
+  vecnormalize_path: models/vecnorm_real_standing_robust.pkl
+  target_reward_threshold: 5000
+  early_stop:
+    patience: 5
+
+  random_height_init: false
+  random_height_prob: 0.0
+  random_height_range: [-0.3, 0.1]
+
+  use_wandb: false
+  wandb_project: humanoid_real_standing_robust
+  wandb_log_freq: 10000
+  video_freq: 500000
+  episode_print_freq: 1000

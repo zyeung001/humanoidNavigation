@@ -50,6 +50,83 @@ def servo_of(joint_name):
     return SCS0009 if joint_name in ARM_JOINTS else SCS15
 
 
+# --- MEASURED component masses (kg), weighed on hardware 2026-06-24 ---
+# Fusion/URDF inertials are ~36% light (CAD densities + electronics not modeled): the CAD
+# model is 1.30 kg vs the real 4.51 lb = 2.05 kg robot. apply_measured_inertials() overwrites
+# the assembled body masses with measured values: each servo's mass on its joint body, the 6
+# electronic components as fixed point-mass child bodies at their real mounting spots, and the
+# remaining structural mass distributed across bodies by CAD proportion. It also widens the
+# feet to the real 120x80 mm (the printed foot mesh is still the old 80x80). Runs as the final
+# build step so the committed MJCF matches the real robot.
+MEASURED_TOTAL = 4.51 * 0.453592          # whole robot on a scale = 2.0457 kg
+SCS15_MASS, SCS0009_MASS = 0.058, 0.0132
+ELEC_MASS = {'battery': 0.0862, 'pi': 0.0771, 'breadboard': 0.0680,
+             'motor_ctrl': 0.0227, 'terminal': 0.0408, 'dcdc': 0.0318}
+SCS15_BODIES = ['0003_9', '0003_11', '0003_4', '0003_2', '0003_1', '0003_3',
+                '0003_10', '0003_5', '0003_6', '0003_7', '0003_8']   # 11 leg+waist
+SCS0009_BODIES = ['mount_6', 'mount_5', 'mount_2', 'mount_1', 'mount_4', 'mount_3']  # 6 arm
+# electronics -> (parent body, local pos in the axis-aligned body frame: +x fwd, +y left, +z up)
+ELEC_PLACEMENT = {
+    'battery':    ('base_link', (0.5607, 0.0596, 0.4102)),   # under pelvis (low z)
+    'breadboard': ('base_link', (0.5307, 0.0596, 0.4702)),   # behind pelvis (-x)
+    'pi':         ('0003_8',    (0.5502, -0.5928, -0.08)),   # bottom of chest
+    'dcdc':       ('0003_8',    (0.5502, -0.6428, 0.0)),     # right side, halfway up
+    'motor_ctrl': ('0003_8',    (0.5502, -0.5428, 0.0)),     # left side, halfway up
+    'terminal':   ('0003_8',    (0.5202, -0.5928, -0.10)),   # on the waist-yaw servo, back
+}
+
+
+def _quat_to_R(q):
+    q = np.asarray(q, float)
+    q = q / np.linalg.norm(q)
+    w, x, y, z = q
+    return np.array([[1-2*(y*y+z*z), 2*(x*y-z*w), 2*(x*z+y*w)],
+                     [2*(x*y+z*w), 1-2*(x*x+z*z), 2*(y*z-x*w)],
+                     [2*(x*z-y*w), 2*(y*z+x*w), 1-2*(x*x+y*y)]])
+
+
+def apply_measured_inertials(xml_path) -> None:
+    """Overwrite CAD inertials with measured masses, add electronics point masses, widen the
+    feet to 120x80 mm. Operates in place on the freshly-built MJCF (which has CAD masses)."""
+    tree = ET.parse(str(xml_path))
+    root = tree.getroot()
+    bodies = {b.get('name'): b for b in root.iter('body')}
+    servo_mass = {b: SCS15_MASS for b in SCS15_BODIES}
+    servo_mass.update({b: SCS0009_MASS for b in SCS0009_BODIES})
+
+    cur = {n: float(b.find('inertial').get('mass')) for n, b in bodies.items()
+           if b.find('inertial') is not None}
+    cur_total = sum(cur.values())
+    struct_total = MEASURED_TOTAL - sum(servo_mass.values()) - sum(ELEC_MASS.values())
+    for n, b in bodies.items():
+        inel = b.find('inertial')
+        new = struct_total * (cur[n] / cur_total) + servo_mass.get(n, 0.0)
+        scale = new / cur[n]
+        inel.set('mass', f'{new:.6f}')
+        fi = [float(v) * scale for v in inel.get('fullinertia').split()]
+        inel.set('fullinertia', ' '.join(f'{v:.4e}' for v in fi))
+
+    for nm, (parent, pos) in ELEC_PLACEMENT.items():
+        mass = ELEC_MASS[nm]
+        inertia = max(1e-5, mass * 4e-4)
+        bd = ET.SubElement(bodies[parent], 'body',
+                           {'name': nm, 'pos': '%.4f %.4f %.4f' % pos})
+        ET.SubElement(bd, 'inertial', {'pos': '0 0 0', 'mass': f'{mass:.4f}',
+                                       'diaginertia': f'{inertia:.3e} {inertia:.3e} {inertia:.3e}'})
+
+    for foot in ('0003_2', '0003_5'):
+        for g in bodies[foot].iter('geom'):
+            if g.get('type') == 'box' and g.get('size', '').startswith('0.00250'):
+                size = [float(v) for v in g.get('size').split()]
+                fwd = int(np.argmax(np.abs(_quat_to_R(g.get('quat').split())[0])))  # world-x axis
+                size[fwd] = 0.06   # 120 mm fore-aft (half-extent); lateral stays 80 mm
+                g.set('size', ' '.join(f'{v:.5f}' for v in size))
+
+    ET.indent(tree, space='  ')
+    tree.write(str(xml_path), encoding='unicode', xml_declaration=True)
+    print(f"   measured masses applied: total={MEASURED_TOTAL*1000:.0f} g, feet 120x80 mm")
+
+
 def convert_stl_to_obj() -> int:
     """Generate visual OBJs (mm) from the source STLs into the permanent mesh dir."""
     import trimesh
@@ -410,7 +487,10 @@ def main() -> None:
     MJCF_RAW.unlink(missing_ok=True)
     print(f"   wrote {MJCF_OUT}  (+{added} auto-excluded self-overlap pairs)")
 
-    print("5. compile + drop test")
+    print("5. apply MEASURED component masses + widen feet (real robot = 4.51 lb)")
+    apply_measured_inertials(MJCF_OUT)
+
+    print("6. compile + drop test")
     m2 = mujoco.MjModel.from_xml_path(str(MJCF_OUT))
     d2 = mujoco.MjData(m2)
     floor_gid = mujoco.mj_name2id(m2, mujoco.mjtObj.mjOBJ_GEOM, 'floor')

@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 from src.core.rewards import RewardCalculator, RewardWeights
 # Import velocity command generator
 from src.core.command_generator import VelocityCommandGenerator
+from src.core.heading import HeadingYaw
 # Model introspection (custom MJCF support)
 from .model_spec import introspect_model, is_custom_xml
 
@@ -177,7 +178,11 @@ class WalkingEnv(gym.Wrapper):
         if self.heading_source not in ('torso', 'pelvis'):
             print(f"WARNING: heading_source={self.heading_source!r} not in (torso, pelvis); falling back to 'torso'")
             self.heading_source = 'torso'
-        self._heading_body_id = None  # resolved lazily on first use (model attr available after super init)
+        # Shared heading helper (same code path the real-robot turning env uses). For
+        # Humanoid-v5 the freejoint root IS the torso, so 'torso' resolves to qvel[5] and
+        # 'pelvis' to mj_objectVelocity('pelvis') -- identical to the original logic.
+        self._heading = HeadingYaw(self.heading_source, torso_body='torso',
+                                   pelvis_body='pelvis', root_is_torso=True)
         
         # Current commanded velocity (set in reset)
         self.commanded_vx_world = 0.0
@@ -818,42 +823,13 @@ class WalkingEnv(gym.Wrapper):
     # ======== Action and Observation Processing ========
 
     def _get_actual_yaw_rate(self) -> float:
-        """World-frame yaw rate of the configured source body (torso or pelvis).
+        """World-frame yaw rate of the configured heading source (torso or pelvis).
 
-        torso (default): qvel[5] -- the freejoint angular-velocity z component,
-        which equals torso world-frame yaw rate since the freejoint is attached
-        to the torso.
-
-        pelvis: world-frame angular velocity z of the pelvis body, computed via
-        mujoco.mj_objectVelocity (flag=0 -> world frame). Tests whether the lower
-        body is actually rotating, not just the chest.
+        Delegates to the shared HeadingYaw helper so the Humanoid-v5 ablation and the
+        real-robot turning env run the identical torso/pelvis code path. For Humanoid-v5
+        (freejoint root = torso): 'torso' -> qvel[5], 'pelvis' -> mj_objectVelocity world z.
         """
-        if self.heading_source == 'torso':
-            return float(self.env.unwrapped.data.qvel[5])
-
-        # Pelvis path. Resolve body id on first use.
-        if self._heading_body_id is None:
-            model = self.env.unwrapped.model
-            for i in range(model.nbody):
-                if model.body(i).name == 'pelvis':
-                    self._heading_body_id = i
-                    break
-            if self._heading_body_id is None:
-                print("WARNING: 'pelvis' body not found; falling back to torso yaw rate")
-                self.heading_source = 'torso'
-                return float(self.env.unwrapped.data.qvel[5])
-
-        import mujoco as _mj
-        vel6 = np.zeros(6)
-        _mj.mj_objectVelocity(
-            self.env.unwrapped.model,
-            self.env.unwrapped.data,
-            _mj.mjtObj.mjOBJ_BODY,
-            int(self._heading_body_id),
-            vel6,
-            0,  # 0 = world frame
-        )
-        return float(vel6[2])
+        return self._heading.actual_yaw_rate(self.env.unwrapped.model, self.env.unwrapped.data)
 
     def _process_action(self, action: np.ndarray) -> np.ndarray:
         """Process actions with optional smoothing, symmetry, and PD control."""

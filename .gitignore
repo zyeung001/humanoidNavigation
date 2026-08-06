@@ -213,6 +213,15 @@ logs_*.txt
 wandb/
 runs/
 
+# Session working notes / handoffs (kept locally, never in git). Structural docs
+# -- README.md and the per-directory CLAUDE.md files -- stay tracked.
+HANDOFF*.md
+REVIEW*.md
+
+# Backup copies of configs and models (e.g. joint_servo_map.yaml.bak). A hand-measured
+# calibration belongs in the tracked file and committed, not in a .bak alongside it.
+*.bak
+
 # Trained model artefacts (kept locally, never in git)
 models/**/*.zip
 models/**/*.pkl

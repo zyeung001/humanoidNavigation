@@ -69,10 +69,13 @@ def main(xml_path):
                          f"{m.nmesh} meshes, all placed as geoms" if not orphan_meshes
                          else f"declared but never placed: {orphan_meshes}"))
 
-    # 2c. no clumping: every non-root body is its own articulated link (has a joint)
+    # 2c. no clumping: every non-root KINEMATIC link (a body carrying geometry) is its own
+    # articulated link (has a joint). Pure-inertial bodies with no geom are intentional fixed
+    # mass attachments (battery/Pi/boards modeled as point masses) and are exempt.
     welded = [m.body(b).name for b in range(1, m.nbody)
-              if not any(m.jnt_bodyid[j] == b for j in range(m.njnt))]
-    results.append(check("no welded/clumped links (each body has a joint)", not welded,
+              if m.body_geomnum[b] > 0
+              and not any(m.jnt_bodyid[j] == b for j in range(m.njnt))]
+    results.append(check("no welded/clumped links (each kinematic link has a joint)", not welded,
                          f"{m.nbody-1} bodies all articulated" if not welded
                          else f"bodies with no joint: {welded}"))
 
