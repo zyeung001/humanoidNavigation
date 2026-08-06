@@ -42,8 +42,7 @@ def main():
     ids = [int(j["servo_id"]) for j in joints]
     default_center = int(cfg.get("servo_center", 512))
 
-    bus = ServoBus()
-    bus.open() if hasattr(bus, "open") else None
+    bus = ServoBus().connect()
     try:
         bus.set_torque(ids, False)
         print(f"Torque OFF on arm servos {ids}. Nothing will be driven.\n")
@@ -84,8 +83,16 @@ def main():
         print("\nAlso SHIFT that joint's servo_limit by the same offset, so its sim-radian "
               "range is preserved (this is what the 6/24 re-zero did for the legs/waist).")
     finally:
-        bus.set_torque(ids, False)
-        bus.close()
+        # Guarded: if the body raised, a throwing cleanup would mask the real error
+        # (that is what buried the missing-connect() bug on the first run, 8/5).
+        try:
+            bus.set_torque(ids, False)
+        except Exception as e:      # noqa: BLE001 - cleanup must not mask the original
+            print(f"(cleanup: could not re-assert torque-off: {e})")
+        try:
+            bus.close()
+        except Exception:           # noqa: BLE001
+            pass
 
 
 if __name__ == "__main__":

@@ -8,21 +8,32 @@ limit-cycle sway). Stiffening the joints moves the real plant toward the rigid s
 policy was trained on.
 
 This firmware uses a position PID (confirmed by reading the table -- reg 21/22/23 = P/D/I
-hold sane values, the AX compliance-slope regs 28/29 are vestigial). STIFFNESS = P (reg 21):
-RAISE it to make the joint hold position more firmly under load. Default P here is ~15 (soft);
-try 24, then 32. Too high makes the servo buzz/overshoot in its OWN loop, so step up and watch.
-Optionally adjust D (reg 22): the stock D=15 is high (sluggish hold) -- lowering D can sharpen
-the response, but change ONE thing at a time.
+hold sane values, the AX compliance-slope regs 28/29 are vestigial).
+
+P (reg 21) = stiffness: raising it holds position more firmly under load. TRIED AND
+REJECTED: P 15->24 was set 6/23 and left on by accident until 7/27; every hardware test in
+that window ran on a ~60% stiffer plant than trained, and it made the oscillation WORSE.
+Reverted to stock P=15 on servos 1-11. Raising P adds loop gain and SPENDS phase margin --
+it is the wrong lever for this robot's failure mode. Leave P at 15 unless you have a new
+reason.
+
+D (reg 22) = damping, and this is the lever that matters here (8/5). Every oscillation on
+this robot (standing 1.96 Hz, arm 0.9 Hz, offline sensor-free emulation 1.6-1.8 Hz) sits
+just under the ~2.9 Hz where the servo's own ~50 ms dead time + ~120 ms tau reaches 180 deg
+of phase lag. The loop has almost no derivative damping, and D is the closest available
+analogue to the kd term that keeps other position-controlled robots quiet. RAISE it in
+steps from stock 15 (try 24, then 32), ARMS FIRST where nothing can fall. Change ONE thing
+at a time and re-read before/after.
 
 This tool READS the current registers first (always, even when writing) so you can revert,
 and READS BACK after writing to confirm it stuck. EEPROM is LOCK-protected (reg 48):
 unlock(0) -> write -> relock(1). Defaults to the LEGS+WAIST (the load-bearing joints).
 
-  python3 servo_stiffness.py --read-only                 # inspect legs+waist, write nothing
-  python3 servo_stiffness.py --read-only --all           # inspect every servo
-  python3 servo_stiffness.py --legs --kp 24 --apply      # stiffen legs+waist: P=24
-  python3 servo_stiffness.py --legs --kp 24 --kd 8 --apply # also lower D to 8
-  python3 servo_stiffness.py --legs --kp 15 --kd 15 --apply # REVERT to stock
+  python3 servo_stiffness.py --read-only --all           # inspect every servo (do this FIRST)
+  python3 servo_stiffness.py --arms --kd 24 --apply      # damping step 1: arms only, D=24
+  python3 servo_stiffness.py --arms --kd 32 --apply      # damping step 2 if 24 helped
+  python3 servo_stiffness.py --legs --kd 24 --apply      # only after the arm result is in
+  python3 servo_stiffness.py --all --kp 15 --kd 15 --apply # REVERT to stock P/D
 """
 import argparse
 import sys

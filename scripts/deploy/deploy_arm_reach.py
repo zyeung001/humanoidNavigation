@@ -69,8 +69,21 @@ def main():
     p.add_argument("--hz", type=float, default=40.0)
     p.add_argument("--ramp-secs", type=float, default=2.0)
     p.add_argument("--arm-step-units", type=int, default=8, help="per-step move clamp, arm servos")
-    p.add_argument("--jvel-alpha", type=float, default=0.35)
+    p.add_argument("--jvel-alpha", type=float, default=0.35,
+                   help="EMA on the jvel obs. NOTE lower alpha = HEAVIER smoothing = MORE "
+                        "lag: tau ~= dt(1-a)/a, so 0.35 -> 46ms but 0.15 -> 142ms. Training "
+                        "feeds instantaneous qvel with NO lag, so raising this toward 1.0 "
+                        "makes deploy closer to training, not further.")
     p.add_argument("--jvel-clamp", type=float, default=2.5)
+    p.add_argument("--zero-jvel", action="store_true",
+                   help="Zero the jvel obs channel entirely (mirrors deploy_standing.py). "
+                        "The single most discriminating test for the arm limit cycle: the "
+                        "policy uses jvel as its velocity-damping term, but deploy delivers "
+                        "that channel finite-differenced from quantized encoders and "
+                        "EMA-delayed, while training delivers instantaneous qvel. If the "
+                        "oscillation dies with this flag, the delayed damping channel is "
+                        "driving it; if nothing changes, jvel is innocent and the cause is "
+                        "actuator dead time.")
     p.add_argument("--debug", action="store_true")
     p.add_argument("--debug-every", type=int, default=10)
     args = p.parse_args()
@@ -133,7 +146,8 @@ def main():
             raw = np.clip(np.where(hold, 0.0, raw), -args.jvel_clamp, args.jvel_clamp)
         prev_jpos = jpos.copy()
         jvel_f = (1.0 - args.jvel_alpha) * jvel_f + args.jvel_alpha * raw
-        return np.concatenate([target, jpos, jvel_f, last_action]).astype(np.float32)
+        jvel_obs = np.zeros(N_ARM, dtype=np.float32) if args.zero_jvel else jvel_f
+        return np.concatenate([target, jpos, jvel_obs, last_action]).astype(np.float32)
 
     def obs_of(frame):
         hist.append(frame)
