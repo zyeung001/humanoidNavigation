@@ -55,13 +55,19 @@ class ServoBus:
     def read_pos(self, servo_id: int, retries: int = 2):
         """Present position (units) or None after retries. (reg 0x38, 2 bytes)
 
-        The half-duplex bus occasionally drops/garbles a reply; retry rather than feed a
-        NaN into the obs. Each attempt is bounded by the serial read timeout."""
+        The half-duplex bus occasionally drops/garbles a reply. VALIDATE the full reply
+        (id echo, length, checksum) and retry on any mismatch: header-only acceptance let
+        corrupted position bytes through on a large fraction of frames (7/27 held-seizure
+        logs: 76% of frames implied physically impossible joint speeds), and those garbage
+        positions fed the obs directly. The error byte (resp[4]) is allowed to be nonzero
+        (voltage/temp flags) -- the position data is still valid then."""
         for _ in range(retries + 1):
             self._ser.reset_input_buffer()
             self._send(servo_id, 0x02, [REG_PRESENT_POSITION, 0x02])
             resp = self._ser.read(8)
-            if len(resp) >= 7 and resp[0] == 0xFF and resp[1] == 0xFF:
+            if (len(resp) == 8 and resp[0] == 0xFF and resp[1] == 0xFF
+                    and resp[2] == servo_id and resp[3] == 0x04
+                    and resp[7] == ((~(resp[2] + resp[3] + resp[4] + resp[5] + resp[6])) & 0xFF)):
                 return (resp[5] << 8) | resp[6]
         return None
 
@@ -94,7 +100,9 @@ class ServoBus:
             self._ser.reset_input_buffer()
             self._send(servo_id, 0x02, [reg, nbytes])
             resp = self._ser.read(6 + nbytes)
-            if len(resp) >= 6 + nbytes and resp[0] == 0xFF and resp[1] == 0xFF:
+            if (len(resp) == 6 + nbytes and resp[0] == 0xFF and resp[1] == 0xFF
+                    and resp[2] == servo_id
+                    and resp[-1] == ((~sum(resp[2:-1])) & 0xFF)):
                 return list(resp[5:5 + nbytes])
         return None
 
