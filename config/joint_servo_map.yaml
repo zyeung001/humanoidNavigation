@@ -72,5 +72,12 @@ joints:
   # Confirmed on hardware: probing idx 15 (which the map sent to servo 16) articulated the
   # FOREARM relative to the upper arm, i.e. servo 16 physically sits in the elbow. Bus IDs
   # live in servo EEPROM, not in the cabling, so this is a slot swap, not a wiring error.
-  - {idx: 15, mjcf: "Revolute 5",  dof: "L_shoulder_roll",  axis: x, sim_range: [-2.0071, 0.0000], servo_id: 17, sign: +1, sign_verified: true,  servo_limit: [408, 610], center: 509}  # + = arm in; servo 16->17 (slot swap 8/4); straight=509 (-3)
+  # 8/5: sim_range corrected to match models/humanoid_real_v2_armfix.xml. It was
+  # [-2.0071, 0.0000] -- the mis-converted range found on 7/28 and fixed in the XML but never
+  # here. rad_to_units() clips to sim_range BEFORE converting (sim_real_map.py:72), so every
+  # positive (arm-out) command was silently clipped to exactly 0: the left arm had ZERO
+  # outward travel on hardware while the policy commanded +0.466 and the servo never moved.
+  # Same silent-clip class as the original XML bug. Safe for the standing track too: the
+  # residual clamp bounds that policy to +/-0.2 rad, well inside this range.
+  - {idx: 15, mjcf: "Revolute 5",  dof: "L_shoulder_roll",  axis: x, sim_range: [-0.4363, 1.5708], servo_id: 17, sign: +1, sign_verified: true,  servo_limit: [408, 610], center: 509}  # + = arm out (mirror of R); servo 16->17 (slot swap 8/4); straight=509 (-3)
   - {idx: 16, mjcf: "Revolute 3",  dof: "L_elbow",          axis: y, sim_range: [-2.0944, 0.0000], servo_id: 16, sign: +1, sign_verified: true,  servo_limit: [79, 385], center: 385}  # hinge; + = forearm flex; servo 17->16 (slot swap 8/4); straight=385 (-127) IS the one-sided stop
