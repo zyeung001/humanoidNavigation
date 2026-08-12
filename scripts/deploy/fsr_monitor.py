@@ -28,16 +28,28 @@ load, so the "load" column is a CONDUCTANCE PROXY (1/R), monotonic with force bu
 calibrated newtons. That is fine for centre of pressure, which only needs the ratio
 between two sensors. Do not treat it as a force measurement without a weight calibration.
 
+WHY "RAIL" APPEARS, and why it is not a reading: two hard points under a rigid foot
+share load linearly only while BOTH touch the ground. The moment the load line moves
+outside the span between them, one point lifts and takes zero, and the CoP expression
+pins at +-span/2 with no gradual approach. A pinned value means "past the edge of what
+these two sensors can see", not "the CoP is exactly at the sensor". The tool prints RAIL
+rather than a number so a saturated frame is never mistaken for a measurement. Softening
+the contact (thin rubber or foam under each puck) makes load transfer gradually and is
+the cheapest way to get a graded signal instead of a cliff.
+
 CONNECTOR CHECK (do this first, every session): wiggle the connector WITHOUT touching
 the sensor. If the reading moves, your contact resistance is moving, and a flaky contact
 in a resistive divider is indistinguishable from force -- an open circuit reads as
 "no load", i.e. a phantom "this foot is off the ground".
 
-  python3 scripts/deploy/fsr_monitor.py --channels 0 --rfixed 3300
-  python3 scripts/deploy/fsr_monitor.py --channels 0,1 --rfixed 3300 --span 80
+  python3 scripts/deploy/fsr_monitor.py --channels 0 --rfixed 2000
+  python3 scripts/deploy/fsr_monitor.py --channels 0,1 --rfixed 2000 --span 80 --avg 10
+  python3 scripts/deploy/fsr_monitor.py --channels 0,1 --rfixed 2000 \
+      --pos-heel -33.7 --pos-toe 40.0        # measured, not nominal
 """
 import argparse
 import time
+from collections import deque
 
 ADS_ADDR = 0x48
 REG_CONV = 0x00
@@ -86,7 +98,16 @@ def main():
     p.add_argument("--vcc", type=float, default=3.3, help="divider supply rail, volts")
     p.add_argument("--inverted", action="store_true", help="FSR wired to GND instead of Vcc")
     p.add_argument("--span", type=float, default=80.0,
-                   help="heel-to-toe spacing in mm (2 channels: ch0=HEEL, ch1=TOE)")
+                   help="heel-to-toe spacing in mm, assumed SYMMETRIC about the foot centre")
+    p.add_argument("--pos-heel", type=float, default=None,
+                   help="measured heel sensor position, mm from foot centre (negative = rearward). "
+                        "Overrides --span; use when the sensors are not symmetric.")
+    p.add_argument("--pos-toe", type=float, default=None,
+                   help="measured toe sensor position, mm from foot centre (positive = forward)")
+    p.add_argument("--avg", type=int, default=1,
+                   help="moving average over N samples (averages LOAD, then derives CoP)")
+    p.add_argument("--rail-frac", type=float, default=0.05,
+                   help="a channel carrying less than this fraction of the total is 'unloaded'")
     p.add_argument("--bus", type=int, default=1)
     p.add_argument("--addr", type=lambda s: int(s, 0), default=ADS_ADDR)
     p.add_argument("--hz", type=float, default=20.0)
@@ -96,39 +117,62 @@ def main():
     if not all(0 <= c <= 3 for c in chans):
         raise SystemExit("channels must be in 0..3")
 
+    # Sensor positions along the foot, mm from the FOOT's centre (not from each other).
+    # CoP is a load-weighted average of these, so an off-centre pair biases every reading
+    # unless the real positions are given -- measure them, do not assume the nominal.
+    x_heel = args.pos_heel if args.pos_heel is not None else -args.span / 2.0
+    x_toe = args.pos_toe if args.pos_toe is not None else args.span / 2.0
+    if x_heel >= x_toe:
+        raise SystemExit("heel position must be rearward of (less than) the toe position")
+
     bus = _open_bus(args.bus)
     print(f"ADS1115 bus {args.bus} @ 0x{args.addr:02X}, channels {chans}, "
-          f"R_fixed={args.rfixed:.0f} ohm, Vcc={args.vcc:.2f} V")
+          f"R_fixed={args.rfixed:.0f} ohm, Vcc={args.vcc:.2f} V"
+          + (f", averaging {args.avg} samples" if args.avg > 1 else ""))
     if len(chans) == 2:
-        print(f"centre of pressure across {args.span:.0f} mm "
-              f"(ch{chans[0]}=HEEL at -{args.span / 2:.0f} mm, "
-              f"ch{chans[1]}=TOE at +{args.span / 2:.0f} mm)")
+        mid = 0.5 * (x_heel + x_toe)
+        print(f"ch{chans[0]}=HEEL at {x_heel:+.1f} mm, ch{chans[1]}=TOE at {x_toe:+.1f} mm "
+              f"from foot centre (readable range {x_heel:+.1f}..{x_toe:+.1f} mm)")
+        if abs(mid) > 1.0:
+            print(f"  NOTE: pair is off-centre by {mid:+.1f} mm; readings are reported "
+                  f"about the FOOT centre, so this offset is already accounted for.")
     print("Press a sensor and watch V rise. Ctrl-C to stop.\n")
 
     period = 1.0 / max(args.hz, 1e-3)
+    history = deque(maxlen=max(args.avg, 1))
     try:
         while True:
             volts = [read_channel(bus, args.addr, c) for c in chans]
             res = [fsr_resistance(v, args.rfixed, args.vcc, args.inverted) for v in volts]
-            cond = [0.0 if r == float("inf") else 1.0 / max(r, 1e-6) for r in res]
+            history.append([0.0 if r == float("inf") else 1.0 / max(r, 1e-6) for r in res])
+            # Average LOAD, never CoP: a railing signal averages to a plausible-looking
+            # mid value that never occurred, which is exactly the artefact to avoid.
+            cond = [sum(s[i] for s in history) / len(history) for i in range(len(chans))]
 
             cells = []
-            for c, v, r in zip(chans, volts, res):
-                rtxt = "  open " if r == float("inf") else f"{r / 1000.0:7.2f}k"
+            for c, v, g in zip(chans, volts, cond):
+                rtxt = "  open " if g <= 1e-9 else f"{1.0 / g / 1000.0:7.2f}k"
                 cells.append(f"A{c} {v:5.3f}V R={rtxt}")
             line = "  |  ".join(cells)
 
+            total = sum(cond)
+            line += f"  |  load {1000 * total:6.2f} mS"
+
             if len(chans) == 2:
-                total = cond[0] + cond[1]
-                if total > 1e-9:
-                    # +mm = toward the toe. Ratio-based, so the uncalibrated scale cancels.
-                    cop = (args.span / 2.0) * (cond[1] - cond[0]) / total
+                if total <= 1e-9:
+                    line += "  |  CoP    --     NO LOAD"
+                elif min(cond) / total < args.rail_frac:
+                    off = "toe" if cond[1] < cond[0] else "heel"
+                    line += f"  |  CoP   RAIL   ({off} unloaded)"
+                else:
+                    # Load-weighted mean of the two sensor positions: + = toward the toe,
+                    # measured from the FOOT centre. Ratio-based, so the uncalibrated
+                    # conductance scale cancels out.
+                    cop = (cond[0] * x_heel + cond[1] * x_toe) / total
                     bias = "TOE " if cop > 5 else ("HEEL" if cop < -5 else "    ")
                     line += f"  |  CoP {cop:+6.1f} mm {bias}"
-                else:
-                    line += "  |  CoP    --    NO LOAD"
 
-            print("\r" + line + "   ", end="", flush=True)
+            print("\r" + line + "     ", end="", flush=True)
             time.sleep(period)
     except KeyboardInterrupt:
         print("\nstopped.")
