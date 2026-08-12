@@ -214,6 +214,15 @@ def main():
                         "run, watch which way it leans, trim against it, run again.")
     p.add_argument("--debug", action="store_true", help="print obs/action diagnostics each --debug-every steps")
     p.add_argument("--debug-every", type=int, default=10)
+    p.add_argument("--log", nargs="?", const="", default=None, metavar="PATH",
+                   help="record every frame to CSV (commanded vs actual, sensors, timing). "
+                        "Bare --log auto-names into logs/. Costs the loop a few microseconds: "
+                        "the writing happens on a background thread.")
+    p.add_argument("--log-fsr", action="store_true",
+                   help="also sample the foot FSRs through the ADS1115 on a background "
+                        "thread and record RAW divider volts (never a force -- the "
+                        "calibration is not settled, so store raw and derive later)")
+    p.add_argument("--fsr-channels", default="0,1", help="ADS1115 channels: heel,toe")
     p.add_argument("--require-verified", action="store_true",
                    help="refuse to drive joints whose sign is not bench-verified")
     p.add_argument("--imu-calib", default=str(ROOT / "config" / "imu_calib.yaml"),
@@ -329,6 +338,40 @@ def main():
     bus = ServoBus().connect()
     imu = IMU(axis_remap=axis_remap).connect()
 
+    # ---- frame log (off unless --log) ----
+    # Started before the ramp so `finally` can always close it, and so a run that dies
+    # during startup still leaves its sidecar behind saying what was configured.
+    logger = fsr = None
+    if args.log is not None:
+        from frame_log import FrameLogger, FsrSampler, default_log_path, file_md5  # noqa: E402
+        log_path = Path(args.log) if args.log else default_log_path("standing")
+        if args.log_fsr:
+            fsr = FsrSampler(channels=[int(c) for c in args.fsr_channels.split(",")])
+        logger = FrameLogger(log_path, dofs, meta={
+            "script": "deploy_standing.py",
+            "hz": args.hz, "tau": args.tau,
+            "jvel_alpha": args.jvel_alpha, "jvel_clamp": args.jvel_clamp,
+            "zero_jvel": args.zero_jvel, "zero_angvel": args.zero_angvel,
+            "angvel_alpha": args.angvel_alpha, "projgrav_alpha": args.projgrav_alpha,
+            "max_step_units": args.max_step_units, "arm_step_units": args.arm_step_units,
+            "servo_ids": [int(s) for s in m.servo_ids],
+            "default_joint_pos": [float(v) for v in m.default_joint_pos],
+            "units_per_rad": float(m.units_per_rad),
+            "residual_config": args.residual_config, "trim": args.trim,
+            "residual_baseline": None if res_baseline is None else res_baseline.tolist(),
+            # File hashes, not just a git SHA: the Pi is synced by scp, so the SHA can
+            # describe a tree that is not what ran. These identify what actually ran.
+            "file_md5": {p: file_md5(p) for p in
+                         [args.map, args.policy_npz or args.model, args.residual_config,
+                          args.imu_calib] if p},
+            "fsr": None if not args.log_fsr else {
+                "channels": args.fsr_channels,
+                "note": "fsr_v* are RAW divider volts; R_fixed and sensor positions are "
+                        "NOT known to this script -- record them with the run",
+            },
+        })
+        print(f"Logging frames -> {log_path}  (+ {log_path.with_suffix('.meta.json')})")
+
     def read_units_or(fallback):
         """read_all with NaN (validation-failed read) replaced by a safe fallback, so a
         dropped reply can't NaN-poison a ramp computation."""
@@ -337,6 +380,7 @@ def main():
 
     pg_state = {"g": None}   # EMA-filtered projected gravity (closure state)
     av_state = {"w": None}   # EMA-filtered angular velocity (closure state)
+    raw_state = {"units": np.full(NJ, np.nan)}   # last raw encoder read, for the frame log
 
     def read_sensors():
         # IMU is on the pelvis/base body, so proj_grav/ang_vel are already in the obs frame.
@@ -363,6 +407,7 @@ def main():
             pg_state["g"] = (g / n).astype(np.float32) if n > 1e-6 else g.astype(np.float32)
         pg = pg_state["g"]
         units = bus.read_all(m.servo_ids)
+        raw_state["units"] = units          # rawest thing on the bus; the frame log stores this
         abs_rad = m.units_to_rad(units)                    # absolute joint angles (sim, 0=straight)
         jpos = (abs_rad - m.default_joint_pos).astype(np.float32)
         return pg, av, jpos
@@ -458,7 +503,8 @@ def main():
         t_prev = time.time()
         while True:
             t0 = time.time()
-            loop_ms_ema = 0.9 * loop_ms_ema + 0.1 * (t0 - t_prev) * 1000.0
+            loop_ms = (t0 - t_prev) * 1000.0    # per-frame, so a stall is visible in the log
+            loop_ms_ema = 0.9 * loop_ms_ema + 0.1 * loop_ms
             t_prev = t0
             pg, av, jpos = read_sensors()
             if args.zero_angvel:
@@ -498,6 +544,16 @@ def main():
                 units = np.clip(units, m.lim_lo, m.lim_hi).round().astype(int)
             bus.write_all(m.servo_ids, units, speed=args.speed)
             prev_units = units.astype(float)
+
+            if logger is not None:
+                fv, fage = fsr.read() if fsr is not None else ([float("nan")] * 2, float("nan"))
+                logger.log(t_wall=t0, step=step, loop_ms=loop_ms,
+                           busy_ms=(time.time() - t0) * 1000.0,
+                           pg=pg, av=av, upright_cos=upright_cos,
+                           rej_total=builder.rejects_total,
+                           u_meas=raw_state["units"], u_cmd=units,
+                           q_cmd=applied, jvel_f=builder.jvel_f,
+                           fsr=fv, fsr_age_ms=fage)
 
             if res_baseline is not None:
                 dev = np.asarray(applied, dtype=float) - res_baseline
@@ -541,6 +597,12 @@ def main():
         except Exception:
             pass
     finally:
+        if fsr is not None:
+            fsr.close()
+        if logger is not None:
+            written, dropped = logger.close()
+            print(f"\nFrame log: {written} rows -> {logger.path}"
+                  + (f"   WARNING: {dropped} rows DROPPED (writer fell behind)" if dropped else ""))
         if n_dev > 0:
             print(f"\n--- residual saturation summary ({n_dev} frames, clamp {clamp}) ---")
             print(f"{'joint':<18} {'mean dev':>9} {'at +edge':>9} {'at -edge':>9}")

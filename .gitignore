@@ -238,3 +238,8 @@ models/*.pkl
 models/**/*.npz
 models/*.npz
 
+
+# Frame logs from the real robot (scripts/deploy/frame_log.py) -- data, not source.
+# The .meta.json sidecar records the git SHA and file md5s, so a log always
+# identifies the code that produced it without being tracked itself.
+logs/
