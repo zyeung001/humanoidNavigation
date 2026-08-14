@@ -124,6 +124,10 @@ def fit_step(log):
                     "tau_ms": tau * 1000, "gain": abs(yf) / abs(target),
                     "settled": bool(seg_t[-1] >= delay + 5 * tau),
                     "hold_s": float(seg_t[-1]), "need_s": float(delay + 5 * tau),
+                    # Where it actually stopped relative to where it was told to stop. A
+                    # position servo with a deadband parks anywhere inside it, so this is
+                    # the direct measure of how much of the excitation the deadband ate.
+                    "steady_err": float(um[stop - 1] - uc[k]),
                     "first_motion_ms": (seg_t[moved[0]] * 1000) if len(moved) else float("nan")})
     return out
 
@@ -263,7 +267,22 @@ def main():
                 r["step_gain"] = float(np.median(g))
                 fm = np.array([e["first_motion_ms"] for e in edges])
                 unsettled = [e for e in edges if not e["settled"]]
+                serr = np.abs([e["steady_err"] for e in edges])
+                amp = float(np.median([e["cmd_units"] for e in edges]))
+                dead_frac = float(np.median(serr) / max(amp, 1e-9))
                 print(f"\n  STEP  ({len(edges)} edges)")
+                r["steady_err_units"] = float(np.median(serr))
+                r["deadband_fraction"] = dead_frac
+                if dead_frac > 0.25:
+                    want = int(np.ceil(4 * np.median(serr)))
+                    print(f"    !! DEADBAND-DOMINATED: the joint parks a median "
+                          f"{np.median(serr):.0f} units from the target, against a "
+                          f"{amp:.0f}-unit step ({100 * dead_frac:.0f}%). Most of this "
+                          f"excitation never moved the joint, so tau, gain and the whole "
+                          f"chirp are measuring the deadband, not the actuator.")
+                    print(f"       Re-run with about --amp-deg "
+                          f"{np.ceil(np.degrees(want / modes['step']['upr'])):.0f} "
+                          f"(>= 4x the deadband, ~{want} units).")
                 if unsettled:
                     need = max(e["need_s"] for e in unsettled)
                     r["unsettled"] = len(unsettled)
