@@ -1,0 +1,61 @@
+# Measured servo dynamics, per joint, 2026-08-14.
+#
+# Source: scripts/deploy/excite_joint.py (step + chirp + triangle at 200 Hz, one joint at
+# a time, robot supported) fitted by scripts/debug/fit_actuator.py. Legs and waist excited
+# at 8 deg, arms at 20 deg because their 16-unit deadband swallows a smaller signal.
+#
+# WHY THIS FILE EXISTS: the whole project has been working from a bench figure of ~50 ms
+# dead time + ~120 ms tau. Dead time holds up. TAU DOES NOT -- measured median is 40 ms on
+# the legs and 22 ms on the arms, against the [90, 220] range every training config uses.
+# Every standing policy so far was trained against servos 2-10x more sluggish than these.
+#
+# AND IT BREAKS THE PHASE-MARGIN STORY. That story put 180 deg of lag near 1/(2T) ~ 2.9 Hz
+# by treating all 170 ms as pure dead time. Measured, the total is 61-118 ms of which only
+# ~54 ms is dead time, so the -180 deg crossing sits at 5.5-7.7 Hz. At the frequencies
+# actually observed on this robot -- 1.96 Hz standing, 0.9 Hz arm -- every joint's actuator
+# contributes only -39 to -67 deg. The actuator cannot be closing those loops.
+#
+# Committed rather than left in logs/ because logs/ is gitignored and this project has
+# already lost one whole-body calibration to living only on the Pi.
+
+measured_on: '2026-08-14'
+method: excite_joint.py step+chirp+triangle @ 200 Hz, fit_actuator.py
+
+# Ranges for standing_env actuator_lag: measured span plus ~20% margin, since the point
+# of randomising is that the policy cannot assume a plant it will not meet.
+recommended_domain_rand:
+  actuator_delay_ms: [10.0, 80.0]    # measured 14-67
+  actuator_tau_ms:   [15.0, 110.0]   # measured 17-94  (configs currently say [90, 220])
+
+joints:
+  L_hip_pitch: {delay_ms: 55.6, tau_ms: 37.1, dc_gain: 1.0, lash_units: 1.5, phase_at_1p96hz_deg: -51.0, f180_hz: null}
+  L_hip_roll: {delay_ms: 46.5, tau_ms: 60.7, dc_gain: 1.0, lash_units: 1.1, phase_at_1p96hz_deg: -55.0, f180_hz: 7.47}
+  L_hip_yaw: {delay_ms: 52.4, tau_ms: 27.0, dc_gain: 0.929, lash_units: 1.9, phase_at_1p96hz_deg: -43.0, f180_hz: 6.51}
+  L_knee: {delay_ms: 56.0, tau_ms: 33.7, dc_gain: 0.944, lash_units: 0.6, phase_at_1p96hz_deg: -51.0, f180_hz: 5.51}
+  R_hip_pitch: {delay_ms: 63.2, tau_ms: 37.1, dc_gain: 0.815, lash_units: 2.3, phase_at_1p96hz_deg: -51.0, f180_hz: 7.2}
+  R_hip_roll: {delay_ms: 54.2, tau_ms: 64.1, dc_gain: 0.963, lash_units: 0.8, phase_at_1p96hz_deg: -50.0, f180_hz: 6.54}
+  R_hip_yaw: {delay_ms: 66.8, tau_ms: 27.0, dc_gain: 0.926, lash_units: 0.5, phase_at_1p96hz_deg: -44.0, f180_hz: 6.37}
+  R_knee: {delay_ms: 59.4, tau_ms: 40.5, dc_gain: 0.963, lash_units: 2.3, phase_at_1p96hz_deg: -45.0, f180_hz: 6.93}
+  waist_pitch: {delay_ms: 40.0, tau_ms: 74.2, dc_gain: 0.963, lash_units: 1.9, phase_at_1p96hz_deg: -59.0, f180_hz: 7.39}
+  waist_roll: {delay_ms: 13.9, tau_ms: 94.5, dc_gain: 1.071, lash_units: 5.1, phase_at_1p96hz_deg: -67.0, f180_hz: null}
+  waist_yaw: {delay_ms: 49.6, tau_ms: 40.5, dc_gain: 0.963, lash_units: 0.6, phase_at_1p96hz_deg: -49.0, f180_hz: 7.67}
+  L_elbow: {delay_ms: 46.2, tau_ms: 16.9, dc_gain: 0.765, lash_units: 0.0, phase_at_1p96hz_deg: -42.0, f180_hz: null}
+  L_shoulder_pitch: {delay_ms: 48.0, tau_ms: 40.5, dc_gain: 0.809, lash_units: 0.0, phase_at_1p96hz_deg: -50.0, f180_hz: null}
+  L_shoulder_roll: {delay_ms: 41.2, tau_ms: 23.6, dc_gain: 0.809, lash_units: 0.0, phase_at_1p96hz_deg: -39.0, f180_hz: null}
+  R_elbow: {delay_ms: 41.2, tau_ms: 20.2, dc_gain: 0.985, lash_units: 0.0, phase_at_1p96hz_deg: -39.0, f180_hz: null}
+  R_shoulder_pitch: {delay_ms: 45.9, tau_ms: 40.5, dc_gain: 0.721, lash_units: 0.0, phase_at_1p96hz_deg: null, f180_hz: null}
+  R_shoulder_roll: {delay_ms: 44.7, tau_ms: 20.2, dc_gain: 0.831, lash_units: 0.0, phase_at_1p96hz_deg: -41.0, f180_hz: null}
+
+# CAVEATS, in order of how much they should worry you:
+# - waist_roll is an outlier on three counts at once: 13.9 ms dead time against 40-67
+#   everywhere else, dc_gain above 1 (overshoot), and 5.1 units of lash against 0.5-2.3.
+#   Re-run it before using its numbers.
+# - waist_pitch was excited from a slumped waist: it started at unit 336, below its own
+#   411 limit, so the centre was forced to 438 and the swing bottomed out on the limit.
+# - Peak implied speed reached ~566 units/s against a ~410 units/s servo maximum, so even
+#   these steps are partly rate-limited. That biases tau UP, so the true small-signal tau
+#   is if anything lower than listed.
+# - Arm lash reads 0.0 because the 16-unit deadband exceeds the whole hysteresis loop;
+#   lash is not separable on the arms by this method, not absent.
+# - Several joints show extra phase above ~3 Hz beyond first-order+delay (a second pole).
+#   actuator_lag cannot represent it. It does not matter at 1.96 Hz; it would above 3 Hz.
