@@ -203,9 +203,16 @@ def main():
     p.add_argument("--amp-deg", type=float, default=8.0, help="excitation amplitude, degrees")
     p.add_argument("--sample-hz", type=float, default=200.0)
     p.add_argument("--speed", type=int, default=0, help="servo move speed (0 = max)")
-    p.add_argument("--hold", type=float, default=0.6, help="step: seconds per level")
+    p.add_argument("--hold", type=float, default=1.2,
+                   help="step: seconds per level. Must exceed delay + 5*tau or the response "
+                        "never settles, the fitted 'final value' is wrong and the whole step "
+                        "fit skews (a 0.6 s hold turned a true 70/180 ms plant into 96/135). "
+                        "1.2 s covers tau up to ~220 ms.")
     p.add_argument("--f0", type=float, default=0.2, help="chirp: start frequency, Hz")
-    p.add_argument("--f1", type=float, default=5.0, help="chirp: end frequency, Hz")
+    p.add_argument("--f1", type=float, default=8.0,
+                   help="chirp: end frequency. Must be high enough that the phase actually "
+                        "reaches -180 deg: a 50 ms + 120 ms plant does not get there until "
+                        "~5.7 Hz, so the old 5 Hz default could never find the crossing.")
     p.add_argument("--secs", type=float, default=30.0, help="chirp: sweep duration")
     p.add_argument("--period", type=float, default=8.0, help="backlash: triangle period, s")
     p.add_argument("--cycles", type=float, default=3.0, help="backlash: number of cycles")
