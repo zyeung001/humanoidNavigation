@@ -163,12 +163,14 @@ def fit_chirp(log, n_bins=14):
     ph = np.unwrap(np.radians(np.array(ph)))
     ph = np.degrees(ph)
     ph -= 360.0 * np.round(ph[0] / 360.0)     # start in (-180, 180]
+    amp_cmd = 0.5 * (log["u_cmd"].max() - log["u_cmd"].min())
+    resp = gain * amp_cmd                      # response amplitude in encoder units
     f180 = None
     below = np.flatnonzero(ph <= -180.0)
     if len(below) and below[0] > 0:
         i = below[0]
         f180 = float(np.interp(-180.0, [ph[i], ph[i - 1]], [freq[i], freq[i - 1]]))
-    return {"freq": freq, "gain": gain, "phase_deg": ph, "f180": f180}
+    return {"freq": freq, "gain": gain, "phase_deg": ph, "f180": f180, "resp_units": resp}
 
 
 def model_phase(freq, delay_ms, tau_ms):
@@ -307,24 +309,42 @@ def main():
         if "chirp" in modes:
             c = fit_chirp(modes["chirp"])
             r["f180_hz"] = c["f180"]
+            # Above the frequency where the response falls below the deadband (or a few
+            # encoder counts), the joint is barely moving and both gain and phase are
+            # noise. Marking that band matters: on the first arm run its scatter alone
+            # produced a 42 deg "model disagreement" that meant nothing.
+            floor = max(args.deadband_units, 4.0)
+            trust = c["resp_units"] >= floor
             print("\n  CHIRP")
-            print(f"    {'f (Hz)':>8} {'gain':>7} {'phase':>8}")
-            for f, g, ph in zip(c["freq"], c["gain"], c["phase_deg"]):
-                print(f"    {f:8.2f} {g:7.3f} {ph:7.1f} deg")
+            print(f"    {'f (Hz)':>8} {'gain':>7} {'resp':>7} {'phase':>8}")
+            for f, g, ru, ph, tr in zip(c["freq"], c["gain"], c["resp_units"],
+                                        c["phase_deg"], trust):
+                mark = "" if tr else f"   < {floor:.0f}-unit floor, noise"
+                print(f"    {f:8.2f} {g:7.3f} {ru:7.1f} {ph:7.1f} deg{mark}")
             if c["f180"]:
                 print(f"    --> phase crosses -180 deg at {c['f180']:.2f} Hz. Measured limit "
                       f"cycles should sit just BELOW this.")
             else:
                 print("    --> phase never reached -180 deg in this sweep; raise --f1 and re-run.")
-            if "delay_ms" in r:
+            if "delay_ms" in r and trust.any():
                 pred = model_phase(c["freq"], r["delay_ms"], r["tau_ms"])
-                err = float(np.max(np.abs(pred - c["phase_deg"])))
+                err = float(np.max(np.abs((pred - c["phase_deg"])[trust])))
                 r["model_phase_err_deg"] = err
-                verdict = ("consistent" if err < 25 else
-                           "the plant is NOT first-order+delay alone -- backlash or a "
-                           "higher-order term is adding phase the model does not have")
-                print(f"    step-model prediction vs measured phase: max error {err:.0f} deg")
+                r["trusted_band_hz"] = [float(c["freq"][trust].min()),
+                                        float(c["freq"][trust].max())]
+                verdict = ("consistent -- a first-order lag plus dead time describes this "
+                           "actuator over the band where it has authority"
+                           if err < 25 else
+                           "the plant is NOT first-order+delay alone: something is adding "
+                           "phase the model does not have, INSIDE the trusted band")
+                print(f"    step-model vs measured phase over {c['freq'][trust].min():.1f}"
+                      f"-{c['freq'][trust].max():.1f} Hz: max error {err:.0f} deg")
                 print(f"    --> {verdict}")
+            for f_obs, what in ((0.9, "arm self-oscillation"), (1.96, "standing limit cycle")):
+                if c["freq"][0] <= f_obs <= c["freq"][-1]:
+                    p_obs = float(np.interp(f_obs, c["freq"], c["phase_deg"]))
+                    print(f"    actuator phase at {f_obs:.2f} Hz ({what}): {p_obs:+.0f} deg"
+                          f" -- {'it alone cannot close a loop here' if p_obs > -120 else 'a real contributor here'}")
 
         if "backlash" in modes:
             b = fit_backlash(modes["backlash"], args.deadband_units,
