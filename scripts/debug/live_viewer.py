@@ -144,45 +144,65 @@ def parse_packet(buf, nj=17):
             "u_meas": np.array(v[7:7 + nj]), "u_cmd": np.array(v[7 + nj:7 + 2 * nj])}
 
 
-def iter_live(port, nj):
+class Target:
+    """The most recent frame the robot sent, updated off the render thread.
+
+    Rendering used to advance only when a datagram arrived, which tied the picture's
+    frame rate to Wi-Fi arrival jitter and made a perfectly steady 40 Hz robot look
+    stuttery. The producer now just keeps this up to date and the renderer runs at its
+    own steady rate, easing toward it.
+    """
+
+    def __init__(self, nj):
+        self.nj = nj
+        self.frame = None
+        self.count = 0
+        self.done = False
+
+
+def produce_live(port, nj, tgt):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(("0.0.0.0", int(port)))
-    sock.settimeout(0.25)
+    sock.settimeout(0.5)
     host = socket.gethostbyname_ex(socket.gethostname())[2]
     print(f"listening on udp/{port}. Stream to one of: "
           + ", ".join(f"{h}:{port}" for h in host if not h.startswith("127.")))
     print("waiting for the robot...")
     seen = False
-    while True:
+    while not tgt.done:
         try:
             buf, _ = sock.recvfrom(2048)
         except socket.timeout:
-            yield None
             continue
         f = parse_packet(buf, nj)
-        if f and not seen:
+        if not f:
+            continue
+        if not seen:
             seen = True
             print("robot connected.")
-        if f:
-            yield f
+        tgt.frame = f
+        tgt.count += 1
+    sock.close()
 
 
-def iter_replay(path, nj, speed):
+def produce_replay(path, nj, speed, tgt):
     import csv
     rows = list(csv.DictReader(open(path)))
     dofs = [j.dof for j in SimRealMap(DEFAULT_MAP).joints]
     print(f"replaying {len(rows)} frames from {Path(path).name} at {speed:g}x")
     t0 = time.time()
     for r in rows:
-        tgt = float(r["t_rel"]) / max(speed, 1e-6)
-        while time.time() - t0 < tgt:
+        if tgt.done:
+            return
+        while time.time() - t0 < float(r["t_rel"]) / max(speed, 1e-6):
             time.sleep(0.002)
-        yield {"step": int(float(r["step"])), "t": float(r["t_rel"]),
-               "pg": np.array([float(r["pg_x"]), float(r["pg_y"]), float(r["pg_z"])]),
-               "upright": float(r["upright_cos"] or 0),
-               "u_meas": np.array([float(r[f"u_meas.{d}"]) for d in dofs]),
-               "u_cmd": np.array([float(r[f"u_cmd.{d}"]) for d in dofs])}
+        tgt.frame = {"step": int(float(r["step"])), "t": float(r["t_rel"]),
+                     "pg": np.array([float(r["pg_x"]), float(r["pg_y"]), float(r["pg_z"])]),
+                     "upright": float(r["upright_cos"] or 0),
+                     "u_meas": np.array([float(r[f"u_meas.{d}"]) for d in dofs]),
+                     "u_cmd": np.array([float(r[f"u_cmd.{d}"]) for d in dofs])}
+        tgt.count += 1
 
 
 def main():
@@ -196,6 +216,12 @@ def main():
     p.add_argument("--map", default=str(DEFAULT_MAP))
     p.add_argument("--speed", type=float, default=1.0, help="replay speed multiplier")
     p.add_argument("--no-ghost", action="store_true", help="hide the commanded skeleton")
+    p.add_argument("--fps", type=float, default=60.0,
+                   help="render rate, held steady regardless of when packets arrive")
+    p.add_argument("--smooth", type=float, default=0.05,
+                   help="seconds of easing toward the newest pose. UDP over Wi-Fi arrives "
+                        "unevenly, so drawing only on arrival makes a steady 40 Hz robot "
+                        "look stuttery; this costs ~50 ms of lag to remove that. 0 disables.")
     p.add_argument("--status-every", type=int, default=40)
     args = p.parse_args()
 
@@ -225,9 +251,23 @@ def main():
         print("selftest passed" if ok else "selftest FAILED")
         return 0 if ok else 1
 
+    import threading
+
     import mujoco.viewer
-    stream = (iter_live(args.listen, poser.nj) if args.listen
-              else iter_replay(args.replay, poser.nj, args.speed))
+
+    tgt = Target(poser.nj)
+    producer = threading.Thread(
+        target=(produce_live if args.listen else produce_replay),
+        args=((args.listen, poser.nj, tgt) if args.listen
+              else (args.replay, poser.nj, args.speed, tgt)),
+        daemon=True)
+    producer.start()
+
+    # Displayed state, eased toward the target. Smoothing is applied to the ENCODER
+    # UNITS, not to the drawn geometry, so the robot stays a physically consistent pose
+    # at every rendered instant rather than becoming a blend of two shapes.
+    show_meas = show_cmd = show_pg = None
+    period = 1.0 / max(args.fps, 1.0)
 
     with mujoco.viewer.launch_passive(poser.model, poser.data,
                                       show_left_ui=False, show_right_ui=False) as v:
@@ -237,25 +277,35 @@ def main():
         v.cam.lookat[:] = [0, 0, 0.35]
         n = 0
         last = time.time()
-        for f in stream:
-            if not v.is_running():
-                break
-            if f is None:               # live mode idle tick: keep the window responsive
-                v.sync()
-                continue
-            dev = poser.pose(f["u_meas"], f["u_cmd"], f["pg"])
-            v.user_scn.ngeom = 0
-            if not args.no_ghost:
-                poser.draw_ghost(v.user_scn)
+        last_report = 0
+        while v.is_running():
+            t_frame = time.time()
+            f = tgt.frame
+            if f is not None:
+                if show_meas is None:
+                    show_meas, show_cmd, show_pg = f["u_meas"].copy(), f["u_cmd"].copy(), f["pg"].copy()
+                # dt-aware exponential ease: alpha depends on the real frame interval, so
+                # the motion looks the same whether the renderer hits 60 fps or 30.
+                a = 1.0 - np.exp(-period / max(args.smooth, 1e-4)) if args.smooth > 0 else 1.0
+                show_meas += a * (f["u_meas"] - show_meas)
+                show_cmd += a * (f["u_cmd"] - show_cmd)
+                show_pg += a * (f["pg"] - show_pg)
+                dev = poser.pose(show_meas, show_cmd, show_pg)
+                v.user_scn.ngeom = 0
+                if not args.no_ghost:
+                    poser.draw_ghost(v.user_scn)
+                n += 1
+                if args.status_every and tgt.count - last_report >= args.status_every:
+                    last_report = tgt.count
+                    worst = int(np.argmax(np.abs(dev)))
+                    fps = n / max(time.time() - last, 1e-9)
+                    n, last = 0, time.time()
+                    print(f"\r  t={f['t']:7.2f}s  upright={f['upright']:.3f}  "
+                          f"worst {poser.map.joints[worst].dof} {dev[worst]:+6.2f}deg  "
+                          f"{tgt.count} frames in, {fps:4.1f} fps out ", end="", flush=True)
             v.sync()
-            n += 1
-            if args.status_every and n % args.status_every == 0:
-                worst = int(np.argmax(np.abs(dev)))
-                hz = args.status_every / max(time.time() - last, 1e-9)
-                last = time.time()
-                print(f"\r  t={f['t']:7.2f}s  upright={f['upright']:.3f}  "
-                      f"worst {poser.map.joints[worst].dof} {dev[worst]:+6.2f}deg  "
-                      f"{hz:4.1f} fps ", end="", flush=True)
+            time.sleep(max(0.0, period - (time.time() - t_frame)))
+    tgt.done = True
     print("\nviewer closed.")
     return 0
 
