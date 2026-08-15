@@ -36,8 +36,13 @@ joints:
   R_hip_roll: {delay_ms: 54.2, tau_ms: 64.1, dc_gain: 0.963, lash_units: 0.8, phase_at_1p96hz_deg: -50.0, f180_hz: 6.54}
   R_hip_yaw: {delay_ms: 66.8, tau_ms: 27.0, dc_gain: 0.926, lash_units: 0.5, phase_at_1p96hz_deg: -44.0, f180_hz: 6.37}
   R_knee: {delay_ms: 59.4, tau_ms: 40.5, dc_gain: 0.963, lash_units: 2.3, phase_at_1p96hz_deg: -45.0, f180_hz: 6.93}
-  waist_pitch: {delay_ms: 40.0, tau_ms: 74.2, dc_gain: 0.963, lash_units: 1.9, phase_at_1p96hz_deg: -59.0, f180_hz: 7.39}
-  waist_roll: {delay_ms: 13.9, tau_ms: 94.5, dc_gain: 1.071, lash_units: 5.1, phase_at_1p96hz_deg: -67.0, f180_hz: null}
+  # Both waist axes re-measured from a straight start (--centre straight) on 8/14.
+  waist_pitch: {delay_ms: 52.1, tau_ms: 57.4, dc_gain: 1.0, lash_units: 1.0, phase_at_1p96hz_deg: -61.0, f180_hz: null}
+  # waist_roll is NOT a simple actuator -- see the RESONANCE section below. delay_ms and
+  # tau_ms here are what the first-order fit returns, but the fit does not apply: 5.9 ms of
+  # dead time is an artefact of the overshoot confusing the two-point method. Do not feed
+  # these two numbers into a domain-randomisation range.
+  waist_roll: {delay_ms: 5.9, tau_ms: 101.2, dc_gain: 1.074, lash_units: 5.1, phase_at_1p96hz_deg: -64.0, f180_hz: null, valid: false}
   waist_yaw: {delay_ms: 49.6, tau_ms: 40.5, dc_gain: 0.963, lash_units: 0.6, phase_at_1p96hz_deg: -49.0, f180_hz: 7.67}
   L_elbow: {delay_ms: 46.2, tau_ms: 16.9, dc_gain: 0.765, lash_units: 0.0, phase_at_1p96hz_deg: -42.0, f180_hz: null}
   L_shoulder_pitch: {delay_ms: 48.0, tau_ms: 40.5, dc_gain: 0.809, lash_units: 0.0, phase_at_1p96hz_deg: -50.0, f180_hz: null}
@@ -46,12 +51,42 @@ joints:
   R_shoulder_pitch: {delay_ms: 45.9, tau_ms: 40.5, dc_gain: 0.721, lash_units: 0.0, phase_at_1p96hz_deg: null, f180_hz: null}
   R_shoulder_roll: {delay_ms: 44.7, tau_ms: 20.2, dc_gain: 0.831, lash_units: 0.0, phase_at_1p96hz_deg: -41.0, f180_hz: null}
 
+# THE WAIST IS MECHANICALLY RESONANT (re-measured 8/14, and this is the real finding)
+#
+# waist_roll does not behave like an actuator at all. Its frequency response peaks at
+# GAIN 1.16 near 1.0-1.6 Hz -- it moves FARTHER than commanded, which a position servo
+# cannot do on its own -- then collapses into a notch of 0.37 at 2.15 Hz and recovers to
+# ~0.65. Peak, notch, recovery is the textbook signature of a two-mass system: actuator
+# inertia coupled through a COMPLIANT element to a load inertia. Here that is the servo,
+# the 3-servo waist stack, and the torso.
+#
+# Supporting evidence that it is real and not a fitting artefact:
+#   - It reproduced exactly across two independent runs, hours apart, from different
+#     starting poses.
+#   - It is AMPLITUDE-DEPENDENT: 14-unit steps track at gain 1.000, 27-unit steps
+#     overshoot at 1.074. A linear system's overshoot does not depend on amplitude.
+#   - Phase goes non-monotonic through the notch (-34, -77, -58, -53 deg), which a
+#     first-order lag cannot do.
+#   - ONLY the two waist joints amplify. Every hip, knee and arm stays at or below unity.
+#
+# That last point is what rules out the obvious confound. The robot was supported during
+# these runs, and a supported robot can swing as a pendulum -- but a swinging robot would
+# show up on hip_roll too, since hip roll also rolls the torso. R_hip_roll and L_hip_roll
+# came back at 0.96 and 1.00. The resonance is in the waist stack, not the test rig.
+#
+# WHY IT MATTERS: the resonance sits at 1.0-1.6 Hz and the standing limit cycle is at
+# 1.96 Hz. A lightly damped structural resonance inside the control loop supplies gain and
+# phase that no actuator model contains, and this is the THIRD independent line pointing at
+# the waist: runN's saturation analysis found the policy pinned on waist_yaw and
+# waist_pitch and nowhere else, and the chest was found by hand to deflect forward under
+# load with no servo leaving position. A rigid MJCF cannot represent any of it.
+#
 # CAVEATS, in order of how much they should worry you:
-# - waist_roll is an outlier on three counts at once: 13.9 ms dead time against 40-67
-#   everywhere else, dc_gain above 1 (overshoot), and 5.1 units of lash against 0.5-2.3.
-#   Re-run it before using its numbers.
-# - waist_pitch was excited from a slumped waist: it started at unit 336, below its own
-#   411 limit, so the centre was forced to 438 and the swing bottomed out on the limit.
+# - waist_roll's delay_ms/tau_ms are meaningless (see above). Excluded from the ranges.
+# - The 1.0-1.6 Hz resonance is bracketed by 0.55 Hz-wide chirp bins, so its frequency is
+#   known to roughly +-0.3 Hz. A narrower sweep (--f0 0.4 --f1 3 --secs 60) would pin it.
+# - waist_pitch's ORIGINAL numbers (40.0 / 74.2) came from a slumped start below its own
+#   411 limit and are superseded by the 8/14 re-run at 52.1 / 57.4.
 # - Peak implied speed reached ~566 units/s against a ~410 units/s servo maximum, so even
 #   these steps are partly rate-limited. That biases tau UP, so the true small-signal tau
 #   is if anything lower than listed.
