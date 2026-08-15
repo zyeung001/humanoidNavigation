@@ -81,10 +81,30 @@ joints:
 # waist_pitch and nowhere else, and the chest was found by hand to deflect forward under
 # load with no servo leaving position. A rigid MJCF cannot represent any of it.
 #
+# PINNED 8/14 by a narrow sweep (--f0 0.4 --f1 3 --secs 60, 26 bins of 0.1 Hz):
+waist_roll_resonance:
+  resonance_hz: 1.05            # peak; gain stays above 1.0 across a broad 0.65-1.65 Hz
+  peak_gain: 1.37               # the joint moves 1.37x FARTHER than it is commanded
+  antiresonance_hz: 2.15
+  antiresonance_gain: 0.49
+  gain_at_1p96hz: 0.54          # at the standing limit-cycle frequency
+  phase_at_1p96hz_deg: -67
+  damping_zeta: [0.35, 0.57]    # 0.35 from peak height, 0.57 from -3dB width; broad peak
+  note: >
+    The elevated region is broad and rippled (sub-peaks near 0.75, 1.05, 1.25, 1.45 Hz)
+    rather than one clean second-order peak, which is what three servos in series each
+    contributing compliance would look like. Treat 1.05 Hz as the dominant mode, not the
+    only one.
+  what_it_means_for_control: >
+    The standing limit cycle at 1.96 Hz is NOT at this resonance -- it sits past it, near
+    the anti-resonance, where the waist delivers only 0.54 of commanded motion at -67 deg.
+    That is reduced authority, not amplification, and it is a direct measurement of the
+    caveat recorded when residual v3 was built: "commanded waist motion not producing body
+    response, so the policy pushes until it saturates." runN measured that saturation
+    (waist_yaw pinned 46% of frames); this measures the cause.
+
 # CAVEATS, in order of how much they should worry you:
 # - waist_roll's delay_ms/tau_ms are meaningless (see above). Excluded from the ranges.
-# - The 1.0-1.6 Hz resonance is bracketed by 0.55 Hz-wide chirp bins, so its frequency is
-#   known to roughly +-0.3 Hz. A narrower sweep (--f0 0.4 --f1 3 --secs 60) would pin it.
 # - waist_pitch's ORIGINAL numbers (40.0 / 74.2) came from a slumped start below its own
 #   411 limit and are superseded by the 8/14 re-run at 52.1 / 57.4.
 # - Peak implied speed reached ~566 units/s against a ~410 units/s servo maximum, so even
