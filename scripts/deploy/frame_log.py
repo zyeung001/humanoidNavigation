@@ -257,6 +257,51 @@ class FsrSampler:
         self._thread.join(timeout=2.0)
 
 
+class UdpSink:
+    """Broadcast each frame as a datagram so a viewer elsewhere can draw the robot live.
+
+    UDP on purpose. The Pi has no MuJoCo -- deliberately, it runs numpy-only -- so the 3D
+    view has to live on another machine, and the control loop must not care whether anyone
+    is watching. A datagram that nobody receives costs one syscall and is dropped by the
+    network; a TCP connection to a viewer that stalls or dies would back-pressure into the
+    40 Hz loop. Losing frames only makes the picture stutter.
+
+    Attach through FrameLogger.add_sink(), so the packing happens on the writer thread and
+    never on the control thread.
+    """
+
+    MAGIC = 0xA7
+    FMT = "<BIf3ff17f17f"      # magic, step, t_rel, proj_grav, upright_cos, u_meas, u_cmd
+
+    def __init__(self, host, port, n_joints=17):
+        import socket
+        import struct
+        self._struct = struct
+        self._n = n_joints
+        self._addr = (host, int(port))
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        self.sent = 0
+        self.errors = 0
+
+    def __call__(self, row):
+        # Row layout is SCALAR_COLUMNS then the joint blocks, in JOINT_BLOCKS order.
+        n, s = self._n, len(SCALAR_COLUMNS)
+        try:
+            pkt = self._struct.pack(
+                self.FMT, self.MAGIC, int(row[2]), float(row[1]),
+                float(row[5]), float(row[6]), float(row[7]), float(row[11]),
+                *[float(v) for v in row[s:s + n]],              # u_meas
+                *[float(v) for v in row[s + n:s + 2 * n]])      # u_cmd
+            self._sock.sendto(pkt, self._addr)
+            self.sent += 1
+        except OSError:
+            self.errors += 1
+
+    def close(self):
+        self._sock.close()
+
+
 def pose_from_row(row, servo_map):
     """Row (dict or Series) -> everything needed to draw or replay the robot.
 

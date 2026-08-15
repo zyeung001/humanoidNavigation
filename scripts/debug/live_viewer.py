@@ -1,0 +1,264 @@
+#!/usr/bin/env python3
+"""Watch the real robot in 3D, live, while it runs.
+
+Opens MuJoCo's own interactive window on the actual model -- real meshes, orbitable,
+zoomable -- and poses it from the robot's encoders as they arrive. The ghost skeleton
+drawn through it is what the policy COMMANDED for the same frame, so the gap you see
+between ghost and robot is the tracking error, live, in the shape of the robot.
+
+WHY IT RUNS HERE AND NOT ON THE PI. The Pi is numpy-only on purpose -- no torch, no
+MuJoCo -- so there is nothing on it that can render. The robot broadcasts a 161-byte
+datagram per frame and this listens. UDP because the control loop must not care whether
+anyone is watching: an unreceived datagram costs one syscall, while a TCP viewer that
+stalls would back-pressure into a 40 Hz loop that is already using 21 ms of its 25.
+
+  # on the Pi, streaming to this machine
+  python3 scripts/deploy/deploy_standing.py --policy-npz ... --log --stream 192.168.86.20:9870
+
+  # here
+  python scripts/debug/live_viewer.py --listen 9870
+  python scripts/debug/live_viewer.py --replay logs/20260814_154939_standing.csv
+  python scripts/debug/live_viewer.py --selftest        # no window, no robot
+
+FINDING THIS MACHINE'S ADDRESS: --listen prints the addresses to stream to on startup.
+
+The root is drawn tilted by the measured projected gravity, so the robot leans on screen
+the way it leaned in the room. Yaw is not observable from gravity and is left at zero --
+the robot may be facing a different way than it was; everything about its POSE is real.
+"""
+from __future__ import annotations
+
+import argparse
+import socket
+import struct
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts" / "deploy"))
+sys.path.insert(0, str(ROOT / "scripts" / "debug"))
+
+from frame_log import UdpSink  # noqa: E402
+from pose_viewer import CHAINS, POINTS  # noqa: E402
+from sim_real_map import SimRealMap, DEFAULT_MAP  # noqa: E402
+
+GHOST_RGBA = np.array([0.37, 0.66, 0.78, 0.85], dtype=np.float32)   # steel cyan = commanded
+
+
+def tilt_quat(pg):
+    """Quaternion rotating the model's -Z onto the measured gravity direction.
+
+    Gravity fixes two of the three rotational degrees of freedom; yaw is simply not in the
+    measurement, so it stays zero rather than being invented. Drawing the lean is worth it
+    -- a robot that is falling over should look like it.
+    """
+    g = np.asarray(pg, dtype=float)
+    n = np.linalg.norm(g)
+    if n < 1e-6:
+        return np.array([1.0, 0.0, 0.0, 0.0])
+    g = g / n
+    down = np.array([0.0, 0.0, -1.0])
+    axis = np.cross(down, g)
+    s = np.linalg.norm(axis)
+    if s < 1e-9:
+        return np.array([1.0, 0.0, 0.0, 0.0]) if g[2] < 0 else np.array([0.0, 1.0, 0.0, 0.0])
+    axis /= s
+    ang = np.arctan2(s, float(np.dot(down, g)))
+    return np.concatenate([[np.cos(ang / 2)], np.sin(ang / 2) * axis])
+
+
+class Poser:
+    """Holds the model and turns encoder units into a posed, tilted robot."""
+
+    def __init__(self, xml, map_path=DEFAULT_MAP):
+        import mujoco
+        self.mj = mujoco
+        self.map = SimRealMap(map_path)
+        self.model = mujoco.MjModel.from_xml_path(str(xml))
+        self.data = mujoco.MjData(self.model)
+        self.ghost = mujoco.MjData(self.model)     # second state, for the commanded pose
+        self.qadr = self.model.jnt_qposadr[self.model.actuator_trnid[:, 0]]
+        self.jid = {nm: mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, nm)
+                    for k, nm in POINTS.values() if k == "j"}
+        self.bid = {nm: mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, nm)
+                    for k, nm in POINTS.values() if k == "b"}
+        self.nj = len(self.map.joints)
+
+    def _points(self, d):
+        raw = {}
+        for name, (kind, ref) in POINTS.items():
+            if kind == "j":
+                raw[name] = np.array(d.xanchor[self.jid[ref]])
+            elif kind == "g":
+                raw[name] = np.array(d.geom_xpos[ref])
+            elif kind == "b":
+                raw[name] = np.array(d.xipos[self.bid[ref]])
+        for name, (kind, ref) in POINTS.items():
+            if kind == "mid":
+                raw[name] = 0.5 * (raw[ref[0]] + raw[ref[1]])
+        return raw
+
+    def pose(self, u_meas, u_cmd, pg):
+        q = np.asarray(self.map.units_to_rad(np.asarray(u_meas, dtype=np.float32)))
+        self.data.qpos[:] = 0
+        self.data.qpos[3:7] = tilt_quat(pg)
+        self.data.qpos[self.qadr] = q
+        self.mj.mj_forward(self.model, self.data)
+        # Stand it on the floor: the log carries no world height, only joint angles and
+        # attitude. Reference the FEET, not body origins -- this model came out of CAD and
+        # its body frames sit wherever the exporter left them, so the lowest body origin is
+        # nowhere near the lowest part of the robot.
+        feet_z = min(float(self.data.geom_xpos[g][2]) for g in (27, 47))
+        self.data.qpos[2] += -feet_z + 0.005
+        self.mj.mj_forward(self.model, self.data)
+
+        qc = np.asarray(self.map.units_to_rad(np.asarray(u_cmd, dtype=np.float32)))
+        self.ghost.qpos[:] = self.data.qpos
+        self.ghost.qpos[self.qadr] = qc
+        self.mj.mj_forward(self.model, self.ghost)
+        return np.degrees(qc - q)
+
+    def draw_ghost(self, scn):
+        """Commanded pose as a translucent skeleton laid over the real robot."""
+        pts = self._points(self.ghost)
+        for _, chain in CHAINS:
+            for a, b in zip(chain[:-1], chain[1:]):
+                if scn.ngeom >= scn.maxgeom:
+                    return
+                g = scn.geoms[scn.ngeom]
+                self.mj.mjv_initGeom(g, self.mj.mjtGeom.mjGEOM_CAPSULE,
+                                     np.zeros(3), np.zeros(3), np.zeros(9), GHOST_RGBA)
+                self.mj.mjv_connector(g, self.mj.mjtGeom.mjGEOM_CAPSULE, 0.006,
+                                      pts[a].astype(float), pts[b].astype(float))
+                scn.ngeom += 1
+
+
+def parse_packet(buf, nj=17):
+    if len(buf) != struct.calcsize(UdpSink.FMT) or buf[0] != UdpSink.MAGIC:
+        return None
+    v = struct.unpack(UdpSink.FMT, buf)
+    return {"step": v[1], "t": v[2], "pg": np.array(v[3:6]), "upright": v[6],
+            "u_meas": np.array(v[7:7 + nj]), "u_cmd": np.array(v[7 + nj:7 + 2 * nj])}
+
+
+def iter_live(port, nj):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("0.0.0.0", int(port)))
+    sock.settimeout(0.25)
+    host = socket.gethostbyname_ex(socket.gethostname())[2]
+    print(f"listening on udp/{port}. Stream to one of: "
+          + ", ".join(f"{h}:{port}" for h in host if not h.startswith("127.")))
+    print("waiting for the robot...")
+    seen = False
+    while True:
+        try:
+            buf, _ = sock.recvfrom(2048)
+        except socket.timeout:
+            yield None
+            continue
+        f = parse_packet(buf, nj)
+        if f and not seen:
+            seen = True
+            print("robot connected.")
+        if f:
+            yield f
+
+
+def iter_replay(path, nj, speed):
+    import csv
+    rows = list(csv.DictReader(open(path)))
+    dofs = [j.dof for j in SimRealMap(DEFAULT_MAP).joints]
+    print(f"replaying {len(rows)} frames from {Path(path).name} at {speed:g}x")
+    t0 = time.time()
+    for r in rows:
+        tgt = float(r["t_rel"]) / max(speed, 1e-6)
+        while time.time() - t0 < tgt:
+            time.sleep(0.002)
+        yield {"step": int(float(r["step"])), "t": float(r["t_rel"]),
+               "pg": np.array([float(r["pg_x"]), float(r["pg_y"]), float(r["pg_z"])]),
+               "upright": float(r["upright_cos"] or 0),
+               "u_meas": np.array([float(r[f"u_meas.{d}"]) for d in dofs]),
+               "u_cmd": np.array([float(r[f"u_cmd.{d}"]) for d in dofs])}
+
+
+def main():
+    p = argparse.ArgumentParser(description="Live 3D view of the real robot")
+    src = p.add_mutually_exclusive_group(required=True)
+    src.add_argument("--listen", type=int, metavar="PORT", help="watch the robot live over UDP")
+    src.add_argument("--replay", metavar="CSV", help="play back a recorded frame log")
+    src.add_argument("--selftest", action="store_true",
+                     help="check posing and packet round-trip without opening a window")
+    p.add_argument("--xml", default=str(ROOT / "models" / "humanoid_real_v2.xml"))
+    p.add_argument("--map", default=str(DEFAULT_MAP))
+    p.add_argument("--speed", type=float, default=1.0, help="replay speed multiplier")
+    p.add_argument("--no-ghost", action="store_true", help="hide the commanded skeleton")
+    p.add_argument("--status-every", type=int, default=40)
+    args = p.parse_args()
+
+    poser = Poser(args.xml, args.map)
+    print(f"model {Path(args.xml).name}: {poser.model.nq} qpos, {poser.model.nu} actuators")
+
+    if args.selftest:
+        centers = poser.map.centers.astype(float)
+        dev = poser.pose(centers, centers + 8, [0.05, -0.02, -0.99])
+        pts = poser._points(poser.data)
+        low = min(v[2] for v in pts.values())
+        print(f"  posed at map centres: worst commanded-vs-actual {np.abs(dev).max():.2f} deg")
+        print(f"  lowest skeleton point {low:+.3f} m (should sit near the floor)")
+        print(f"  pelvis {pts['pelvis'].round(3)}  head {pts['head'].round(3)}")
+        row = [0.0] * len(__import__("frame_log").SCALAR_COLUMNS) + list(centers) \
+            + list(centers + 8) + [0.0] * 34
+        row[2], row[1] = 7, 0.175
+        row[5], row[6], row[7], row[11] = 0.05, -0.02, -0.99, 0.99
+        sink = UdpSink("127.0.0.1", 9999, poser.nj)
+        pkt = struct.pack(UdpSink.FMT, UdpSink.MAGIC, 7, 0.175, 0.05, -0.02, -0.99, 0.99,
+                          *centers, *(centers + 8))
+        back = parse_packet(pkt, poser.nj)
+        sink.close()
+        ok = (back["step"] == 7 and abs(back["t"] - 0.175) < 1e-6
+              and np.allclose(back["u_meas"], centers, atol=1e-3))
+        print(f"  packet {len(pkt)} bytes, round-trip {'OK' if ok else 'FAILED'}")
+        print("selftest passed" if ok else "selftest FAILED")
+        return 0 if ok else 1
+
+    import mujoco.viewer
+    stream = (iter_live(args.listen, poser.nj) if args.listen
+              else iter_replay(args.replay, poser.nj, args.speed))
+
+    with mujoco.viewer.launch_passive(poser.model, poser.data,
+                                      show_left_ui=False, show_right_ui=False) as v:
+        v.cam.distance = 1.6
+        v.cam.elevation = -12
+        v.cam.azimuth = 135
+        v.cam.lookat[:] = [0, 0, 0.35]
+        n = 0
+        last = time.time()
+        for f in stream:
+            if not v.is_running():
+                break
+            if f is None:               # live mode idle tick: keep the window responsive
+                v.sync()
+                continue
+            dev = poser.pose(f["u_meas"], f["u_cmd"], f["pg"])
+            v.user_scn.ngeom = 0
+            if not args.no_ghost:
+                poser.draw_ghost(v.user_scn)
+            v.sync()
+            n += 1
+            if args.status_every and n % args.status_every == 0:
+                worst = int(np.argmax(np.abs(dev)))
+                hz = args.status_every / max(time.time() - last, 1e-9)
+                last = time.time()
+                print(f"\r  t={f['t']:7.2f}s  upright={f['upright']:.3f}  "
+                      f"worst {poser.map.joints[worst].dof} {dev[worst]:+6.2f}deg  "
+                      f"{hz:4.1f} fps ", end="", flush=True)
+    print("\nviewer closed.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

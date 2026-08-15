@@ -223,6 +223,12 @@ def main():
                         "thread and record RAW divider volts (never a force -- the "
                         "calibration is not settled, so store raw and derive later)")
     p.add_argument("--fsr-channels", default="0,1", help="ADS1115 channels: heel,toe")
+    p.add_argument("--stream", default=None, metavar="HOST:PORT",
+                   help="also broadcast each frame over UDP so scripts/debug/live_viewer.py "
+                        "can draw the robot live on a machine that has MuJoCo (the Pi does "
+                        "not). Fire-and-forget: if nobody is listening the packets are just "
+                        "dropped, and a dead viewer can never stall the control loop. "
+                        "Requires --log, since the sink rides on the frame logger.")
     p.add_argument("--require-verified", action="store_true",
                    help="refuse to drive joints whose sign is not bench-verified")
     p.add_argument("--imu-calib", default=str(ROOT / "config" / "imu_calib.yaml"),
@@ -341,7 +347,7 @@ def main():
     # ---- frame log (off unless --log) ----
     # Started before the ramp so `finally` can always close it, and so a run that dies
     # during startup still leaves its sidecar behind saying what was configured.
-    logger = fsr = None
+    logger = fsr = streamer = None
     if args.log is not None:
         from frame_log import FrameLogger, FsrSampler, default_log_path, file_md5  # noqa: E402
         log_path = Path(args.log) if args.log else default_log_path("standing")
@@ -370,6 +376,12 @@ def main():
                         "NOT known to this script -- record them with the run",
             },
         })
+        if args.stream:
+            from frame_log import UdpSink  # noqa: E402
+            host, _, port = args.stream.partition(":")
+            streamer = UdpSink(host, port or 9870, NJ)
+            logger.add_sink(streamer)
+            print(f"Streaming frames -> udp://{host}:{port or 9870}")
         print(f"Logging frames -> {log_path}  (+ {log_path.with_suffix('.meta.json')})")
 
     def read_units_or(fallback):
@@ -599,6 +611,9 @@ def main():
     finally:
         if fsr is not None:
             fsr.close()
+        if streamer is not None:
+            print(f"Streamed {streamer.sent} frames ({streamer.errors} send errors)")
+            streamer.close()
         if logger is not None:
             written, dropped = logger.close()
             print(f"\nFrame log: {written} rows -> {logger.path}"
