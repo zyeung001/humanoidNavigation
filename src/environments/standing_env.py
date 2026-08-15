@@ -254,9 +254,28 @@ class StandingEnv(gym.Wrapper):
         # (the v2 home keyframe is a bent standing pose, not all-zeros).
         m_unwrapped = self.env.unwrapped.model
         self.n_joints = int(m_unwrapped.nu)
+        # Address the ACTUATED joints through their actuators rather than assuming they are
+        # the first nu joints after the free joint. They always were, until the measured
+        # waist compliance had to be modelled: a passive spring joint inserted mid-tree
+        # shifts every qpos index after it, and qpos[7:7+nu] would then silently return a
+        # different set of joints -- the policy reading one joint while commanding another,
+        # with nothing to notice it. On a rigid model this resolves to exactly the old
+        # slice, which is asserted below.
+        self._jnt_of_act = m_unwrapped.actuator_trnid[:, 0]
+        self.act_qposadr = m_unwrapped.jnt_qposadr[self._jnt_of_act]
+        self.act_dofadr = m_unwrapped.jnt_dofadr[self._jnt_of_act]
+        n_passive = int(m_unwrapped.njnt - 1 - self.n_joints)
+        if n_passive == 0:
+            assert np.array_equal(self.act_qposadr, np.arange(7, 7 + self.n_joints)), \
+                "actuated joints are not the contiguous block they used to be"
+            assert np.array_equal(self.act_dofadr, np.arange(6, 6 + self.n_joints))
+        else:
+            print(f"  Model has {n_passive} passive joint(s); indexing actuated joints "
+                  f"via actuator transmission (qpos {list(self.act_qposadr)})")
+
         if m_unwrapped.nkey > 0:
             self.default_joint_pos = np.asarray(
-                m_unwrapped.key_qpos[0][7:7 + self.n_joints], dtype=np.float32
+                m_unwrapped.key_qpos[0][self.act_qposadr], dtype=np.float32
             )
         else:
             self.default_joint_pos = np.zeros(self.n_joints, dtype=np.float32)
@@ -517,7 +536,10 @@ class StandingEnv(gym.Wrapper):
         
         linear_vel = self.env.unwrapped.data.qvel[0:3]
         angular_vel = self.env.unwrapped.data.qvel[3:6]
-        joint_vel = self.env.unwrapped.data.qvel[6:]  # Joint velocities
+        # Actuated joints only: a passive spring DOF (compliant waist) is not something the
+        # policy commands, so charging its motion to the smoothness reward would penalise
+        # the policy for the bracket flexing.
+        joint_vel = self.env.unwrapped.data.qvel[self.act_dofadr]
         
         # Target height
         target_height = self.base_target_height
@@ -743,8 +765,8 @@ class StandingEnv(gym.Wrapper):
 
         if self.enable_pd_assist and (self.pd_kp > 0.0 or self.pd_kd > 0.0):
             try:
-                qpos = self.env.unwrapped.data.qpos[7:7+action.shape[-1]]
-                qvel = self.env.unwrapped.data.qvel[6:6+action.shape[-1]]
+                qpos = self.env.unwrapped.data.qpos[self.act_qposadr]
+                qvel = self.env.unwrapped.data.qvel[self.act_dofadr]
                 pd = (-self.pd_kp * qpos) + (-self.pd_kd * qvel)
                 action = np.clip(action + pd, -1.0, 1.0)
             except (AttributeError, IndexError):
@@ -876,9 +898,9 @@ class StandingEnv(gym.Wrapper):
         # base angular velocity, free-joint local frame (matches IMU gyro)
         base_ang_vel = np.asarray(data.qvel[3:6], dtype=np.float32)
         # joint angles relative to home pose (encoder-minus-home on hardware)
-        jpos = np.asarray(data.qpos[7:7 + self.n_joints], dtype=np.float32) - self.default_joint_pos
+        jpos = np.asarray(data.qpos[self.act_qposadr], dtype=np.float32) - self.default_joint_pos
         # joint velocities (finite-difference of encoders on hardware)
-        jvel = np.asarray(data.qvel[6:6 + self.n_joints], dtype=np.float32)
+        jvel = np.asarray(data.qvel[self.act_dofadr], dtype=np.float32)
         # last applied (smoothed) action
         last_action = np.asarray(self.prev_action, dtype=np.float32).ravel()
 
