@@ -101,6 +101,10 @@ def main():
                         "0.80 is about 37 deg). This tool holds a pose like a statue and does "
                         "NOT balance, so without a cut it would keep driving servos while the "
                         "robot topples.")
+    p.add_argument("--upright-deg", type=float, default=5.0,
+                   help="a probe sample counts as UPRIGHT while |lean| stays under this. Only "
+                        "those samples are averaged, because a reading taken while the robot "
+                        "is toppling measures the topple and not the pose.")
     p.add_argument("--imu-calib", default=str(ROOT / "config" / "imu_calib.yaml"))
     p.add_argument("--no-imu", action="store_true",
                    help="skip the IMU entirely: no tilt cut and no lean cross-check")
@@ -172,6 +176,7 @@ def main():
         imu = IMU(axis_remap=remap).connect()
     start = None
     rows = []
+    probe_hist = []
     try:
         bus.set_torque(m.servo_ids, True)
         start = bus.read_all(m.servo_ids)
@@ -190,6 +195,7 @@ def main():
                 # is to watch it go over and see WHICH WAY, so cutting torque mid-topple
                 # would throw away the measurement being taken.
                 print("  holding. release it now.\n")
+                upright_since = None
                 while True:
                     v, _ = fsr.read()
                     c, tot = cop_mm(v, args.rfixed, args.vcc, args.pos_heel, args.pos_toe)
@@ -197,10 +203,18 @@ def main():
                     if imu is not None:
                         pg = imu.projected_gravity()
                         ln = float(np.degrees(np.arctan2(pg[0], -pg[2])))
-                    where = ("FORWARD" if ln > 4 else "BACKWARD" if ln < -4 else "upright")
+                    now = time.time()
+                    probe_hist.append(
+                        (now, ln, float("nan") if c is None else c - args.cop_offset))
+                    up = bool(np.isfinite(ln) and abs(ln) <= args.upright_deg)
+                    upright_since = (upright_since or now) if up else None
+                    held = 0.0 if upright_since is None else now - upright_since
+                    where = ("FORWARD" if ln > args.upright_deg else
+                             "BACKWARD" if ln < -args.upright_deg else "UPRIGHT")
                     ctxt = "  --  " if c is None else f"{c - args.cop_offset:+6.1f}"
-                    print(f"\r  lean {ln:+6.1f} deg {where:9s} CoP {ctxt} mm   "
-                          f"load {1000*tot:5.2f} mS   ", end="", flush=True)
+                    print(f"\r  lean {ln:+6.1f} deg {where:8s} CoP {ctxt} mm   "
+                          f"load {1000*tot:5.2f} mS   upright {held:4.1f}s   ",
+                          end="", flush=True)
                     time.sleep(0.1)
             time.sleep(args.dwell * 0.4)          # settle before sampling, not while moving
             samples, loads = [], []
@@ -250,8 +264,62 @@ def main():
         if imu is not None:
             imu.close()
 
-    report(rows, names, args)
+    if args.probe is not None:
+        probe_report(probe_hist, args)
+    else:
+        report(rows, names, args)
     return 0
+
+
+def probe_report(hist, args):
+    """Summarise only the stretch where the robot was actually upright.
+
+    The first version printed a live line and left whatever happened to be on screen when
+    you hit Ctrl-C, which was almost always mid-topple: two probes at the same trim came
+    back 30 mm apart for exactly that reason, with lean already past +10 deg in both. A
+    centre-of-pressure reading is a statement about a pose, and it is only a statement
+    about THAT pose while the robot is still in it.
+    """
+    print()
+    print(f"--- PROBE at trim {args.probe:+.1f} deg ---")
+    if not hist:
+        print("  no samples captured.")
+        return
+    t0 = hist[0][0]
+    up = [(t - t0, ln, c) for t, ln, c in hist
+          if np.isfinite(ln) and abs(ln) <= args.upright_deg]
+    print(f"  {len(hist)} samples over {hist[-1][0] - t0:.1f}s; {len(up)} upright "
+          f"(|lean| <= {args.upright_deg:.0f} deg)")
+    if not up:
+        closest = min(hist, key=lambda r: abs(r[1]) if np.isfinite(r[1]) else 1e9)
+        print(f"  NEVER upright -- closest approach was {closest[1]:+.1f} deg.")
+        print("  This trim did not hold, so it has no centre of pressure to report.")
+        return
+    # The longest UNBROKEN upright stretch, not every upright sample: two seconds of
+    # holding says something about the pose, whereas scattered frames on the way past
+    # vertical are just the trajectory of a fall.
+    runs, cur = [], [up[0]]
+    for prev, nxt in zip(up[:-1], up[1:]):
+        if nxt[0] - prev[0] < 0.35:
+            cur.append(nxt)
+        else:
+            runs.append(cur)
+            cur = [nxt]
+    runs.append(cur)
+    best = max(runs, key=len)
+    held = best[-1][0] - best[0][0]
+    lean = np.array([r[1] for r in best])
+    cop = np.array([r[2] for r in best if np.isfinite(r[2])])
+    print(f"  longest unbroken upright stretch: {held:.1f}s")
+    print(f"  lean over it  {np.median(lean):+6.2f} deg   (spread {np.std(lean):.2f})")
+    if not len(cop):
+        print("  a sensor was unloaded throughout -- no CoP available")
+        return
+    print(f"  CoP over it   {np.median(cop):+6.1f} mm    (spread {np.std(cop):.1f}, n={len(cop)})")
+    print(f"  sim predicts  {SIM_COP_MM:+6.1f} mm at the straight pose")
+    print()
+    print(f"  log this as: trim {args.probe:+.1f} -> CoP {np.median(cop):+.1f} mm, "
+          f"lean {np.median(lean):+.2f} deg, held {held:.1f}s")
 
 
 def report(rows, names, args):
