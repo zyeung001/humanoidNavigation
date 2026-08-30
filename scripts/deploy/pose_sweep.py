@@ -79,6 +79,13 @@ def main():
                         "or the robot twists instead of leaning)")
     p.add_argument("--range", type=float, nargs=2, default=[-6.0, 6.0], metavar=("LO", "HI"))
     p.add_argument("--step", type=float, default=2.0, help="degrees per point")
+    p.add_argument("--probe", type=float, default=None, metavar="TRIM",
+                   help="hold ONE trim and stream lean + CoP live until Ctrl-C, instead of "
+                        "sweeping. This is the mode to use on a robot that will not stand "
+                        "unaided: steady it, release, and watch which way it goes. Falls "
+                        "backward -> probe a more forward trim; falls forward -> go back. "
+                        "Five or six of these bisect the balance point to about a degree, "
+                        "and none of them needs the robot to stay up.")
     p.add_argument("--dwell", type=float, default=4.0, help="seconds to settle and sample")
     p.add_argument("--ramp", type=float, default=2.0, help="seconds to move between points")
     p.add_argument("--speed", type=int, default=300)
@@ -110,7 +117,16 @@ def main():
     lo, hi = sorted(args.range)
     if max(abs(lo), abs(hi)) > MAX_TRIM_DEG:
         raise SystemExit(f"trim beyond +-{MAX_TRIM_DEG} deg is a contortion, not a trim")
-    trims = np.arange(lo, hi + 1e-9, abs(args.step))
+    if args.probe is not None:
+        trims = np.array([float(args.probe)])
+    else:
+        trims = np.arange(lo, hi + 1e-9, abs(args.step))
+        # Visit from the CENTRE outward, alternating sides, rather than marching from one
+        # end to the other. A robot that cannot stand unaided topples at the extremes, and
+        # marching from an end spends the first points there -- losing the middle of the
+        # curve, which is the part that carries the crossing.
+        mid = 0.5 * (lo + hi)
+        trims = trims[np.argsort(np.abs(trims - mid), kind="stable")]
     plans, idxs = build_plan(m, dofs, names, trims)
 
     print(f"sweeping {', '.join(names)} over {lo:+.0f}..{hi:+.0f} deg in {args.step:g} deg steps")
@@ -124,8 +140,14 @@ def main():
         print("\n[dry-run] no hardware touched.")
         return 0
 
-    print("\nHOLD THE ROBOT, or use a slack tether. The ends of this sweep are deliberately")
-    print("poses it may not stand in. Ctrl-C ramps back and drops torque.\n")
+    if args.probe is not None:
+        print(f"\nPROBE at trim {args.probe:+.1f} deg. Steady it, then RELEASE and watch.")
+        print("  falls BACKWARD -> the balance point is at a more forward trim")
+        print("  falls FORWARD  -> go back the other way")
+        print("Ctrl-C ramps back and drops torque.\n")
+    else:
+        print("\nHOLD THE ROBOT, or use a slack tether. The ends of this sweep are deliberately")
+        print("poses it may not stand in. Ctrl-C ramps back and drops torque.\n")
 
     from frame_log import FsrSampler  # noqa: PLC0415
     from hardware import ServoBus  # noqa: PLC0415
@@ -163,6 +185,23 @@ def main():
                               speed=args.speed)
                 time.sleep(1 / 40)
             cur = target.astype(float)
+            if args.probe is not None:
+                # Hold and stream until Ctrl-C. No tilt cut here on purpose: the whole point
+                # is to watch it go over and see WHICH WAY, so cutting torque mid-topple
+                # would throw away the measurement being taken.
+                print("  holding. release it now.\n")
+                while True:
+                    v, _ = fsr.read()
+                    c, tot = cop_mm(v, args.rfixed, args.vcc, args.pos_heel, args.pos_toe)
+                    ln = float("nan")
+                    if imu is not None:
+                        pg = imu.projected_gravity()
+                        ln = float(np.degrees(np.arctan2(pg[0], -pg[2])))
+                    where = ("FORWARD" if ln > 4 else "BACKWARD" if ln < -4 else "upright")
+                    ctxt = "  --  " if c is None else f"{c - args.cop_offset:+6.1f}"
+                    print(f"\r  lean {ln:+6.1f} deg {where:9s} CoP {ctxt} mm   "
+                          f"load {1000*tot:5.2f} mS   ", end="", flush=True)
+                    time.sleep(0.1)
             time.sleep(args.dwell * 0.4)          # settle before sampling, not while moving
             samples, loads = [], []
             t0 = time.time()
