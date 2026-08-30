@@ -66,19 +66,23 @@ DEG = 57.29577951308232
 # How to pose each group. Printed before torque comes off; advisory, not enforced.
 POSE_HINT = {
     "legs": (
-        "Lay the robot on its BACK on a flat table -- do NOT try this standing, the legs go\n"
-        "  limp the moment torque drops. Then, gently:\n"
+        "Lay the robot FLAT on a table -- on its back OR face-down, whichever the mounted\n"
+        "  electronics allow. The table PLANE is what sets the alignment; which side faces up\n"
+        "  does not matter, because each servo reads only its own shaft. Do NOT try this\n"
+        "  standing: the legs go limp the instant torque drops. Then, gently:\n"
+        "    - HANG THE FEET OFF THE EDGE of the table. This robot has no ankle, so each foot\n"
+        "      is rigid and perpendicular to its shin; left on the surface it acts as a prop,\n"
+        "      lifts the shin, and quietly destroys the very alignment you are setting.\n"
         "    - extend both knees fully, until they stop. Do not force past the stop; the\n"
         "      knees are one-sided hinges, so that stop IS the straight reference.\n"
-        "    - lay both legs flat and parallel: thighs in line with the torso, kneecaps\n"
-        "      facing straight up (this is what kills hip roll and hip yaw error), feet\n"
-        "      flat on the table.\n"
+        "    - lay both legs flat and parallel: thighs in line with the torso, kneecaps square\n"
+        "      to the table (this is what kills hip roll and hip yaw error).\n"
         "    - hold it there while this reads (a couple of seconds)."
     ),
     "waist": (
-        "With the robot flat on its back, align the chest with the pelvis: no twist (yaw),\n"
-        "  no side lean (roll), no forward bend (pitch). Press both the pelvis block and the\n"
-        "  chest flat to the table -- the table plane sets roll and pitch, its edge sets yaw."
+        "With the robot flat, align the chest with the pelvis: no twist (yaw), no side lean\n"
+        "  (roll), no forward bend (pitch). Press both the pelvis block and the chest flat to\n"
+        "  the table -- the table plane sets roll and pitch, its edge sets yaw."
     ),
     "arms": (
         "Pose BOTH arms hanging straight down, relaxed and symmetric."
