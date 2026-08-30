@@ -89,6 +89,14 @@ def main():
     p.add_argument("--cop-offset", type=float, default=0.0,
                    help="mm to subtract, from the flat-bar zero test")
     p.add_argument("--fsr-channels", default="0,1")
+    p.add_argument("--tilt-cut", type=float, default=0.80,
+                   help="abort and ramp back if the pelvis tilts past this (cosine of upright; "
+                        "0.80 is about 37 deg). This tool holds a pose like a statue and does "
+                        "NOT balance, so without a cut it would keep driving servos while the "
+                        "robot topples.")
+    p.add_argument("--imu-calib", default=str(ROOT / "config" / "imu_calib.yaml"))
+    p.add_argument("--no-imu", action="store_true",
+                   help="skip the IMU entirely: no tilt cut and no lean cross-check")
     p.add_argument("--map", default=str(DEFAULT_MAP))
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
@@ -124,6 +132,22 @@ def main():
 
     bus = ServoBus().connect()
     fsr = FsrSampler(channels=[int(c) for c in args.fsr_channels.split(",")])
+    # The IMU earns its place twice here: it aborts before a topple, and it measures the
+    # LEAN at each trim. Lean and centre of pressure are independent instruments aimed at
+    # the same question, so if they disagree about which way the pose should move, that
+    # disagreement is worth more than either number on its own.
+    imu = None
+    if not args.no_imu:
+        import os
+
+        import yaml  # noqa: PLC0415
+
+        from hardware import IMU  # noqa: PLC0415
+        remap = None
+        if os.path.exists(args.imu_calib):
+            remap = np.asarray(yaml.safe_load(open(args.imu_calib))["axis_remap"],
+                               dtype=np.float32)
+        imu = IMU(axis_remap=remap).connect()
     start = None
     rows = []
     try:
@@ -149,15 +173,24 @@ def main():
                     samples.append(c - args.cop_offset)
                     loads.append(tot)
                 time.sleep(0.05)
+            lean = float("nan")
+            if imu is not None:
+                pg = imu.projected_gravity()
+                lean = float(np.degrees(np.arctan2(pg[0], -pg[2])))    # + = leaning forward
+                if -float(pg[2]) < args.tilt_cut:
+                    print(f"  trim {tr:+5.1f} deg -> TILT CUT at upright {-float(pg[2]):.2f}: "
+                          f"it is going over. Aborting the sweep and ramping back.")
+                    break
             if samples:
                 med, sd = float(np.median(samples)), float(np.std(samples))
-                rows.append((tr, med, sd))
-                print(f"  trim {tr:+5.1f} deg -> CoP {med:+7.1f} mm   "
-                      f"spread {sd:4.1f}   load {1000*np.median(loads):5.2f} mS   n={len(samples)}")
+                rows.append((tr, med, sd, lean))
+                print(f"  trim {tr:+5.1f} deg -> CoP {med:+7.1f} mm   spread {sd:4.1f}   "
+                      f"load {1000*np.median(loads):5.2f} mS   lean {lean:+5.1f} deg   "
+                      f"n={len(samples)}")
             else:
-                rows.append((tr, float("nan"), float("nan")))
-                print(f"  trim {tr:+5.1f} deg -> a sensor is UNLOADED: the foot lifted, or the "
-                      f"robot is not standing on the instrumented one")
+                rows.append((tr, float("nan"), float("nan"), lean))
+                print(f"  trim {tr:+5.1f} deg -> a sensor is UNLOADED (lean {lean:+5.1f} deg): "
+                      f"the foot lifted, or the robot is not on the instrumented one")
     except KeyboardInterrupt:
         print("\ninterrupted.")
     finally:
@@ -175,13 +208,15 @@ def main():
         fsr.close()
         bus.set_torque(m.servo_ids, False)
         bus.close()
+        if imu is not None:
+            imu.close()
 
     report(rows, names, args)
     return 0
 
 
 def report(rows, names, args):
-    good = [(t, c) for t, c, _ in rows if np.isfinite(c)]
+    good = [(t, c) for t, c, _, _ in rows if np.isfinite(c)]
     print("\n--- RESULT ---")
     if len(good) < 3:
         print("  not enough loaded points to fit a line. Was the robot standing on the")
@@ -202,6 +237,21 @@ def report(rows, names, args):
         print(f"\n  pressure centres at a trim of {zero:+.1f} deg"
               + ("" if inside else "  -- EXTRAPOLATED beyond the sweep; widen --range to confirm"))
         print(f"  that is the baseline to train around: {label} shifted {zero:+.1f} deg")
+    leans = [(t, ln) for t, _, _, ln in rows if np.isfinite(ln)]
+    if len(leans) >= 3 and abs(slope) > 1e-6:
+        lx = np.array([v[0] for v in leans])
+        ly = np.array([v[1] for v in leans])
+        lslope, licept = np.polyfit(lx, ly, 1)
+        print()
+        print(f"  IMU cross-check: lean moves {lslope:+.2f} deg per degree of trim, "
+              f"{licept:+.1f} deg at trim 0")
+        if abs(lslope) > 1e-6:
+            lzero = -licept / lslope
+            agree = abs(lzero - (-icept / slope)) < 2.0
+            print(f"  lean reaches vertical at trim {lzero:+.1f} deg"
+                  + ("   AGREES with the pressure crossing" if agree else
+                     "   DISAGREES with the pressure crossing -- trust neither until they do"))
+
     print("\n  Trust the slope. The absolute zero carries your FSR calibration error"
           + ("." if args.cop_offset else
              " --\n  run the flat-bar test and pass --cop-offset to remove it."))
