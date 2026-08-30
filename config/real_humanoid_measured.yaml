@@ -121,6 +121,13 @@ standing:
   actuator_lag: true
   actuator_delay_ms: [10.0, 80.0]    # measured 14-67 ms across 17 joints, + margin
   actuator_tau_ms: [15.0, 110.0]     # measured 17-94 ms (was [90,220], never measured)
+  # PER-SERVO profiles: each joint gets its OWN measured delay and tau, jittered per episode
+  # around its own value. Without this every servo in sim is the same servo, which the bench
+  # sweep says is false -- L_elbow is 46+17 ms, waist_pitch 52+57. The ranges above remain the
+  # fallback for waist_roll, which the profile marks valid:false because it is resonant and a
+  # first-order fit does not describe it.
+  actuator_profiles: config/measured_actuator.yaml
+  actuator_profile_jitter: 0.3
 
   actuator_rand: true
   actuator_rand_range: [0.7, 1.3]

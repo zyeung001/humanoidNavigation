@@ -121,10 +121,25 @@ class StandingEnv(gym.Wrapper):
         self.actuator_lag = bool(self.cfg.get('actuator_lag', False))
         self.actuator_delay_ms = self.cfg.get('actuator_delay_ms', [30.0, 70.0])
         self.actuator_tau_ms = self.cfg.get('actuator_tau_ms', [90.0, 220.0])
+        # PER-SERVO profiles. Without these every joint in sim is the same servo, which is
+        # false on this robot: the 8/14 bench sweep measured dead time 41-67 ms and tau
+        # 17-94 ms across the 17 joints -- L_elbow is 46+17 ms, waist_pitch 52+57. A single
+        # sampled pair trains the policy on a machine that does not exist, and a policy that
+        # learns one lag cannot know which joints answer late. Point this at
+        # config/measured_actuator.yaml to give each joint its own measured profile,
+        # jittered per episode around ITS OWN value rather than across the global spread.
+        self.actuator_profiles = self.cfg.get('actuator_profiles', None)
+        self.actuator_profile_jitter = float(self.cfg.get('actuator_profile_jitter', 0.3))
+        self._prof_delay_ms = None
+        self._prof_tau_ms = None
+        if self.actuator_lag and self.actuator_profiles:
+            self._prof_delay_ms, self._prof_tau_ms = self._load_actuator_profiles(
+                self.actuator_profiles)
         self._control_dt = float(self.env.unwrapped.dt)   # 0.025 s (40 Hz) for the real model
         self._lag_buffer = None
         self._servo_state = None
         self._lag_alpha = 1.0
+        self._lag_delay_steps = None
 
         #Random height initialization for recovery training
         self.random_height_init = self.cfg.get('random_height_init', True)
@@ -419,13 +434,22 @@ class StandingEnv(gym.Wrapper):
         # discrete first-order coefficient alpha = 1 - exp(-dt/tau).
         if self.actuator_lag:
             dt = self._control_dt
-            delay_ms = np.random.uniform(self.actuator_delay_ms[0], self.actuator_delay_ms[1])
-            tau_ms = np.random.uniform(self.actuator_tau_ms[0], self.actuator_tau_ms[1])
-            delay_steps = max(0, int(round((delay_ms / 1000.0) / dt)))
-            self._lag_alpha = float(1.0 - np.exp(-dt / max(tau_ms / 1000.0, 1e-4)))
+            n = int(self.env.action_space.shape[0])
+            if self._prof_delay_ms is not None:
+                # Each joint jitters around its OWN measured profile. Randomising across the
+                # global 17-joint spread instead would tell the policy that any joint might
+                # be any servo, which is exactly the information the measurement removed.
+                j = self.actuator_profile_jitter
+                delay_ms = self._prof_delay_ms * np.random.uniform(1 - j, 1 + j, n)
+                tau_ms = self._prof_tau_ms * np.random.uniform(1 - j, 1 + j, n)
+            else:
+                delay_ms = np.full(n, np.random.uniform(*self.actuator_delay_ms[:2]))
+                tau_ms = np.full(n, np.random.uniform(*self.actuator_tau_ms[:2]))
+            self._lag_delay_steps = np.maximum(0, np.round(delay_ms / 1000.0 / dt)).astype(int)
+            self._lag_alpha = (1.0 - np.exp(-dt / np.maximum(tau_ms / 1000.0, 1e-4))).astype(np.float32)
+            depth = int(self._lag_delay_steps.max()) + 1
             zero = np.zeros(self.env.action_space.shape, dtype=np.float32)
-            self._lag_buffer = deque([zero.copy() for _ in range(delay_steps + 1)],
-                                     maxlen=delay_steps + 1)
+            self._lag_buffer = deque([zero.copy() for _ in range(depth)], maxlen=depth)
             self._servo_state = zero.copy()
 
         # Observation filter: sample this episode's EMA strengths + reset the filter states, so
@@ -781,6 +805,46 @@ class StandingEnv(gym.Wrapper):
         self.prev_action = action.copy()
         return action
 
+    def _load_actuator_profiles(self, spec):
+        """Per-joint (delay_ms, tau_ms) from a measured profile file, in ACTION order.
+
+        The profile is keyed by joint name; the action vector is ordered by actuator index.
+        Getting that correspondence wrong would silently give every joint a neighbour's
+        dynamics, so the order is taken from joint_servo_map.yaml -- the same file the deploy
+        loop uses to decide which servo an action element drives -- rather than from whatever
+        order the profile happens to be written in.
+
+        Joints the profile marks `valid: false` fall back to the global range. waist_roll is
+        marked that way on purpose: it is mechanically resonant, its first-order fit does not
+        describe it, and its 5.9 ms "dead time" is an artefact of the overshoot.
+        """
+        import yaml
+        path = spec if isinstance(spec, str) else spec.get("path")
+        prof = yaml.safe_load(open(path))["joints"]
+        map_path = self.cfg.get("joint_map", "config/joint_servo_map.yaml")
+        order = [j["dof"] for j in yaml.safe_load(open(map_path))["joints"]]
+        n = int(self.env.action_space.shape[0])
+        if len(order) != n:
+            raise ValueError(f"{map_path} lists {len(order)} joints but the action space is {n}")
+        d_mid = float(np.mean(self.actuator_delay_ms[:2]))
+        t_mid = float(np.mean(self.actuator_tau_ms[:2]))
+        delay = np.full(n, d_mid)
+        tau = np.full(n, t_mid)
+        used = skipped = 0
+        for i, dof in enumerate(order):
+            e = prof.get(dof)
+            if not e or not e.get("valid", True):
+                skipped += 1
+                continue
+            delay[i] = float(e["delay_ms"])
+            tau[i] = float(e["tau_ms"])
+            used += 1
+        print(f"  Actuator profiles from {path}: {used}/{n} joints measured"
+              + (f", {skipped} fell back to the global range" if skipped else ""))
+        print(f"    delay {delay.min():.0f}-{delay.max():.0f} ms, tau {tau.min():.0f}-{tau.max():.0f} ms"
+              f", jitter +-{100*self.actuator_profile_jitter:.0f}% per episode")
+        return delay, tau
+
     def _apply_actuator_lag(self, cmd: np.ndarray) -> np.ndarray:
         """Model the real servo: dead-time delay then first-order lag toward the command.
 
@@ -789,7 +853,13 @@ class StandingEnv(gym.Wrapper):
         mechanical time constant (and, implicitly, the ~2 rad/s slew ceiling). Clipped to the
         action range so the lagged signal is always a valid actuator command."""
         self._lag_buffer.append(cmd.copy())
-        delayed = self._lag_buffer[0]            # oldest sample = command from delay_steps ago
+        # Per-joint dead time: joint i reads the command from its OWN delay_steps[i] ago, so a
+        # 46 ms elbow and a 67 ms hip yaw are different servos in the same robot rather than
+        # one shared delay line.
+        idx = len(self._lag_buffer) - 1 - self._lag_delay_steps
+        np.clip(idx, 0, len(self._lag_buffer) - 1, out=idx)
+        buf = np.asarray(self._lag_buffer)
+        delayed = buf[idx, np.arange(buf.shape[1])]
         self._servo_state = self._servo_state + self._lag_alpha * (delayed - self._servo_state)
         low, high = self.env.action_space.low, self.env.action_space.high
         return np.clip(self._servo_state, low, high).astype(np.float32)
