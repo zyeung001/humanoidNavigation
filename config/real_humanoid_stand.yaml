@@ -111,7 +111,7 @@ standing:
 
   # ========== RESIDUAL MODE v2 ==========
   residual_clamp: 0.2
-  residual_baseline: [+0.0667, +0.0462, -0.0667, -0.0103, +0.1077, +0.1385, +0.0103, -0.0410, +0.0462, +0.1231, +0.0821, +0.0000, -0.0000, +0.0000, +0.0000, -0.0000, +0.0000]
+  residual_baseline: [+0.0667, +0.0462, -0.0318, -0.0103, +0.1077, +0.1385, +0.0452, -0.0410, +0.0462, +0.1231, +0.0821, +0.0000, -0.0000, +0.0000, +0.0000, -0.0000, +0.0000]
   # ^ the 194.8 s standing pose, measured on hardware 9/3, in calibrated
   #   sim radians. Legs and waist are the pose that held; the arms are 0
   #   because they were already on their 8/5 measured centres during it.

@@ -36,13 +36,13 @@ joints:
   - {idx: 0,  mjcf: "Revolute 18", dof: "R_hip_roll",   axis: x, sim_range: [-1.5708, 0.3491], servo_id: 4,  sign: +1, sign_verified: true, servo_limit: [398, 600], center: 499}  # straight 499 (-13 from 512), measured 9/3
   - {idx: 1,  mjcf: "Revolute 26", dof: "R_hip_yaw",    axis: z, sim_range: [-1.5708, 0.9599], servo_id: 5,  sign: +1, sign_verified: true, servo_limit: [402, 691], center: 503}  # straight 503 (-9), measured 9/3; hi span from the 6/21 widening
   - {idx: 2,  mjcf: "Revolute 23", dof: "R_hip_pitch",  axis: y, sim_range: [-1.5708, 0.3491], servo_id: 6,  sign: -1, sign_verified: true, servo_limit: [412, 614], center: 513}  # straight 513 (+1), measured 9/3 -- the only one that was right
-  - {idx: 3,  mjcf: "Revolute 21", dof: "R_knee",       axis: y, sim_range: [-1.5708, 1.5708], servo_id: 7,  sign: -1, sign_verified: true,  servo_limit: [204, 510], center: 510}  # straight 510 = the one-sided stop, measured 9/3 (EEPROM has +10)
+  - {idx: 3,  mjcf: "Revolute 21", dof: "R_knee",       axis: y, sim_range: [-1.5708, 1.5708], servo_id: 7,  sign: -1, sign_verified: true,  servo_limit: [204, 520], center: 510}  # straight 510 = the one-sided stop, measured 9/3 (EEPROM has +10)  # widened to the EEPROM range: no stop exists at straight
 
   # ---- LEFT LEG ----
   - {idx: 4,  mjcf: "Revolute 24", dof: "L_hip_roll",   axis: x, sim_range: [-1.5708, 0.1745], servo_id: 8,  sign: -1, sign_verified: true, servo_limit: [432, 634], center: 533}  # straight 533 (+21), measured 9/3
   - {idx: 5,  mjcf: "Revolute 28", dof: "L_hip_yaw",    axis: z, sim_range: [-0.9599, 1.5708], servo_id: 9,  sign: +1, sign_verified: true, servo_limit: [384, 708], center: 485}  # straight 485 (-27), measured 9/3 -- the worst offset; hi from 6/21
   - {idx: 6,  mjcf: "Revolute 25", dof: "L_hip_pitch",  axis: y, sim_range: [-1.5708, 0.3491], servo_id: 10, sign: +1, sign_verified: true, servo_limit: [395, 597], center: 496}  # straight 496 (-16), measured 9/3
-  - {idx: 7,  mjcf: "Revolute 27", dof: "L_knee",       axis: y, sim_range: [-1.5708, 1.5708], servo_id: 11, sign: +1, sign_verified: true,  servo_limit: [520, 826], center: 520}  # straight 520 = the one-sided stop, measured 9/3 (EEPROM has -10)
+  - {idx: 7,  mjcf: "Revolute 27", dof: "L_knee",       axis: y, sim_range: [-1.5708, 1.5708], servo_id: 11, sign: +1, sign_verified: true,  servo_limit: [510, 826], center: 520}  # straight 520 = the one-sided stop, measured 9/3 (EEPROM has -10)  # widened to the EEPROM range: no stop exists at straight
 
   # ---- WAIST (roll, pitch, yaw) ----
   - {idx: 8,  mjcf: "Revolute 22", dof: "waist_roll",   axis: x, sim_range: [-0.6109, 0.6109], servo_id: 3,  sign: -1, sign_verified: true, servo_limit: [420, 622], center: 494}  # straight 494 (+9 from the 6/18 hand re-zero of 485), measured 9/3
