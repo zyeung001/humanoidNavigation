@@ -207,13 +207,27 @@ def main():
         if not vals:
             bad.append(j)
             continue
-        med = int(statistics.median(vals))
+        # ONE-SIDED HINGES NEED THE EXTREME, NOT THE MEDIAN. The knees and elbows have their
+        # straight pose sitting exactly on a mechanical stop -- that is why the instructions
+        # say to extend until it stops. You can fail to reach a stop; you cannot push past
+        # it. So the posing error is entirely one-sided and the median sits in the middle of
+        # it, biased away from the stop by half the spread. On 9/3 that put R_knee at -19
+        # units when the rounds nearest the stop said -2, and L_knee at +19 against +8.
+        # Detected from the map, not guessed: a joint whose current centre already sits on
+        # one end of its own servo_limit is one-sided, and that end is the stop.
+        lo_lim, hi_lim = int(j["servo_limit"][0]), int(j["servo_limit"][1])
+        cur0 = int(j.get("center", default_center))
+        one_sided = cur0 in (lo_lim, hi_lim)
+        if one_sided:
+            med = max(vals) if cur0 == hi_lim else min(vals)
+        else:
+            med = int(statistics.median(vals))
         cur = int(j.get("center", default_center))
         off = med - cur
         lo, hi = int(j["servo_limit"][0]), int(j["servo_limit"][1])
         ee = eeprom.get(sid)
         rows.append({
-            "j": j, "sid": sid, "med": med, "vals": vals,
+            "j": j, "sid": sid, "med": med, "vals": vals, "one_sided": one_sided,
             "pose_spread": max(vals) - min(vals),
             "cur_center": cur, "off_units": off,
             "off_deg": off / upr * DEG,
@@ -242,8 +256,10 @@ def main():
             flags.append("EEPROM-CLIP")
         if r["eeprom"] is None:
             flags.append("no-eeprom-read")
-        if r["pose_spread"] > 8:
+        if r["pose_spread"] > 8 and not r["one_sided"]:
             flags.append("POSE-UNSTABLE")
+        if r["one_sided"]:
+            flags.append("one-sided: took the round nearest the stop, not the median")
         print(f"{r['j']['idx']:>3} {r['j']['dof']:<18} {r['sid']:>3} {r['med']:>8} "
               f"{r['cur_center']:>7} {r['off_units']:>+7d} {r['off_deg']:>+7.1f} "
               f"{r['off_rad']:>+8.3f} {r['pose_spread']:>6}  {' '.join(flags)}")
