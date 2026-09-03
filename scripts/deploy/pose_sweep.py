@@ -60,16 +60,48 @@ def cop_mm(volts, rfixed, vcc, x_heel, x_toe):
     return (g[0] * x_heel + g[1] * x_toe) / tot, tot
 
 
-def build_plan(m, dofs, names, trims):
-    base = m.centers.astype(float)      # straight: the per-joint hand-measured centres
+def load_baseline(path, m):
+    """A whole-body pose in sim radians, from a config's standing.residual_baseline.
+
+    Needed because the pose this robot actually balances in is not a trim off straight --
+    it is a multi-joint offset (L_hip_yaw +7.9 deg, waist_pitch +7.1, L_hip_roll +6.2),
+    which no single --trim can express. Reading it from the same file the training run uses
+    keeps the pose held on the bench and the pose trained against as one thing that cannot
+    drift apart.
+    """
+    import yaml
+    b = yaml.safe_load(open(path))["standing"]["residual_baseline"]
+    b = np.asarray(b, dtype=float)
+    if b.shape != (m.n,):
+        raise SystemExit(f"{path}: residual_baseline has {b.shape[0]} values, expected {m.n}")
+    return b
+
+
+def build_plan(m, dofs, names, trims, baseline=None):
+    # Straight (the measured per-joint centres) unless a baseline pose is supplied, in
+    # which case trims are applied on top of THAT.
+    # Convert by hand rather than through rad_to_units, which clips to the servo limits
+    # internally and silently. Going through it would hand this function a pose that had
+    # already been trimmed, and the clip report below would then have nothing to find --
+    # the tool would be quietly hiding exactly what it is here to expose.
+    base = (m.centers.astype(float) if baseline is None
+            else m.centers.astype(float)
+            + m.signs.astype(float) * np.asarray(baseline, dtype=float) * m.units_per_rad)
     idxs = [dofs.index(n) for n in names]
-    out = []
+    out, clipped = [], {}
     for tr in trims:
         u = base.copy()
         for i in idxs:
             u[i] += m.signs[i] * np.deg2rad(tr) * m.units_per_rad
-        out.append((float(tr), np.clip(u, m.lim_lo, m.lim_hi).round().astype(int)))
-    return out, idxs
+        c = np.clip(u, m.lim_lo, m.lim_hi)
+        # Report what the clip changed. Silently commanding a different pose than the one
+        # asked for is the exact fault this whole line of work exists to find -- it is how
+        # three arm joints spent months unable to reach straight -- and a tool that does it
+        # quietly is no better than the firmware that did.
+        for i in np.flatnonzero(np.abs(c - u) > 0.5):
+            clipped.setdefault(dofs[i], (float(u[i]), float(c[i])))
+        out.append((float(tr), c.round().astype(int)))
+    return out, idxs, clipped
 
 
 def main():
@@ -108,6 +140,12 @@ def main():
     p.add_argument("--imu-calib", default=str(ROOT / "config" / "imu_calib.yaml"))
     p.add_argument("--no-imu", action="store_true",
                    help="skip the IMU entirely: no tilt cut and no lean cross-check")
+    p.add_argument("--baseline", default=None, metavar="CONFIG",
+                   help="hold the whole-body pose in a config's standing.residual_baseline "
+                        "instead of straight, with any --trim applied on top. The pose this "
+                        "robot balances in is a multi-joint offset, not a trim off straight, "
+                        "so no --trim can express it. Point this at the same config the "
+                        "training run uses.")
     p.add_argument("--map", default=str(DEFAULT_MAP))
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
@@ -131,13 +169,23 @@ def main():
         # curve, which is the part that carries the crossing.
         mid = 0.5 * (lo + hi)
         trims = trims[np.argsort(np.abs(trims - mid), kind="stable")]
-    plans, idxs = build_plan(m, dofs, names, trims)
+    baseline = load_baseline(args.baseline, m) if args.baseline else None
+    plans, idxs, clipped = build_plan(m, dofs, names, trims, baseline)
 
     print(f"sweeping {', '.join(names)} over {lo:+.0f}..{hi:+.0f} deg in {args.step:g} deg steps")
     print(f"  {len(plans)} poses x ({args.ramp:g}s ramp + {args.dwell:g}s dwell) = "
           f"{len(plans)*(args.ramp+args.dwell)/60:.1f} min")
     print(f"  CoP from sensors at {args.pos_heel:+.0f}/{args.pos_toe:+.0f} mm, "
           f"R_fixed {args.rfixed:.0f} ohm, offset {args.cop_offset:+.1f} mm")
+    if baseline is not None:
+        print(f"  base pose from {args.baseline}: max offset from straight "
+              f"{np.degrees(np.abs(baseline).max()):.1f} deg")
+    if clipped:
+        print(f"  !! {len(clipped)} joint(s) CLIPPED by their map servo_limit -- the pose")
+        print("     actually commanded is NOT the pose asked for:")
+        for d, (want, got) in clipped.items():
+            print(f"       {d:14s} wanted {want:6.1f}, limited to {got:6.1f} "
+                  f"({got - want:+.1f} units = {(got - want) / 195 * 57.3:+.2f} deg)")
     if args.dry_run:
         for tr, u in plans:
             print(f"  trim {tr:+5.1f} deg -> " + "  ".join(f"{dofs[i]}={u[i]}" for i in idxs))
