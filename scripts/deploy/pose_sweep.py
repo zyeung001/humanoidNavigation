@@ -199,21 +199,28 @@ def main():
                 while True:
                     v, _ = fsr.read()
                     c, tot = cop_mm(v, args.rfixed, args.vcc, args.pos_heel, args.pos_toe)
-                    ln = float("nan")
+                    ln = roll = float("nan")
                     if imu is not None:
                         pg = imu.projected_gravity()
                         ln = float(np.degrees(np.arctan2(pg[0], -pg[2])))
+                        # Lateral lean as well. Reporting only fore/aft left the tool blind
+                        # to an entire axis: the 9/3 calibration moved L_hip_roll by 6.2 deg
+                        # and L_hip_yaw by 7.9 deg, which shifts weight sideways, and a
+                        # robot toppling sideways read as one standing perfectly straight.
+                        roll = float(np.degrees(np.arctan2(pg[1], -pg[2])))
                     now = time.time()
                     probe_hist.append(
-                        (now, ln, float("nan") if c is None else c - args.cop_offset))
+                        (now, ln, float("nan") if c is None else c - args.cop_offset, roll))
                     up = bool(np.isfinite(ln) and abs(ln) <= args.upright_deg)
                     upright_since = (upright_since or now) if up else None
                     held = 0.0 if upright_since is None else now - upright_since
                     where = ("FORWARD" if ln > args.upright_deg else
                              "BACKWARD" if ln < -args.upright_deg else "UPRIGHT")
                     ctxt = "  --  " if c is None else f"{c - args.cop_offset:+6.1f}"
-                    print(f"\r  lean {ln:+6.1f} deg {where:8s} CoP {ctxt} mm   "
-                          f"load {1000*tot:5.2f} mS   upright {held:4.1f}s   ",
+                    side = ("RIGHT" if roll > args.upright_deg else
+                            "LEFT " if roll < -args.upright_deg else "     ")
+                    print(f"\r  pitch {ln:+6.1f} {where:8s} roll {roll:+6.1f} {side} "
+                          f"CoP {ctxt} mm  load {1000*tot:5.2f} mS  upright {held:4.1f}s  ",
                           end="", flush=True)
                     time.sleep(0.1)
             time.sleep(args.dwell * 0.4)          # settle before sampling, not while moving
@@ -286,7 +293,7 @@ def probe_report(hist, args):
         print("  no samples captured.")
         return
     t0 = hist[0][0]
-    up = [(t - t0, ln, c) for t, ln, c in hist
+    up = [(t - t0, ln, c, rl) for t, ln, c, rl in hist
           if np.isfinite(ln) and abs(ln) <= args.upright_deg]
     print(f"  {len(hist)} samples over {hist[-1][0] - t0:.1f}s; {len(up)} upright "
           f"(|lean| <= {args.upright_deg:.0f} deg)")
@@ -310,10 +317,18 @@ def probe_report(hist, args):
     held = best[-1][0] - best[0][0]
     lean = np.array([r[1] for r in best])
     cop = np.array([r[2] for r in best if np.isfinite(r[2])])
+    roll = np.array([r[3] for r in best if np.isfinite(r[3])])
     print(f"  longest unbroken upright stretch: {held:.1f}s")
-    print(f"  lean over it  {np.median(lean):+6.2f} deg   (spread {np.std(lean):.2f})")
-    if not len(cop):
-        print("  a sensor was unloaded throughout -- no CoP available")
+    print(f"  pitch over it {np.median(lean):+6.2f} deg   (spread {np.std(lean):.2f})")
+    if len(roll):
+        r_med = float(np.median(roll))
+        print(f"  ROLL over it  {r_med:+6.2f} deg   (spread {np.std(roll):.2f})"
+              + ("   <- leaning sideways; a lateral topple looks nothing like a pitch one"
+                 if abs(r_med) > 3 else ""))
+    if len(cop) < max(3, len(best) // 4):
+        print(f"  CoP UNUSABLE: only {len(cop)} of {len(best)} upright samples had both")
+        print("  sensors loaded. The instrumented foot is not carrying its share -- check")
+        print("  the ROLL above, because weight shifted sideways is the usual reason.")
         return
     print(f"  CoP over it   {np.median(cop):+6.1f} mm    (spread {np.std(cop):.1f}, n={len(cop)})")
     print(f"  sim predicts  {SIM_COP_MM:+6.1f} mm at the straight pose")
