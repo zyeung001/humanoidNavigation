@@ -60,6 +60,17 @@ GROUPS = {
     "all":   list(range(0, 17)),
 }
 
+# Joints whose straight pose really is a mechanical stop, so "extend until it stops" is a
+# repeatable reference and the extreme, not the median, is the estimate.
+#
+# This is stated rather than inferred. The first version detected it from the map -- a joint
+# whose centre sat on one end of its own servo_limit -- and that caught the KNEES, which have
+# no stop at all: they bend more than 90 degrees BOTH ways, and their one-sided servo_limit
+# is a designed +/-90 placeholder around the assumed 512, not a measurement. Reading a map
+# convention as physics put the knee centres out by 17 units. The elbows were bench-confirmed
+# one-sided on 6/22, so they stay.
+ONE_SIDED_DOFS = {"R_elbow", "L_elbow"}
+
 REG_ANGLE_LIMIT = 0x09               # 4 bytes, big-endian: min_hi min_lo max_hi max_lo
 DEG = 57.29577951308232
 
@@ -215,10 +226,12 @@ def main():
         # units when the rounds nearest the stop said -2, and L_knee at +19 against +8.
         # Detected from the map, not guessed: a joint whose current centre already sits on
         # one end of its own servo_limit is one-sided, and that end is the stop.
-        lo_lim, hi_lim = int(j["servo_limit"][0]), int(j["servo_limit"][1])
         cur0 = int(j.get("center", default_center))
-        one_sided = cur0 in (lo_lim, hi_lim)
+        one_sided = j["dof"] in ONE_SIDED_DOFS
         if one_sided:
+            # Which end the stop is on comes from the joint's own limits: the stop is the
+            # end its current centre already sits against.
+            hi_lim = int(j["servo_limit"][1])
             med = max(vals) if cur0 == hi_lim else min(vals)
         else:
             med = int(statistics.median(vals))
@@ -259,7 +272,7 @@ def main():
         if r["pose_spread"] > 8 and not r["one_sided"]:
             flags.append("POSE-UNSTABLE")
         if r["one_sided"]:
-            flags.append("one-sided: took the round nearest the stop, not the median")
+            flags.append("one-sided stop: took the round nearest it, not the median")
         print(f"{r['j']['idx']:>3} {r['j']['dof']:<18} {r['sid']:>3} {r['med']:>8} "
               f"{r['cur_center']:>7} {r['off_units']:>+7d} {r['off_deg']:>+7.1f} "
               f"{r['off_rad']:>+8.3f} {r['pose_spread']:>6}  {' '.join(flags)}")
