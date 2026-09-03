@@ -27,15 +27,21 @@ one variable at a time.
     4  R_hip_roll           499    412 .. 614     398 .. 600      -13
     5  R_hip_yaw            503    411 .. 705     402 .. 691       -9
     6  R_hip_pitch          513    414 .. 616     412 .. 614       +1
-    7  R_knee               510    206 .. 512     204 .. 510       -2   one-sided
+    7  R_knee               510    206 .. 512     204 .. 520       -2   one-sided +10
     8  L_hip_roll           533    412 .. 614     432 .. 634      +21
     9  L_hip_yaw            485    411 .. 740     384 .. 708      -27
    10  L_hip_pitch          496    413 .. 615     395 .. 597      -16
-   11  L_knee               520    516 .. 822     520 .. 826       +8   one-sided
+   11  L_knee               520    516 .. 822     510 .. 826       +8   one-sided -10
 
 The two knees are one-sided hinges: straight IS the mechanical stop, so their straight sits
-exactly ON the new limit rather than in the middle of it. That is correct and matches what
-fix_arm_limits.py did for the elbows.
+at the END of the new range rather than in the middle. They also get 10 units of margin
+PAST that stop, which the arms did not. The arms' stops were measured with a spread of 0,
+so placing a limit exactly on one was safe; the knees came back with spreads of 9 and 18
+units, so the true stop may lie a little beyond the best round anyone managed. A limit
+placed exactly on an under-measured stop would hold the knee short of straight -- the very
+silent clip this script exists to prevent. Margin past a MECHANICAL stop costs nothing: the
+stop still stops the joint, and the policy cannot command past it anyway, because sim_range
+for these joints ends at 0 (straight).
 
 ORDER MATTERS. Run this BEFORE putting the new `center:` values into
 config/joint_servo_map.yaml. With the old centre of 512 nothing clips, because 512 sits
@@ -68,11 +74,11 @@ LIMITS = {
     4: (398, 600),    # R_hip_roll    straight 499, symmetric +/-101
     5: (402, 691),    # R_hip_yaw     straight 503, -101/+188 (widened 6/21 for the keyframe)
     6: (412, 614),    # R_hip_pitch   straight 513, symmetric +/-101
-    7: (204, 510),    # R_knee        straight 510 = the one-sided stop, flexes -
+    7: (204, 520),    # R_knee        straight 510 = the one-sided stop, flexes -; +10 margin
     8: (432, 634),    # L_hip_roll    straight 533, symmetric +/-101
     9: (384, 708),    # L_hip_yaw     straight 485, -101/+223 (widened 6/21)
     10: (395, 597),   # L_hip_pitch   straight 496, symmetric +/-101
-    11: (520, 826),   # L_knee        straight 520 = the one-sided stop, flexes +
+    11: (510, 826),   # L_knee        straight 520 = the one-sided stop, flexes +; -10 margin
 }
 STRAIGHT = {1: 528, 2: 488, 3: 494, 4: 499, 5: 503, 6: 513,
             7: 510, 8: 533, 9: 485, 10: 496, 11: 520}
@@ -80,6 +86,7 @@ NAME = {1: "waist_yaw", 2: "waist_pitch", 3: "waist_roll", 4: "R_hip_roll",
         5: "R_hip_yaw", 6: "R_hip_pitch", 7: "R_knee", 8: "L_hip_roll",
         9: "L_hip_yaw", 10: "L_hip_pitch", 11: "L_knee"}
 ONE_SIDED = {7, 11}
+KNEE_MARGIN = 10   # units of slack past a measured mechanical stop; see above
 
 
 def checksum(body):
@@ -127,9 +134,9 @@ def sanity_check():
             problems.append(f"servo {sid}: {lo}..{hi} is not a valid range")
         if not lo <= s <= hi:
             problems.append(f"servo {sid} ({NAME[sid]}): straight {s} outside {lo}..{hi}")
-        if sid in ONE_SIDED and s not in (lo, hi):
+        if sid in ONE_SIDED and min(abs(s - lo), abs(s - hi)) > KNEE_MARGIN:
             problems.append(f"servo {sid} ({NAME[sid]}): one-sided, but straight {s} is not "
-                            f"on either end of {lo}..{hi}")
+                            f"within {KNEE_MARGIN} units of either end of {lo}..{hi}")
     return problems
 
 
@@ -152,7 +159,8 @@ def main():
     print("-" * 62)
     for sid in sorted(LIMITS):
         lo, hi = LIMITS[sid]
-        note = "one-sided: straight sits ON the stop" if sid in ONE_SIDED else ""
+        note = (f"one-sided: stop at {STRAIGHT[sid]}, +{KNEE_MARGIN} units of margin"
+                if sid in ONE_SIDED else "")
         print(f"{sid:>3} {NAME[sid]:13s} {STRAIGHT[sid]:8d} {f'{lo} .. {hi}':>14}   {note}")
 
     if not args.write:
