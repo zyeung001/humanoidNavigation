@@ -186,16 +186,30 @@ def produce_live(port, nj, tgt):
     sock.close()
 
 
-def produce_replay(path, nj, speed, tgt):
+def produce_replay(path, nj, speed, tgt, t_from=None, t_to=None):
     import csv
     rows = list(csv.DictReader(open(path)))
     dofs = [j.dof for j in SimRealMap(DEFAULT_MAP).joints]
-    print(f"replaying {len(rows)} frames from {Path(path).name} at {speed:g}x")
+    # A window, so diagnose_run.py can point straight at the moment it found. Watching a
+    # 200-second run to see a fall at t=137 is how incidents go unwatched.
+    lo = -np.inf if t_from is None else float(t_from)
+    hi = np.inf if t_to is None else float(t_to)
+    rows = [r for r in rows if lo <= float(r["t_rel"]) <= hi]
+    if not rows:
+        print(f"no frames between {lo} and {hi} s -- check the window")
+        tgt.done = True
+        return
+    span = "" if t_from is None and t_to is None else \
+        f" [t={float(rows[0]['t_rel']):.1f}..{float(rows[-1]['t_rel']):.1f}s]"
+    print(f"replaying {len(rows)} frames from {Path(path).name} at {speed:g}x{span}")
+    # Time the window from its own first frame, or a --from of 137 would sit idle for
+    # 137 seconds before drawing anything.
+    base = float(rows[0]["t_rel"])
     t0 = time.time()
     for r in rows:
         if tgt.done:
             return
-        while time.time() - t0 < float(r["t_rel"]) / max(speed, 1e-6):
+        while time.time() - t0 < (float(r["t_rel"]) - base) / max(speed, 1e-6):
             time.sleep(0.002)
         tgt.frame = {"step": int(float(r["step"])), "t": float(r["t_rel"]),
                      "pg": np.array([float(r["pg_x"]), float(r["pg_y"]), float(r["pg_z"])]),
@@ -215,6 +229,11 @@ def main():
     p.add_argument("--xml", default=str(ROOT / "models" / "humanoid_real_v2.xml"))
     p.add_argument("--map", default=str(DEFAULT_MAP))
     p.add_argument("--speed", type=float, default=1.0, help="replay speed multiplier")
+    p.add_argument("--from", dest="t_from", type=float, default=None, metavar="SEC",
+                   help="replay only from this t_rel. diagnose_run.py prints the window "
+                        "for each event it finds, so you can watch the moment itself.")
+    p.add_argument("--to", dest="t_to", type=float, default=None, metavar="SEC",
+                   help="replay only up to this t_rel")
     p.add_argument("--no-ghost", action="store_true", help="hide the commanded skeleton")
     p.add_argument("--fps", type=float, default=60.0,
                    help="render rate, held steady regardless of when packets arrive")
@@ -259,7 +278,7 @@ def main():
     producer = threading.Thread(
         target=(produce_live if args.listen else produce_replay),
         args=((args.listen, poser.nj, tgt) if args.listen
-              else (args.replay, poser.nj, args.speed, tgt)),
+              else (args.replay, poser.nj, args.speed, tgt, args.t_from, args.t_to)),
         daemon=True)
     producer.start()
 
