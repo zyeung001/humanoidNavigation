@@ -115,7 +115,23 @@ standing:
   # ^ the 194.8 s standing pose, measured on hardware 9/3, in calibrated
   #   sim radians. Legs and waist are the pose that held; the arms are 0
   #   because they were already on their 8/5 measured centres during it.
-  residual_baseline_rand: 0.05
+  residual_baseline_rand: 0.10
+  # ^ WIDENED from 0.05 (2.9 deg) on 9/4, because the bench cannot pin the pose any tighter
+  #   than this and there is no point pretending otherwise. Two released probes at the SAME
+  #   commanded pose read pelvis pitch -8.19 and -3.62 deg, and CoP -27.7 mm once and
+  #   unmeasurable the other time; placement alone is worth several degrees. A day of
+  #   probing could not resolve a trim below that noise floor.
+  #
+  #   So stop trying to find the exact anchor and make the policy not need one. At 0.10 rad
+  #   (5.7 deg) the per-episode baseline shift brackets both the placement spread and the
+  #   6-11 deg static disagreement between sim's pelvis attitude (+3.0) and hardware's
+  #   (-8.2 to -3.6) -- the policy has to find vertical from proj_grav instead of trusting
+  #   where the baseline says it is, which is the one thing that survives the pose being
+  #   uncertain.
+  #
+  #   NOTE this makes TWO changes against the last trained model (baseline + this), not one.
+  #   Deliberate: the baseline change is what the 9/3 calibration justifies, and this is the
+  #   insurance that the residual pose error it cannot remove does not decide the run.
 
   # ========== ACTION + SMOOTHNESS (unchanged) ==========
   action_smoothing: true
@@ -126,6 +142,49 @@ standing:
   action_rate_cap: 100.0
   raw_action_rate_penalty: 25.0
   raw_action_rate_cap: 50.0
+
+  # ========== CLAMP SATURATION (new 9/5; the one change in this run) ==========
+  # scripts/debug/check_saturation.py on final_real_standing_stand: 7 of 17 joints outside
+  # the +-0.2 rad box on MORE THAN HALF of all frames, waist_yaw on 100% of them wanting
+  # -34 deg, 42.5% of all joint-frames clipped. np.clip is flat, so those joints had exactly
+  # zero gradient and had stopped being controllers -- ten joints were doing all the
+  # balancing. Posed statically in sim the raw stance COLLAPSES (tilt 0.085, 25% of weight on
+  # the feet), so this was drift into a dead coordinate, not a pose the policy was reaching
+  # for. The clip was the only thing keeping it upright, and the 6/6 gate could not see it.
+  #
+  # raw_action_rate_penalty above was holding it there: charging the CHANGE in the raw action
+  # makes a mean parked far outside the cheapest thing available.
+  #
+  # WEIGHT. Current excursions sum to ~0.36 rad^2, so 30.0 charges ~11 against a per-step
+  # reward around 60 -- enough to pull, well short of dominating (this project has blown up
+  # PPO's KL with large rewards before). The term vanishes on its own as the mean comes back
+  # inside; nothing needs to be turned off later.
+  #
+  # CAP. Deliberately generous. A cap is flat, which is the exact pathology being fixed, so
+  # 50.0 puts the ceiling at 1.67 rad^2 -- about 4.6x the present excursion -- and it should
+  # never bind in practice. It exists only to stop a single transient spiking value targets.
+  #
+  # This CANNOT change what reaches the servo: the actuator still receives the clipped value,
+  # byte for byte. It changes only what the policy is taught to prefer.
+  # 9/5 RESULT AT WEIGHT 30 (135M): it works, it is just too weak. Over 15M steps mean
+  # excursion^2 fell 0.360 -> 0.159 and waist_yaw came in from -34 to -17 deg; the pinned
+  # COUNT went 7 -> 8, which is why the count is the wrong thing to judge on -- it is binary,
+  # and a joint 6 deg past an 11.5 deg edge still reads 100%.
+  #
+  # The direction was also confirmed rather than assumed. Sitting outside the box does buy
+  # the policy something real: the clip removes applied-action jitter that
+  # action_rate_penalty (70.0) charges for, worth 1.05 per step. But the saturation term was
+  # charging 5.94, so the net gradient is ~4.9 per step INWARD and there is no equilibrium
+  # holding it out -- only PPO's step size. Raising the weight is therefore the whole fix;
+  # nothing structural is needed.
+  #
+  # 30 -> 100 triples the restoring gradient (d/d(excursion) = 2*w*excursion), charging ~16
+  # against a typical ~72 per-step reward, and it shrinks to nothing as the mean complies.
+  # The cap rises with it: a cap is flat, which is the pathology being fixed, and at weight
+  # 100 a cap of 50 would bind at 0.5 rad^2 -- above today's 0.159 but below where this run
+  # started. 150 puts the ceiling at 1.5 rad^2, out of reach.
+  residual_saturation_penalty: 100.0
+  residual_saturation_cap: 150.0
   yaw_rate_penalty: 30.0
 
   # ========== BALANCED STANCE ==========

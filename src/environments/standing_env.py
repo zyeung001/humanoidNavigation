@@ -208,6 +208,31 @@ class StandingEnv(gym.Wrapper):
         self._prev_raw_action = np.zeros(self.env.action_space.shape, dtype=np.float32)
         self._last_raw_action_rate = np.zeros(self.env.action_space.shape, dtype=np.float32)
 
+        # SATURATION penalty: charges how far the RAW network output sits OUTSIDE the residual
+        # clamp box. Off (0.0) reproduces the old reward exactly.
+        #
+        # WHY. np.clip is flat, so beyond the box edge the gradient with respect to the action
+        # is EXACTLY ZERO. A mean that wanders out therefore gets nothing pulling it back, and
+        # with log_std clamped at -2.0 (sigma ~0.135 rad) every sample lands outside too, so the
+        # joint freezes wherever it drifted and stops being a controller at all. Measured on
+        # final_real_standing_stand (9/5, 110M steps): 7 of 17 joints outside the box on more
+        # than half of all frames, waist_yaw on 100% of them at -34 deg against an 11.5 deg
+        # clamp, 42.5% of all joint-frames clipped. Posed statically in sim, that raw stance
+        # collapses -- tilt 0.085, 25% of weight on the feet -- so it is not a pose the policy
+        # is reaching for, it is a dead coordinate. The clip was the only thing standing.
+        #
+        # raw_action_rate_penalty makes it WORSE, not better: it charges the CHANGE in the raw
+        # action, so a mean parked far outside is the cheapest thing the policy can do. The
+        # existing penalty actively holds the pathology still.
+        #
+        # This term is deliberately on the RAW action only. What reaches the actuator is still
+        # the clipped value, byte for byte, so enabling this cannot change deployed behaviour --
+        # it can only change what the policy is taught to prefer. Quadratic, so the restoring
+        # gradient grows with the excursion and a mean 3 clamp-widths out is pulled hardest.
+        self.residual_sat_weight = float(self.cfg.get('residual_saturation_penalty', 0.0))
+        self.residual_sat_cap = float(self.cfg.get('residual_saturation_cap', 50.0))
+        self._last_saturation = np.zeros(self.env.action_space.shape, dtype=np.float32)
+
         # RESIDUAL mode (PD-baseline + bounded RL corrections): clamp the policy's action to
         # residual_baseline +/- residual_clamp before smoothing. The baseline is the settled
         # standing COMMAND (includes gravity-holding offsets, not just the pose), which stands
@@ -524,6 +549,12 @@ class StandingEnv(gym.Wrapper):
         raw_in = np.asarray(action, dtype=np.float32).ravel()
         self._last_raw_action_rate = raw_in - self._prev_raw_action
         self._prev_raw_action = raw_in.copy()
+        # How far outside the clamp box each joint asked to go, this step. Measured against the
+        # EPISODE baseline (_res_base_ep), not the nominal one, so residual_baseline_rand shifts
+        # the box and the penalty together rather than charging the policy for the randomisation.
+        if self.residual_sat_weight > 0.0 and np.any(self.residual_clamp > 0.0):
+            self._last_saturation = np.maximum(
+                np.abs(raw_in - self._res_base_ep) - self.residual_clamp, 0.0)
         proc_action = self._process_action(np.asarray(action, dtype=np.float32))
         self._last_action_rate = proc_action - prev_applied
 
@@ -637,6 +668,17 @@ class StandingEnv(gym.Wrapper):
         else:
             raw_action_rate_penalty = 0.0
 
+        # ==========  CLAMP-SATURATION PENALTY (keeps the gradient alive) ==========
+        # The only term that has any gradient beyond the box edge; see __init__ for why that
+        # matters. Capped like the rate penalties so one transient cannot spike value targets.
+        if self.residual_sat_weight > 0.0:
+            saturation_penalty = -min(
+                self.residual_sat_weight * float(np.sum(np.square(self._last_saturation))),
+                self.residual_sat_cap,
+            )
+        else:
+            saturation_penalty = 0.0
+
         # ==========  YAW-RATE DAMPING (anti-spin) ==========
         # angular_vel = qvel[3:6] (base frame); [2] is yaw rate. Penalize its
         # square, capped, so a transient can't spike PPO value targets.
@@ -743,6 +785,7 @@ class StandingEnv(gym.Wrapper):
             sustained_bonus +
             action_rate_penalty +
             raw_action_rate_penalty +
+            saturation_penalty +
             yaw_rate_penalty +
             stance_reward +
             termination_penalty
