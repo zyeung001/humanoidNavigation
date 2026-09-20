@@ -15,9 +15,11 @@ not care what any model believes. This walks a trim through a range, holds each 
 reads where the pressure sits -- turning "where should it stand" from an argument into a
 line with a zero crossing.
 
-WHAT IT DOES NOT DO. It does not balance the robot. Hold it, or use a slack tether: the
-poses at the ends of the sweep are deliberately ones it may not stand in, which is the
-point. No policy runs here, so nothing can seize.
+WHAT IT DOES NOT DO. It does not balance the robot. But DO NOT HOLD IT either: a hand
+that takes any weight takes it away from the sensors, and the sweep then measures your arm.
+Set it down, let go, and hover a hand to catch it -- the tilt cut ends the sweep before it
+goes over. A run taken under support is flagged by total load, not left to be discovered
+in the slope. No policy runs here, so nothing can seize.
 
 READING THE RESULT. The SLOPE, in mm of CoP per degree of trim, is trustworthy. The
 absolute zero is only as good as the FSR calibration: if the foot plate shares load with
@@ -50,14 +52,32 @@ COM_HEIGHT_MM = 414.7      # for converting a CoP shift into an equivalent body 
 
 def cop_mm(volts, rfixed, vcc, x_heel, x_toe):
     """Load-weighted mean of the two sensor positions. None when a sensor is unloaded."""
+    c, tot, _ = cop_detail(volts, rfixed, vcc, x_heel, x_toe)
+    return c, tot
+
+
+def cop_detail(volts, rfixed, vcc, x_heel, x_toe):
+    """As cop_mm, plus WHICH end is unloaded -- "HEEL", "TOE" or "" when both carry.
+
+    Worth reporting on its own because an unusable CoP is not a missing measurement, it is
+    a measurement of which end the robot is standing on, and that is the one fact that
+    tells you which way it is actually leaning. The pelvis IMU cannot: the waist stack
+    deflects under load with no servo leaving position, so a robot pitched forward onto its
+    toe reports a BACKWARD lean. On 9/4 that ambiguity was the whole question -- sim and
+    hardware disagreed on the SIGN of the waist_pitch trim, and the two readings differ
+    only in which sensor was the dead one.
+    """
     g = []
     for v in volts:
         r = fsr_resistance(v, rfixed, vcc, False)
         g.append(0.0 if r == float("inf") else 1.0 / max(r, 1e-6))
     tot = g[0] + g[1]
-    if tot <= 1e-9 or min(g) / tot < 0.05:
-        return None, tot
-    return (g[0] * x_heel + g[1] * x_toe) / tot, tot
+    if tot <= 1e-9:
+        return None, tot, "BOTH"
+    if min(g) / tot < 0.05:
+        # The dead sensor is the end that is off the ground; the robot is on the other one.
+        return None, tot, ("HEEL" if g[0] < g[1] else "TOE")
+    return (g[0] * x_heel + g[1] * x_toe) / tot, tot, ""
 
 
 def load_baseline(path, m):
@@ -125,6 +145,12 @@ def main():
     p.add_argument("--vcc", type=float, default=3.3)
     p.add_argument("--pos-heel", type=float, default=-40.0, help="mm from the foot centre")
     p.add_argument("--pos-toe", type=float, default=36.0)
+    p.add_argument("--free-load", type=float, default=0.0030, metavar="SIEMENS",
+                   help="total conductance this robot reads standing FREE on the "
+                        "instrumented foot. A sweep coming in under it was taken with "
+                        "something carrying the weight, and its slope is not usable. "
+                        "Default 3.0 mS, from the 9/4 released probes (3.7-4.4 mS free, "
+                        "2.1-2.7 mS held).")
     p.add_argument("--cop-offset", type=float, default=0.0,
                    help="mm to subtract, from the flat-bar zero test")
     p.add_argument("--fsr-channels", default="0,1")
@@ -198,8 +224,13 @@ def main():
         print("  falls FORWARD  -> go back the other way")
         print("Ctrl-C ramps back and drops torque.\n")
     else:
-        print("\nHOLD THE ROBOT, or use a slack tether. The ends of this sweep are deliberately")
-        print("poses it may not stand in. Ctrl-C ramps back and drops torque.\n")
+        print("\nSET IT DOWN AND LET GO. Hover a hand to catch it, but do not let it take any")
+        print("weight: a supporting hand carries load that would otherwise reach the sensors,")
+        print("and every CoP sample in the run is then measuring your arm. On 9/4 a held sweep")
+        print("read 2.1-2.7 mS with 11-16 mm of spread where the same robot released reads")
+        print("3.7-4.4 mS with 1.5-3.3 mm; the trim ends came out indistinguishable. The tilt")
+        print("cut stops the sweep before it goes over, which is what the catch is for.")
+        print("Ctrl-C ramps back and drops torque.\n")
 
     from frame_log import FsrSampler  # noqa: PLC0415
     from hardware import ServoBus  # noqa: PLC0415
@@ -246,7 +277,8 @@ def main():
                 upright_since = None
                 while True:
                     v, _ = fsr.read()
-                    c, tot = cop_mm(v, args.rfixed, args.vcc, args.pos_heel, args.pos_toe)
+                    c, tot, dead = cop_detail(v, args.rfixed, args.vcc,
+                                              args.pos_heel, args.pos_toe)
                     ln = roll = float("nan")
                     if imu is not None:
                         pg = imu.projected_gravity()
@@ -267,19 +299,23 @@ def main():
                     ctxt = "  --  " if c is None else f"{c - args.cop_offset:+6.1f}"
                     side = ("RIGHT" if roll > args.upright_deg else
                             "LEFT " if roll < -args.upright_deg else "     ")
+                    off = f"{dead} UP " if dead else "       "
                     print(f"\r  pitch {ln:+6.1f} {where:8s} roll {roll:+6.1f} {side} "
-                          f"CoP {ctxt} mm  load {1000*tot:5.2f} mS  upright {held:4.1f}s  ",
+                          f"CoP {ctxt} mm {off} load {1000*tot:5.2f} mS  upright {held:4.1f}s  ",
                           end="", flush=True)
                     time.sleep(0.1)
             time.sleep(args.dwell * 0.4)          # settle before sampling, not while moving
-            samples, loads = [], []
+            samples, loads, deads = [], [], []
             t0 = time.time()
             while time.time() - t0 < args.dwell * 0.6:
                 v, _age = fsr.read()
-                c, tot = cop_mm(v, args.rfixed, args.vcc, args.pos_heel, args.pos_toe)
+                c, tot, dead = cop_detail(v, args.rfixed, args.vcc,
+                                          args.pos_heel, args.pos_toe)
                 if c is not None:
                     samples.append(c - args.cop_offset)
                     loads.append(tot)
+                else:
+                    deads.append(dead)
                 time.sleep(0.05)
             lean = float("nan")
             if imu is not None:
@@ -291,14 +327,17 @@ def main():
                     break
             if samples:
                 med, sd = float(np.median(samples)), float(np.std(samples))
-                rows.append((tr, med, sd, lean))
+                rows.append((tr, med, sd, lean, float(np.median(loads))))
                 print(f"  trim {tr:+5.1f} deg -> CoP {med:+7.1f} mm   spread {sd:4.1f}   "
                       f"load {1000*np.median(loads):5.2f} mS   lean {lean:+5.1f} deg   "
                       f"n={len(samples)}")
             else:
-                rows.append((tr, float("nan"), float("nan"), lean))
-                print(f"  trim {tr:+5.1f} deg -> a sensor is UNLOADED (lean {lean:+5.1f} deg): "
-                      f"the foot lifted, or the robot is not on the instrumented one")
+                rows.append((tr, float("nan"), float("nan"), lean, float("nan")))
+                which = max(set(deads), key=deads.count) if deads else "?"
+                print(f"  trim {tr:+5.1f} deg -> the {which} is UNLOADED "
+                      f"(lean {lean:+5.1f} deg): the robot is standing on its "
+                      f"{'TOE' if which == 'HEEL' else 'HEEL' if which == 'TOE' else '?'}, "
+                      f"or is not on the instrumented foot")
     except KeyboardInterrupt:
         print("\ninterrupted.")
     finally:
@@ -385,9 +424,35 @@ def probe_report(hist, args):
           f"lean {np.median(lean):+.2f} deg, held {held:.1f}s")
 
 
+def supported_warning(rows, free_load):
+    """Flag a sweep taken while someone was holding the robot up.
+
+    A hand on the robot carries load that would otherwise reach the sensors, so every CoP
+    sample in the run measures the arm as much as the pose. It does not look like an error:
+    the numbers arrive, the fit succeeds, and the slope is simply wrong. On 9/4 a held sweep
+    read 2.1-2.7 mS against 3.7-4.4 mS released, with 11-16 mm of CoP spread against 1.5-3.3,
+    and produced trim ends that were indistinguishable from each other. Total load is the
+    one channel that can see it, because the missing weight has to go somewhere.
+    """
+    loads = [ld for *_, ld in rows if np.isfinite(ld)]
+    if not loads:
+        return
+    med = float(np.median(loads))
+    if med < free_load:
+        print(f"\n  !! LOAD {1000 * med:.2f} mS, below the {1000 * free_load:.1f} mS this "
+              "robot reads standing free.")
+        print("     Something was carrying its weight -- a hand, a tether under tension, or "
+              "the")
+        print("     instrumented foot taking less than its share. The slope below is NOT "
+              "usable.")
+        print("     Set it down, let go entirely, and re-run; use --free-load to retune the "
+              "threshold.")
+
+
 def report(rows, names, args):
-    good = [(t, c) for t, c, _, _ in rows if np.isfinite(c)]
+    good = [(t, c) for t, c, _, _, _ in rows if np.isfinite(c)]
     print("\n--- RESULT ---")
+    supported_warning(rows, args.free_load)
     if len(good) < 3:
         print("  not enough loaded points to fit a line. Was the robot standing on the")
         print("  instrumented foot for the whole sweep?")
@@ -407,7 +472,7 @@ def report(rows, names, args):
         print(f"\n  pressure centres at a trim of {zero:+.1f} deg"
               + ("" if inside else "  -- EXTRAPOLATED beyond the sweep; widen --range to confirm"))
         print(f"  that is the baseline to train around: {label} shifted {zero:+.1f} deg")
-    leans = [(t, ln) for t, _, _, ln in rows if np.isfinite(ln)]
+    leans = [(t, ln) for t, _, _, ln, _ in rows if np.isfinite(ln)]
     if len(leans) >= 3 and abs(slope) > 1e-6:
         lx = np.array([v[0] for v in leans])
         ly = np.array([v[1] for v in leans])
