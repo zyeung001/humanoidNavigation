@@ -22,6 +22,7 @@ import yaml
 import numpy as np
 import torch
 from stable_baselines3 import PPO
+from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 from stable_baselines3.common.callbacks import CallbackList, BaseCallback
 
@@ -48,6 +49,12 @@ def make_env_fns(n_envs: int, seed: int, cfg: dict):
         def _init():
             configure_mujoco_gl()
             env = factory(render_mode=None, config=cfg)
+            # Monitor populates info["episode"] with the return and length of each finished
+            # episode. Without it nothing downstream can see them: SB3's own rollout table
+            # shows no ep_len_mean, and JsonlMetricsCallback's episode/* keys never appear
+            # because its deques stay empty. 155M steps were trained with no record of the
+            # one quantity that IS the standing objective -- how long it stays up.
+            env = Monitor(env)
             if hasattr(env, 'reset'):
                 env.reset(seed=seed + rank)
             try:

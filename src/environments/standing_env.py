@@ -67,6 +67,7 @@ class StandingEnv(gym.Wrapper):
         # randomization is applied relative to nominal (not compounded).
         self._nominal_body_mass = None
         self._nominal_geom_friction = None
+        self._nominal_body_inertia = None
 
         # ======== sim2real robustness (all OFF by default => standard path unchanged) ========
         # Observation noise + per-episode sensor BIASES. A real IMU/encoder set has both
@@ -419,10 +420,16 @@ class StandingEnv(gym.Wrapper):
             if self._nominal_body_mass is None:
                 self._nominal_body_mass = m.body_mass.copy()
                 self._nominal_geom_friction = m.geom_friction.copy()
-            m.body_mass[:] = self._nominal_body_mass * np.random.uniform(
-                self.rand_mass_range[0], self.rand_mass_range[1],
-                size=m.body_mass.shape
-            )
+                self._nominal_body_inertia = m.body_inertia.copy()
+            mass_scale = np.random.uniform(
+                self.rand_mass_range[0], self.rand_mass_range[1], size=m.body_mass.shape)
+            m.body_mass[:] = self._nominal_body_mass * mass_scale
+            # Inertia has to scale WITH mass. For a rigid body of fixed shape, I is linear
+            # in m, so scaling mass alone produced a body up to 20% heavier that was no
+            # harder to rotate -- a plant that cannot exist, rather than a plausible
+            # variation of the real robot. On a balance task, where every correction is
+            # rotational, that is the worst axis to be wrong on.
+            m.body_inertia[:] = self._nominal_body_inertia * mass_scale[:, None]
             m.geom_friction[:, 0] = self._nominal_geom_friction[:, 0] * np.random.uniform(
                 self.rand_friction_range[0], self.rand_friction_range[1],
                 size=m.geom_friction.shape[0]
