@@ -26,12 +26,56 @@ from pathlib import Path
 
 import mujoco
 import numpy as np
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_XML = ROOT / "models" / "humanoid_real_v2.xml"
+DEFAULT_MAP = ROOT / "config" / "joint_servo_map.yaml"
 
 
-def settle(model, pose="straight", drop=0.0, yaw=0.0, jitter=0.0, seed=0, seconds=4.0):
+def act_qposadr(model):
+    """qpos address of each actuated hinge, in ACTUATOR order.
+
+    Addressed through the actuator transmission rather than assumed to be qpos[7:], for the
+    same reason standing_env.py does it: on a CAD-exported MJCF the hinge order is whatever
+    the exporter emitted, and residual_baseline is indexed by ACTION, i.e. by actuator.
+    """
+    return model.jnt_qposadr[model.actuator_trnid[:, 0]]
+
+
+def load_pose(model, config=None, trims=None, map_path=DEFAULT_MAP):
+    """Joint targets in radians, actuator-indexed: a config's baseline plus per-joint trims.
+
+    The pose the robot balances in is a multi-joint offset, not a trim off straight, so
+    comparing sim against hardware requires posing sim at the same whole-body pose the
+    hardware held -- exactly what pose_sweep.py --baseline does on the robot. Trims are
+    applied in the SAME sign convention as the baseline, matching pose_sweep's
+    `u += sign * deg2rad(trim) * units_per_rad`, so a trim quoted from a probe can be
+    typed in here unchanged.
+    """
+    n = model.nu
+    q = np.zeros(n)
+    if config:
+        b = np.asarray(yaml.safe_load(open(config))["standing"]["residual_baseline"], float)
+        if b.shape[0] != n:
+            raise SystemExit(f"{config}: residual_baseline has {b.shape[0]} values, "
+                             f"expected {n}")
+        q += b
+    if trims:
+        dofs = [j["dof"] for j in yaml.safe_load(open(map_path))["joints"]]
+        for item in trims.split(","):
+            if not item.strip():
+                continue
+            name, _, deg = item.partition("=")
+            name = name.strip()
+            if name not in dofs:
+                raise SystemExit(f"unknown joint {name!r}; known: {', '.join(dofs)}")
+            q[dofs.index(name)] += np.deg2rad(float(deg))
+    return q
+
+
+def settle(model, pose="straight", drop=0.0, yaw=0.0, jitter=0.0, seed=0, seconds=4.0,
+           target=None):
     """Stand the model on the floor at `pose` and let the position servos hold it."""
     data = mujoco.MjData(model)
     if pose == "keyframe" and model.nkey:
@@ -42,6 +86,13 @@ def settle(model, pose="straight", drop=0.0, yaw=0.0, jitter=0.0, seed=0, second
     data.qpos[3] = np.cos(yaw / 2.0)
     data.qpos[6] = np.sin(yaw / 2.0)
     data.ctrl[:] = 0
+    if target is not None:
+        # Start AT the pose as well as commanding it. Starting straight and letting the
+        # servos drive there works, but the swing throws the robot off its feet before it
+        # settles, and the question here is what the pose does statically.
+        lo, hi = model.actuator_ctrlrange[:, 0], model.actuator_ctrlrange[:, 1]
+        data.ctrl[:] = np.clip(target, lo, hi)
+        data.qpos[act_qposadr(model)] = data.ctrl
     mujoco.mj_forward(model, data)
 
     # drop so the lowest possible foot vertex just clears the floor, then settle onto it
@@ -94,6 +145,20 @@ def forward_axis(model, data):
     return fwd / np.linalg.norm(fwd)
 
 
+def pelvis_attitude(model, data):
+    """Pelvis pitch and roll in degrees, from projected gravity.
+
+    Computed exactly as pose_sweep.py computes it from the IMU -- pg = R^T @ (0,0,-1), then
+    atan2(pg[0], -pg[2]) -- so the number printed here and the number the robot streams are
+    the same quantity and can be subtracted. Anything else (Euler angles off the quaternion,
+    say) would agree near upright and diverge exactly where it matters.
+    """
+    pelvis = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
+    pg = data.xmat[pelvis].reshape(3, 3).T @ np.array([0.0, 0.0, -1.0])
+    return (float(np.degrees(np.arctan2(pg[0], -pg[2]))),
+            float(np.degrees(np.arctan2(pg[1], -pg[2]))))
+
+
 def report(model, data, span_mm=80.0):
     feet = _foot_geoms(model)
     loads = contact_loads(model, data, feet)
@@ -104,6 +169,9 @@ def report(model, data, span_mm=80.0):
 
     print(f"pose settled: tilt cos {data.xmat[1].reshape(3, 3)[:, 2] @ [0, 0, 1]:.4f}, "
           f"root |v| {np.linalg.norm(data.qvel[:3]):.4f} m/s")
+    pitch, roll = pelvis_attitude(model, data)
+    print(f"  pelvis pitch {pitch:+6.2f} deg   roll {roll:+6.2f} deg   "
+          f"(+pitch = leaning FORWARD, same convention as pose_sweep.py)")
     if total <= 1e-6:
         print("NO GROUND CONTACT -- the robot is not standing; nothing to report.")
         return None
@@ -145,13 +213,33 @@ def main():
     p.add_argument("--span", type=float, default=80.0, help="heel-to-toe sensor spacing, mm")
     p.add_argument("--sweep", action="store_true",
                    help="re-run across settling conditions; CoP should not move")
+    p.add_argument("--baseline", default=None, metavar="CONFIG",
+                   help="pose at a config's standing.residual_baseline instead of straight, "
+                        "so sim holds the same whole-body pose the robot held under "
+                        "pose_sweep.py --baseline and the two are directly comparable")
+    p.add_argument("--trim", default=None, metavar="JOINT=DEG",
+                   help="comma-separated per-joint trims in degrees, applied on top of the "
+                        "baseline (e.g. waist_pitch=6). Same sign convention as pose_sweep, "
+                        "so a trim quoted from a probe transfers unchanged.")
     args = p.parse_args()
 
     model = mujoco.MjModel.from_xml_path(args.xml)
-    print(f"{args.xml}\nmass {model.body_mass.sum():.4f} kg, pose={args.pose}\n")
+    target = (load_pose(model, args.baseline, args.trim)
+              if (args.baseline or args.trim) else None)
+    print(f"{args.xml}\nmass {model.body_mass.sum():.4f} kg, pose={args.pose}")
+    if target is not None:
+        print(f"posed at {args.baseline or 'straight'}"
+              + (f" + {args.trim}" if args.trim else "")
+              + f"  (max |joint| {np.degrees(np.abs(target).max()):.1f} deg)")
+        lo, hi = model.actuator_ctrlrange[:, 0], model.actuator_ctrlrange[:, 1]
+        if np.any(target < lo - 1e-9) or np.any(target > hi + 1e-9):
+            bad = np.where((target < lo - 1e-9) | (target > hi + 1e-9))[0]
+            print(f"  !! CLIPPED by ctrlrange at actuator(s) {list(bad)} -- sim is NOT "
+                  "holding the pose you asked for")
+    print()
 
     if not args.sweep:
-        report(model, settle(model, args.pose, seconds=args.settle), args.span)
+        report(model, settle(model, args.pose, seconds=args.settle, target=target), args.span)
         return
 
     print(f"{'condition':18s} {'CoP mm':>8s}")
@@ -161,7 +249,7 @@ def main():
     vals = []
     for label, kw in conds:
         kw.setdefault("seconds", args.settle)
-        data = settle(model, args.pose, **kw)
+        data = settle(model, args.pose, target=target, **kw)
         feet = _foot_geoms(model)
         loads = contact_loads(model, data, feet)
         total = sum(f for g in feet for f, _ in loads[g])
