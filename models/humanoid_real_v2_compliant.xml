@@ -88,7 +88,7 @@
       <joint name="base_joint" type="free" />
       <body name="0003_9" pos="0.540429 -0.527466 0.983811">
         <inertial pos="0.019955 0.489201 -0.541609" mass="0.117744" fullinertia="8.7079e-05 8.7791e-05 3.7257e-05 3.6923e-08 1.2223e-07 -1.0681e-05" />
-        <joint name="Revolute 18" pos="0.04570 0.49810 -0.50814" axis="1 0 0" range="-1.5708 0.349066" actuatorfrcrange="-100 100" />
+        <joint name="Revolute 18" pos="0.0457 0.4911815 -0.50814" axis="1 0 0" range="-1.5708 0.349066" actuatorfrcrange="-100 100" />
         <body name="0003_11" pos="-0.437997 1.05685 -0.548399">
           <inertial pos="0.473030 -0.550624 -0.031976" mass="0.217164" fullinertia="1.3138e-04 1.3935e-04 8.3822e-05 7.0443e-08 5.5091e-06 -7.2835e-06" />
           <joint name="Revolute 26" pos="0.46038 -0.55657 -0.04412" axis="0 -0.013033 -0.999915" range="-1.5708 0.959931" actuatorfrcrange="-100 100" />
@@ -124,7 +124,7 @@
       </body>
       <body name="0003_1" pos="0.395242 0.737653 0.965035">
         <inertial pos="0.165737 -0.580924 -0.525375" mass="0.117744" fullinertia="8.7079e-05 8.8322e-05 3.6726e-05 3.3725e-08 -1.2315e-07 9.3490e-06" />
-        <joint name="Revolute 24" pos="0.13999 -0.58809 -0.48698" axis="-1 0 0" range="-1.5708 0.174533" actuatorfrcrange="-100 100" />
+        <joint name="Revolute 24" pos="0.13999 -0.5950085 -0.48698" axis="-1 0 0" range="-1.5708 0.174533" actuatorfrcrange="-100 100" />
         <body name="0003_3" pos="0.610997 -1.12513 -0.692973">
           <inertial pos="-0.430406 0.526371 0.129303" mass="0.217164" fullinertia="1.3148e-04 1.3946e-04 8.3801e-05 4.2058e-07 5.4986e-06 6.3895e-06" />
           <joint name="Revolute 28" pos="-0.44769 0.53181 0.11700" axis="0 -0.013033 -0.999915" range="-0.959931 1.5708" actuatorfrcrange="-100 100" />
