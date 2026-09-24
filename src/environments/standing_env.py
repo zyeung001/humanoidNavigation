@@ -265,6 +265,28 @@ class StandingEnv(gym.Wrapper):
         self.residual_baseline_rand = float(self.cfg.get('residual_baseline_rand', 0.0))
         self._res_base_ep = self.residual_baseline.copy()
 
+        # WIDE ACTION SPACE: expose a +-pi Box to the learner instead of the actuator
+        # ctrlrange, so SB3 stops clipping actions before this env ever sees them.
+        #
+        # WHY. SB3 clips every sampled action to action_space before env.step. With the
+        # space equal to ctrlrange, any output past a joint stop is cut upstream: it has no
+        # effect, so it has no gradient, and residual_saturation_penalty never sees it either
+        # -- it only sees what arrives here. Measured 9/24 on final_real_standing_stand
+        # (175M): four joints had drifted past their stops unchecked -- R_hip_roll +0.70
+        # (stop +0.349), R_elbow -0.69 and L_elbow +0.23 (both past straight), and
+        # L_shoulder_roll +0.62 against a ceiling of 0.0 that turned out to be a mis-set range
+        # in the MJCF. Every sim tool used model.predict(), which clips to the same stored
+        # space, so all four read as fine. The exported .npz does not clip, so the robot ran
+        # the true output and railed L_shoulder_roll within 0.2 s of starting.
+        #
+        # The real limits are still enforced -- here, in _process_action, in deploy order --
+        # so this changes what the LEARNER can see, not what the actuator can receive.
+        # Requires loading an older model with custom_objects={"action_space": ...}; see
+        # train_standing.py.
+        if bool(self.cfg.get('wide_action_space', False)):
+            n_act = self.env.action_space.shape
+            self.action_space = Box(low=-np.pi, high=np.pi, shape=n_act, dtype=np.float32)
+
         # Yaw-rate damping. Penalizes (base yaw rate)^2 to discourage the slow
         # in-place spin that proprioceptive obs can't correct via heading
         # (projected gravity is yaw-invariant) but CAN sense via the gyro
@@ -559,9 +581,21 @@ class StandingEnv(gym.Wrapper):
         # How far outside the clamp box each joint asked to go, this step. Measured against the
         # EPISODE baseline (_res_base_ep), not the nominal one, so residual_baseline_rand shifts
         # the box and the penalty together rather than charging the policy for the randomisation.
+        #
+        # The box is the residual box INTERSECTED with the joint's ctrlrange -- the region the
+        # command can actually reach. On 9/24 four joints had outputs beyond their joint range
+        # (R_hip_roll +0.70 against a +0.349 stop, the elbows past straight, L_shoulder_roll
+        # +0.62 against a mis-set 0.0 ceiling). Measuring against the residual box alone
+        # left [box edge .. joint stop] and everything past the stop penalty-free.
         if self.residual_sat_weight > 0.0 and np.any(self.residual_clamp > 0.0):
-            self._last_saturation = np.maximum(
-                np.abs(raw_in - self._res_base_ep) - self.residual_clamp, 0.0)
+            c_lo, c_hi = self.env.action_space.low, self.env.action_space.high
+            lo = np.maximum(self._res_base_ep - self.residual_clamp, c_lo)
+            hi = np.minimum(self._res_base_ep + self.residual_clamp, c_hi)
+            # A baseline so far past a stop that the two do not overlap would make lo > hi;
+            # collapse to the reachable point rather than charge an impossible target.
+            pin = np.clip(self._res_base_ep, c_lo, c_hi)
+            lo, hi = np.where(lo > hi, pin, lo), np.where(lo > hi, pin, hi)
+            self._last_saturation = np.maximum(lo - raw_in, 0.0) + np.maximum(raw_in - hi, 0.0)
         proc_action = self._process_action(np.asarray(action, dtype=np.float32))
         self._last_action_rate = proc_action - prev_applied
 
@@ -824,6 +858,15 @@ class StandingEnv(gym.Wrapper):
 
     def _process_action(self, action: np.ndarray) -> np.ndarray:
         """Process actions with optional smoothing, symmetry, and PD control."""
+        # Joint range FIRST, then the residual box -- the order deploy_standing.py uses
+        # (lines ~314-318: clip to range -> residual clamp -> EMA -> clip to range). With a
+        # ctrlrange-sized action space SB3 already did this clip upstream, so it is a no-op
+        # and old configs are byte-identical. With wide_action_space it is load-bearing:
+        # without it an elbow asked for -0.69 would be clamped to -0.2 by the residual box
+        # and carried into last_action, while the robot clamps it to 0 at the stop -- the
+        # two would feed the policy different observations for the same command.
+        low, high = self.env.action_space.low, self.env.action_space.high
+        action = np.clip(action, low, high)
         if np.any(self.residual_clamp > 0.0):
             action = np.clip(action, self._res_base_ep - self.residual_clamp,
                              self._res_base_ep + self.residual_clamp)

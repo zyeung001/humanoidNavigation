@@ -3,3 +3,5 @@ when,label,git,model,config,seed,held_out,quiet_steps,quiet_lean_deg,quiet_lean_
 2026-09-19 18:07,stand-155M-heldout,26c3d9a,models/final_real_standing_stand.zip,config/real_humanoid_stand.yaml,12345,1,1200,5.627,0.747,2.0,0.0231,4,1.0,0.993,1,1.0,0.994,1,0.875,0.524,5,0.375,0.521,13,0.25,0.518,5
 2026-09-19 18:13,stand-155M-heldout-inertiafix,1ecc944,models/final_real_standing_stand.zip,config/real_humanoid_stand.yaml,12345,1,1200,5.626,0.741,2.0,0.0231,4,1.0,0.993,1,1.0,0.994,1,0.875,0.522,5,0.375,0.51,13,0.25,0.518,5
 2026-09-19 18:26,stand-155M-legfix,233e7c1,models/final_real_standing_stand.zip,config/real_humanoid_stand.yaml,12345,0,1200,5.882,1.17,2.0,0.0304,3,1.0,0.993,1,1.0,0.991,1,0.875,0.535,5,0.5,0.515,12,0.25,0.524,13
+2026-09-21 19:03,stand-175M,21910f0,models/final_real_standing_stand.zip,config/real_humanoid_stand.yaml,12345,0,1200,3.005,0.3,2.0,0.0106,2,1.0,0.997,1,1.0,0.997,1,0.75,0.538,5,0.375,0.53,11,0.25,0.517,15
+2026-09-24 15:24,stand-175M-as-deployed,21910f0,models/final_real_standing_stand.zip,config/real_humanoid_stand.yaml,12345,0,1200,2.208,0.39,2.0,0.1031,3,1.0,0.997,1,1.0,0.996,1,0.75,0.55,4,0.375,0.545,12,0.375,0.521,17

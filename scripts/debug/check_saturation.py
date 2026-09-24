@@ -81,7 +81,11 @@ def main():
     venv = VecNormalize.load(str(PROJ / args.vecnorm), DummyVecEnv([lambda: env]))
     venv.training = False
     venv.norm_reward = False
-    model = PPO.load(str(PROJ / args.model), device="cpu")
+    # Bounds from the env, not the .zip: predict() clips to whatever space the model
+    # carries, and a ctrlrange-sized one hides every output past a joint stop. The robot's
+    # .npz does not clip, so without this the tool measures a different controller.
+    model = PPO.load(str(PROJ / args.model), device="cpu",
+                     custom_objects={"action_space": env.action_space})
 
     A = rollout(model, venv, args.episodes, args.steps)
     dofs = [j["dof"] for j in yaml.safe_load(open(MAP))["joints"]]

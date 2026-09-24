@@ -80,7 +80,10 @@ def build(cfg, vecnorm, model_path, seed):
     venv.training = False
     venv.norm_reward = False
     venv.seed(seed)
-    return env, venv, PPO.load(str(model_path), device="cpu")
+    # Bounds from the env so predict() returns what the robot's .npz returns -- see
+    # check_saturation.py. Otherwise the benchmark scores a clipped controller.
+    return env, venv, PPO.load(str(model_path), device="cpu",
+                               custom_objects={"action_space": env.action_space})
 
 
 def run_trial(model, venv, env, mj, bid, kick=None, steps=None, settle=SETTLE_STEPS):

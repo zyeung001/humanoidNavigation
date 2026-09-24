@@ -185,6 +185,34 @@ standing:
   # started. 150 puts the ceiling at 1.5 rad^2, out of reach.
   residual_saturation_penalty: 100.0
   residual_saturation_cap: 150.0
+
+  # ========== LET THE LEARNER SEE ITS OWN OUTPUT (new 9/24; the one change in this run) ======
+  # The 9/24 hardware run railed L_shoulder_roll at +0.2 within 0.2 s of starting while every
+  # sim tool said it sat at 0. Cause: SB3 clips each action to action_space BEFORE the env
+  # sees it, and action_space was the actuator ctrlrange. So any output past a joint stop was
+  # cut upstream -- no effect, no gradient, and invisible to residual_saturation_penalty,
+  # which only measures what arrives in the env. Four joints had drifted past their stops at
+  # 175M: R_hip_roll +0.70 (stop +0.349), R_elbow -0.69 and L_elbow +0.23 (past straight),
+  # L_shoulder_roll +0.62. The last was the only one to misbehave on hardware because its MJCF
+  # range was mis-set to [-2.0071, 0.0] -- physically 115 deg inward, 0 outward -- while the
+  # servo map correctly allows [-0.4363, +1.5708]. The .npz on the robot does not clip, so it
+  # ran the true +0.62; sim tools used predict(), which clips to the stored 0.0 ceiling.
+  #
+  # wide_action_space exposes +-pi to SB3; the env then clips to the joint range and the
+  # residual box itself, in deploy_standing.py's order, so nothing the actuator receives
+  # changes. The saturation penalty now measures against residual box INTERSECT ctrlrange, so
+  # every dead zone -- including past a joint stop -- costs something.
+  #
+  # EXPECT the penalty to start high. MEASURED at resume from 175M, closed loop: 58 per step
+  # (L_shoulder_roll 0.557 rad past its box, R_hip_roll 0.251, L_elbow 0.209, R_elbow 0.188,
+  # R_shoulder_roll 0.145) against a per-step reward near 60-70. The last run started near 16.
+  # It shrinks as the outputs come back in. Watch approx_kl and value_loss over the first
+  # ~1-2M steps: approx_kl past ~0.03 means stop and rerun at weight 30.
+  #
+  # ALSO REQUIRED, and easy to miss: VecNormalize.load restores the action_space pickled in
+  # the .pkl, which silently re-narrows the space on resume. train_standing.py now resets it
+  # from the env; any other script that resumes training must do the same.
+  wide_action_space: true
   yaw_rate_penalty: 30.0
 
   # ========== BALANCED STANCE ==========
