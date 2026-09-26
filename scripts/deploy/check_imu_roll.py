@@ -58,18 +58,27 @@ def main():
     imu.close()
 
     t, roll, pitch, avx = (np.array(c) for c in zip(*rows))
-    k = int(np.argmax(np.abs(roll)))
-    print(f"peak roll {roll[k]:+.1f} deg at t={t[k]:.1f}s   (pitch then {pitch[k]:+.1f} deg)")
-    if abs(roll[k]) < 5.0:
-        print("\nINCONCLUSIVE: the tilt never reached 5 deg. Run it again with a bigger tilt.")
+    # Only a SIDEWAYS tilt counts. The first version took the largest roll anywhere in the
+    # window, and on 9/26 that was a moment the robot was nearly horizontal (roll -74, pitch
+    # -65) -- where atan2(pg_y, -pg_z) is meaningless -- and it returned a confident verdict
+    # on it. Samples with much pitch are excluded, and so is anything past 45 deg.
+    side = (np.abs(pitch) < 25.0) & (np.abs(roll) < 45.0)
+    if not side.any() or np.max(np.abs(roll[side])) < 5.0:
+        print("\nINCONCLUSIVE: no clean sideways tilt of 5-45 deg with the robot otherwise upright.")
+        print("Keep it upright and tip it sideways only -- not forward or back -- about 15 deg.")
         return 2
-    # roll rate while tipping INTO the peak, not while coming back out of it
-    going = (t < t[k]) & (np.abs(roll) > 0.3 * abs(roll[k]))
-    rate = float(np.median(avx[going])) if going.any() else float("nan")
-    print(f"roll rate while tipping in: {rate:+.2f} rad/s")
+    k = int(np.flatnonzero(side)[np.argmax(np.abs(roll[side]))])
+    print(f"peak sideways roll {roll[k]:+.1f} deg at t={t[k]:.1f}s   (pitch then {pitch[k]:+.1f} deg)")
+    # roll rate while tipping INTO the peak: the strongest reading, not the median, which a
+    # slow tilt with long holds drags to zero (9/26 read -0.08 rad/s, i.e. nothing).
+    going = side & (t < t[k]) & (t > t[k] - 1.5)
+    rate = float(avx[going][np.argmax(np.abs(avx[going]))]) if going.any() else float("nan")
+    print(f"strongest roll rate while tipping in: {rate:+.2f} rad/s")
 
     roll_ok = roll[k] < 0
-    rate_ok = rate > 0 if np.isfinite(rate) else None
+    rate_ok = (rate > 0) if np.isfinite(rate) and abs(rate) > 0.2 else None
+    if rate_ok is None:
+        print("  (rate too small to judge -- tip it a little faster next time)")
     print("\nSim expects, for ITS RIGHT side down: roll NEGATIVE, roll rate POSITIVE.")
     print(f"  roll sign : {'MATCHES sim' if roll_ok else 'REVERSED vs sim'}")
     if rate_ok is not None:
