@@ -33,21 +33,21 @@ default_joint_pos: [-0.06023, 0.95993, -0.32092, 0.0292, -0.0185, 1.13261, -0.09
 
 joints:
   # ---- RIGHT LEG (roll, yaw, pitch, knee) -- DOF high-confidence via axis ----
-  - {idx: 0,  mjcf: "Revolute 18", dof: "R_hip_roll",   axis: x, sim_range: [-1.5708, 0.3491], servo_id: 4,  sign: +1, sign_verified: true, servo_limit: [411, 613]}
-  - {idx: 1,  mjcf: "Revolute 26", dof: "R_hip_yaw",    axis: z, sim_range: [-1.5708, 0.9599], servo_id: 5,  sign: +1, sign_verified: true, servo_limit: [411, 700]}  # hi widened: +55deg standing pose (6/21)
-  - {idx: 2,  mjcf: "Revolute 23", dof: "R_hip_pitch",  axis: y, sim_range: [-1.5708, 0.3491], servo_id: 6,  sign: -1, sign_verified: true, servo_limit: [411, 613]}
-  - {idx: 3,  mjcf: "Revolute 21", dof: "R_knee",       axis: y, sim_range: [-1.5708, 1.5708], servo_id: 7,  sign: -1, sign_verified: true,  servo_limit: [206, 512]}  # hinge, INVERTED
+  - {idx: 0,  mjcf: "Revolute 18", dof: "R_hip_roll",   axis: x, sim_range: [-1.5708, 0.3491], servo_id: 4,  sign: +1, sign_verified: true, servo_limit: [398, 600], center: 499}  # straight 499 (-13 from 512), measured 9/3
+  - {idx: 1,  mjcf: "Revolute 26", dof: "R_hip_yaw",    axis: z, sim_range: [-1.5708, 0.9599], servo_id: 5,  sign: +1, sign_verified: true, servo_limit: [402, 691], center: 503}  # straight 503 (-9), measured 9/3; hi span from the 6/21 widening
+  - {idx: 2,  mjcf: "Revolute 23", dof: "R_hip_pitch",  axis: y, sim_range: [-1.5708, 0.3491], servo_id: 6,  sign: -1, sign_verified: true, servo_limit: [412, 614], center: 513}  # straight 513 (+1), measured 9/3 -- the only one that was right
+  - {idx: 3,  mjcf: "Revolute 21", dof: "R_knee",       axis: y, sim_range: [-1.5708, 1.5708], servo_id: 7,  sign: -1, sign_verified: true,  servo_limit: [204, 520], center: 510}  # straight 510 = the one-sided stop, measured 9/3 (EEPROM has +10)  # widened to the EEPROM range: no stop exists at straight
 
   # ---- LEFT LEG ----
-  - {idx: 4,  mjcf: "Revolute 24", dof: "L_hip_roll",   axis: x, sim_range: [-1.5708, 0.1745], servo_id: 8,  sign: -1, sign_verified: true, servo_limit: [411, 613]}
-  - {idx: 5,  mjcf: "Revolute 28", dof: "L_hip_yaw",    axis: z, sim_range: [-0.9599, 1.5708], servo_id: 9,  sign: +1, sign_verified: true, servo_limit: [411, 735]}  # hi widened: +65deg standing pose (6/21)
-  - {idx: 6,  mjcf: "Revolute 25", dof: "L_hip_pitch",  axis: y, sim_range: [-1.5708, 0.3491], servo_id: 10, sign: +1, sign_verified: true, servo_limit: [411, 613]}
-  - {idx: 7,  mjcf: "Revolute 27", dof: "L_knee",       axis: y, sim_range: [-1.5708, 1.5708], servo_id: 11, sign: +1, sign_verified: true,  servo_limit: [512, 818]}  # hinge, normal
+  - {idx: 4,  mjcf: "Revolute 24", dof: "L_hip_roll",   axis: x, sim_range: [-1.5708, 0.1745], servo_id: 8,  sign: -1, sign_verified: true, servo_limit: [432, 634], center: 533}  # straight 533 (+21), measured 9/3
+  - {idx: 5,  mjcf: "Revolute 28", dof: "L_hip_yaw",    axis: z, sim_range: [-0.9599, 1.5708], servo_id: 9,  sign: +1, sign_verified: true, servo_limit: [384, 708], center: 485}  # straight 485 (-27), measured 9/3 -- the worst offset; hi from 6/21
+  - {idx: 6,  mjcf: "Revolute 25", dof: "L_hip_pitch",  axis: y, sim_range: [-1.5708, 0.3491], servo_id: 10, sign: +1, sign_verified: true, servo_limit: [395, 597], center: 496}  # straight 496 (-16), measured 9/3
+  - {idx: 7,  mjcf: "Revolute 27", dof: "L_knee",       axis: y, sim_range: [-1.5708, 1.5708], servo_id: 11, sign: +1, sign_verified: true,  servo_limit: [510, 826], center: 520}  # straight 520 = the one-sided stop, measured 9/3 (EEPROM has -10)  # widened to the EEPROM range: no stop exists at straight
 
   # ---- WAIST (roll, pitch, yaw) ----
-  - {idx: 8,  mjcf: "Revolute 22", dof: "waist_roll",   axis: x, sim_range: [-0.6109, 0.6109], servo_id: 3,  sign: -1, sign_verified: true, servo_limit: [411, 613], center: 485}  # physical-straight = 485 (hand re-zero 6/18), not 512
-  - {idx: 9,  mjcf: "Revolute 20", dof: "waist_pitch",  axis: y, sim_range: [-0.3491, 1.5708], servo_id: 2,  sign: +1, sign_verified: true, servo_limit: [411, 613]}
-  - {idx: 10, mjcf: "Revolute 19", dof: "waist_yaw",    axis: z, sim_range: [-1.5708, 1.5708], servo_id: 1,  sign: -1, sign_verified: true, servo_limit: [411, 613]}
+  - {idx: 8,  mjcf: "Revolute 22", dof: "waist_roll",   axis: x, sim_range: [-0.6109, 0.6109], servo_id: 3,  sign: -1, sign_verified: true, servo_limit: [420, 622], center: 494}  # straight 494 (+9 from the 6/18 hand re-zero of 485), measured 9/3
+  - {idx: 9,  mjcf: "Revolute 20", dof: "waist_pitch",  axis: y, sim_range: [-0.3491, 1.5708], servo_id: 2,  sign: +1, sign_verified: true, servo_limit: [387, 589], center: 488}  # straight 488 (-24), measured 9/3
+  - {idx: 10, mjcf: "Revolute 19", dof: "waist_yaw",    axis: z, sim_range: [-1.5708, 1.5708], servo_id: 1,  sign: -1, sign_verified: true, servo_limit: [427, 629], center: 528}  # straight 528 (+16), measured 9/3
 
   # ---- RIGHT ARM (shoulder-pitch, shoulder-roll, elbow) ----
   # RECONCILED on hardware 6/22 (probe_sign): physical chain top->bottom is
@@ -62,7 +62,15 @@ joints:
   - {idx: 11, mjcf: "Revolute 2",  dof: "R_shoulder_pitch", axis: y, sim_range: [-2.0944, 2.0944], servo_id: 12, sign: +1, sign_verified: true,  servo_limit: [279, 481], center: 380}  # + = arm back; straight=380 (-132 = -38.8deg off nominal)
   # 8/4: servos 13 and 14 are SWAPPED IN THEIR SLOTS -- the same rebuild fault as 16/17 on
   # the left arm, confirmed by probing idx 12 and 13 on hardware. Roll and elbow exchanged.
-  - {idx: 12, mjcf: "Revolute 6",  dof: "R_shoulder_roll",  axis: x, sim_range: [-1.5708, 0.4363], servo_id: 14, sign: +1, sign_verified: true,  servo_limit: [429, 631], center: 530}  # + = arm out; servo 13->14 (slot swap 8/4); straight=530 (+18)
+  # 8/5 sign FLIPPED +1 -> -1, pending the direction check on the next hardware run. The
+  # 8/4 rebuild swapped roll<->elbow between slots on both arms; that invalidated the zeros
+  # (re-measured 8/5) AND the signs, which still carried the 6/22 bench verification done on
+  # servos that now sit elsewhere. Sign is a horn-mounting property, so a slot swap
+  # invalidates it exactly as it invalidated the centres -- we fixed one consequence and left
+  # the other. Observed with sign +1: commanding sim "arm out" ADDUCTED both arms into the
+  # torso until they jammed. Sim is the trusted side (poses validated by rendering; sim
+  # arm-out = R negative / L positive roll).
+  - {idx: 12, mjcf: "Revolute 6",  dof: "R_shoulder_roll",  axis: x, sim_range: [-1.5708, 0.4363], servo_id: 14, sign: -1, sign_verified: false, servo_limit: [429, 631], center: 530}  # sim - = arm out; servo 13->14 (slot swap 8/4); straight=530 (+18)
   - {idx: 13, mjcf: "Revolute 1",  dof: "R_elbow",          axis: y, sim_range: [ 0.0000, 2.0944], servo_id: 13, sign: +1, sign_verified: true,  servo_limit: [418, 724], center: 418}  # hinge; + = forearm flex; servo 14->13 (slot swap 8/4); straight=418 (-94) IS the one-sided stop
 
   # ---- LEFT ARM ----  (same swap as right: roll=servo 16, elbow=servo 17; reconciled 6/22)
@@ -72,5 +80,12 @@ joints:
   # Confirmed on hardware: probing idx 15 (which the map sent to servo 16) articulated the
   # FOREARM relative to the upper arm, i.e. servo 16 physically sits in the elbow. Bus IDs
   # live in servo EEPROM, not in the cabling, so this is a slot swap, not a wiring error.
-  - {idx: 15, mjcf: "Revolute 5",  dof: "L_shoulder_roll",  axis: x, sim_range: [-2.0071, 0.0000], servo_id: 17, sign: +1, sign_verified: true,  servo_limit: [408, 610], center: 509}  # + = arm in; servo 16->17 (slot swap 8/4); straight=509 (-3)
+  # 8/5: sim_range corrected to match models/humanoid_real_v2_armfix.xml. It was
+  # [-2.0071, 0.0000] -- the mis-converted range found on 7/28 and fixed in the XML but never
+  # here. rad_to_units() clips to sim_range BEFORE converting (sim_real_map.py:72), so every
+  # positive (arm-out) command was silently clipped to exactly 0: the left arm had ZERO
+  # outward travel on hardware while the policy commanded +0.466 and the servo never moved.
+  # Same silent-clip class as the original XML bug. Safe for the standing track too: the
+  # residual clamp bounds that policy to +/-0.2 rad, well inside this range.
+  - {idx: 15, mjcf: "Revolute 5",  dof: "L_shoulder_roll",  axis: x, sim_range: [-0.4363, 1.5708], servo_id: 17, sign: -1, sign_verified: false, servo_limit: [408, 610], center: 509}  # sim + = arm out (mirror of R); flipped 8/5 with idx 12, see note above; straight=509 (-3)
   - {idx: 16, mjcf: "Revolute 3",  dof: "L_elbow",          axis: y, sim_range: [-2.0944, 0.0000], servo_id: 16, sign: +1, sign_verified: true,  servo_limit: [79, 385], center: 385}  # hinge; + = forearm flex; servo 17->16 (slot swap 8/4); straight=385 (-127) IS the one-sided stop

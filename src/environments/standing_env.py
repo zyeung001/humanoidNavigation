@@ -67,6 +67,7 @@ class StandingEnv(gym.Wrapper):
         # randomization is applied relative to nominal (not compounded).
         self._nominal_body_mass = None
         self._nominal_geom_friction = None
+        self._nominal_body_inertia = None
 
         # ======== sim2real robustness (all OFF by default => standard path unchanged) ========
         # Observation noise + per-episode sensor BIASES. A real IMU/encoder set has both
@@ -121,10 +122,25 @@ class StandingEnv(gym.Wrapper):
         self.actuator_lag = bool(self.cfg.get('actuator_lag', False))
         self.actuator_delay_ms = self.cfg.get('actuator_delay_ms', [30.0, 70.0])
         self.actuator_tau_ms = self.cfg.get('actuator_tau_ms', [90.0, 220.0])
+        # PER-SERVO profiles. Without these every joint in sim is the same servo, which is
+        # false on this robot: the 8/14 bench sweep measured dead time 41-67 ms and tau
+        # 17-94 ms across the 17 joints -- L_elbow is 46+17 ms, waist_pitch 52+57. A single
+        # sampled pair trains the policy on a machine that does not exist, and a policy that
+        # learns one lag cannot know which joints answer late. Point this at
+        # config/measured_actuator.yaml to give each joint its own measured profile,
+        # jittered per episode around ITS OWN value rather than across the global spread.
+        self.actuator_profiles = self.cfg.get('actuator_profiles', None)
+        self.actuator_profile_jitter = float(self.cfg.get('actuator_profile_jitter', 0.3))
+        self._prof_delay_ms = None
+        self._prof_tau_ms = None
+        if self.actuator_lag and self.actuator_profiles:
+            self._prof_delay_ms, self._prof_tau_ms = self._load_actuator_profiles(
+                self.actuator_profiles)
         self._control_dt = float(self.env.unwrapped.dt)   # 0.025 s (40 Hz) for the real model
         self._lag_buffer = None
         self._servo_state = None
         self._lag_alpha = 1.0
+        self._lag_delay_steps = None
 
         #Random height initialization for recovery training
         self.random_height_init = self.cfg.get('random_height_init', True)
@@ -193,6 +209,31 @@ class StandingEnv(gym.Wrapper):
         self._prev_raw_action = np.zeros(self.env.action_space.shape, dtype=np.float32)
         self._last_raw_action_rate = np.zeros(self.env.action_space.shape, dtype=np.float32)
 
+        # SATURATION penalty: charges how far the RAW network output sits OUTSIDE the residual
+        # clamp box. Off (0.0) reproduces the old reward exactly.
+        #
+        # WHY. np.clip is flat, so beyond the box edge the gradient with respect to the action
+        # is EXACTLY ZERO. A mean that wanders out therefore gets nothing pulling it back, and
+        # with log_std clamped at -2.0 (sigma ~0.135 rad) every sample lands outside too, so the
+        # joint freezes wherever it drifted and stops being a controller at all. Measured on
+        # final_real_standing_stand (9/5, 110M steps): 7 of 17 joints outside the box on more
+        # than half of all frames, waist_yaw on 100% of them at -34 deg against an 11.5 deg
+        # clamp, 42.5% of all joint-frames clipped. Posed statically in sim, that raw stance
+        # collapses -- tilt 0.085, 25% of weight on the feet -- so it is not a pose the policy
+        # is reaching for, it is a dead coordinate. The clip was the only thing standing.
+        #
+        # raw_action_rate_penalty makes it WORSE, not better: it charges the CHANGE in the raw
+        # action, so a mean parked far outside is the cheapest thing the policy can do. The
+        # existing penalty actively holds the pathology still.
+        #
+        # This term is deliberately on the RAW action only. What reaches the actuator is still
+        # the clipped value, byte for byte, so enabling this cannot change deployed behaviour --
+        # it can only change what the policy is taught to prefer. Quadratic, so the restoring
+        # gradient grows with the excursion and a mean 3 clamp-widths out is pulled hardest.
+        self.residual_sat_weight = float(self.cfg.get('residual_saturation_penalty', 0.0))
+        self.residual_sat_cap = float(self.cfg.get('residual_saturation_cap', 50.0))
+        self._last_saturation = np.zeros(self.env.action_space.shape, dtype=np.float32)
+
         # RESIDUAL mode (PD-baseline + bounded RL corrections): clamp the policy's action to
         # residual_baseline +/- residual_clamp before smoothing. The baseline is the settled
         # standing COMMAND (includes gravity-holding offsets, not just the pose), which stands
@@ -224,6 +265,28 @@ class StandingEnv(gym.Wrapper):
         self.residual_baseline_rand = float(self.cfg.get('residual_baseline_rand', 0.0))
         self._res_base_ep = self.residual_baseline.copy()
 
+        # WIDE ACTION SPACE: expose a +-pi Box to the learner instead of the actuator
+        # ctrlrange, so SB3 stops clipping actions before this env ever sees them.
+        #
+        # WHY. SB3 clips every sampled action to action_space before env.step. With the
+        # space equal to ctrlrange, any output past a joint stop is cut upstream: it has no
+        # effect, so it has no gradient, and residual_saturation_penalty never sees it either
+        # -- it only sees what arrives here. Measured 9/24 on final_real_standing_stand
+        # (175M): four joints had drifted past their stops unchecked -- R_hip_roll +0.70
+        # (stop +0.349), R_elbow -0.69 and L_elbow +0.23 (both past straight), and
+        # L_shoulder_roll +0.62 against a ceiling of 0.0 that turned out to be a mis-set range
+        # in the MJCF. Every sim tool used model.predict(), which clips to the same stored
+        # space, so all four read as fine. The exported .npz does not clip, so the robot ran
+        # the true output and railed L_shoulder_roll within 0.2 s of starting.
+        #
+        # The real limits are still enforced -- here, in _process_action, in deploy order --
+        # so this changes what the LEARNER can see, not what the actuator can receive.
+        # Requires loading an older model with custom_objects={"action_space": ...}; see
+        # train_standing.py.
+        if bool(self.cfg.get('wide_action_space', False)):
+            n_act = self.env.action_space.shape
+            self.action_space = Box(low=-np.pi, high=np.pi, shape=n_act, dtype=np.float32)
+
         # Yaw-rate damping. Penalizes (base yaw rate)^2 to discourage the slow
         # in-place spin that proprioceptive obs can't correct via heading
         # (projected gravity is yaw-invariant) but CAN sense via the gyro
@@ -254,9 +317,28 @@ class StandingEnv(gym.Wrapper):
         # (the v2 home keyframe is a bent standing pose, not all-zeros).
         m_unwrapped = self.env.unwrapped.model
         self.n_joints = int(m_unwrapped.nu)
+        # Address the ACTUATED joints through their actuators rather than assuming they are
+        # the first nu joints after the free joint. They always were, until the measured
+        # waist compliance had to be modelled: a passive spring joint inserted mid-tree
+        # shifts every qpos index after it, and qpos[7:7+nu] would then silently return a
+        # different set of joints -- the policy reading one joint while commanding another,
+        # with nothing to notice it. On a rigid model this resolves to exactly the old
+        # slice, which is asserted below.
+        self._jnt_of_act = m_unwrapped.actuator_trnid[:, 0]
+        self.act_qposadr = m_unwrapped.jnt_qposadr[self._jnt_of_act]
+        self.act_dofadr = m_unwrapped.jnt_dofadr[self._jnt_of_act]
+        n_passive = int(m_unwrapped.njnt - 1 - self.n_joints)
+        if n_passive == 0:
+            assert np.array_equal(self.act_qposadr, np.arange(7, 7 + self.n_joints)), \
+                "actuated joints are not the contiguous block they used to be"
+            assert np.array_equal(self.act_dofadr, np.arange(6, 6 + self.n_joints))
+        else:
+            print(f"  Model has {n_passive} passive joint(s); indexing actuated joints "
+                  f"via actuator transmission (qpos {list(self.act_qposadr)})")
+
         if m_unwrapped.nkey > 0:
             self.default_joint_pos = np.asarray(
-                m_unwrapped.key_qpos[0][7:7 + self.n_joints], dtype=np.float32
+                m_unwrapped.key_qpos[0][self.act_qposadr], dtype=np.float32
             )
         else:
             self.default_joint_pos = np.zeros(self.n_joints, dtype=np.float32)
@@ -360,10 +442,16 @@ class StandingEnv(gym.Wrapper):
             if self._nominal_body_mass is None:
                 self._nominal_body_mass = m.body_mass.copy()
                 self._nominal_geom_friction = m.geom_friction.copy()
-            m.body_mass[:] = self._nominal_body_mass * np.random.uniform(
-                self.rand_mass_range[0], self.rand_mass_range[1],
-                size=m.body_mass.shape
-            )
+                self._nominal_body_inertia = m.body_inertia.copy()
+            mass_scale = np.random.uniform(
+                self.rand_mass_range[0], self.rand_mass_range[1], size=m.body_mass.shape)
+            m.body_mass[:] = self._nominal_body_mass * mass_scale
+            # Inertia has to scale WITH mass. For a rigid body of fixed shape, I is linear
+            # in m, so scaling mass alone produced a body up to 20% heavier that was no
+            # harder to rotate -- a plant that cannot exist, rather than a plausible
+            # variation of the real robot. On a balance task, where every correction is
+            # rotational, that is the worst axis to be wrong on.
+            m.body_inertia[:] = self._nominal_body_inertia * mass_scale[:, None]
             m.geom_friction[:, 0] = self._nominal_geom_friction[:, 0] * np.random.uniform(
                 self.rand_friction_range[0], self.rand_friction_range[1],
                 size=m.geom_friction.shape[0]
@@ -400,13 +488,22 @@ class StandingEnv(gym.Wrapper):
         # discrete first-order coefficient alpha = 1 - exp(-dt/tau).
         if self.actuator_lag:
             dt = self._control_dt
-            delay_ms = np.random.uniform(self.actuator_delay_ms[0], self.actuator_delay_ms[1])
-            tau_ms = np.random.uniform(self.actuator_tau_ms[0], self.actuator_tau_ms[1])
-            delay_steps = max(0, int(round((delay_ms / 1000.0) / dt)))
-            self._lag_alpha = float(1.0 - np.exp(-dt / max(tau_ms / 1000.0, 1e-4)))
+            n = int(self.env.action_space.shape[0])
+            if self._prof_delay_ms is not None:
+                # Each joint jitters around its OWN measured profile. Randomising across the
+                # global 17-joint spread instead would tell the policy that any joint might
+                # be any servo, which is exactly the information the measurement removed.
+                j = self.actuator_profile_jitter
+                delay_ms = self._prof_delay_ms * np.random.uniform(1 - j, 1 + j, n)
+                tau_ms = self._prof_tau_ms * np.random.uniform(1 - j, 1 + j, n)
+            else:
+                delay_ms = np.full(n, np.random.uniform(*self.actuator_delay_ms[:2]))
+                tau_ms = np.full(n, np.random.uniform(*self.actuator_tau_ms[:2]))
+            self._lag_delay_steps = np.maximum(0, np.round(delay_ms / 1000.0 / dt)).astype(int)
+            self._lag_alpha = (1.0 - np.exp(-dt / np.maximum(tau_ms / 1000.0, 1e-4))).astype(np.float32)
+            depth = int(self._lag_delay_steps.max()) + 1
             zero = np.zeros(self.env.action_space.shape, dtype=np.float32)
-            self._lag_buffer = deque([zero.copy() for _ in range(delay_steps + 1)],
-                                     maxlen=delay_steps + 1)
+            self._lag_buffer = deque([zero.copy() for _ in range(depth)], maxlen=depth)
             self._servo_state = zero.copy()
 
         # Observation filter: sample this episode's EMA strengths + reset the filter states, so
@@ -481,6 +578,24 @@ class StandingEnv(gym.Wrapper):
         raw_in = np.asarray(action, dtype=np.float32).ravel()
         self._last_raw_action_rate = raw_in - self._prev_raw_action
         self._prev_raw_action = raw_in.copy()
+        # How far outside the clamp box each joint asked to go, this step. Measured against the
+        # EPISODE baseline (_res_base_ep), not the nominal one, so residual_baseline_rand shifts
+        # the box and the penalty together rather than charging the policy for the randomisation.
+        #
+        # The box is the residual box INTERSECTED with the joint's ctrlrange -- the region the
+        # command can actually reach. On 9/24 four joints had outputs beyond their joint range
+        # (R_hip_roll +0.70 against a +0.349 stop, the elbows past straight, L_shoulder_roll
+        # +0.62 against a mis-set 0.0 ceiling). Measuring against the residual box alone
+        # left [box edge .. joint stop] and everything past the stop penalty-free.
+        if self.residual_sat_weight > 0.0 and np.any(self.residual_clamp > 0.0):
+            c_lo, c_hi = self.env.action_space.low, self.env.action_space.high
+            lo = np.maximum(self._res_base_ep - self.residual_clamp, c_lo)
+            hi = np.minimum(self._res_base_ep + self.residual_clamp, c_hi)
+            # A baseline so far past a stop that the two do not overlap would make lo > hi;
+            # collapse to the reachable point rather than charge an impossible target.
+            pin = np.clip(self._res_base_ep, c_lo, c_hi)
+            lo, hi = np.where(lo > hi, pin, lo), np.where(lo > hi, pin, hi)
+            self._last_saturation = np.maximum(lo - raw_in, 0.0) + np.maximum(raw_in - hi, 0.0)
         proc_action = self._process_action(np.asarray(action, dtype=np.float32))
         self._last_action_rate = proc_action - prev_applied
 
@@ -517,7 +632,10 @@ class StandingEnv(gym.Wrapper):
         
         linear_vel = self.env.unwrapped.data.qvel[0:3]
         angular_vel = self.env.unwrapped.data.qvel[3:6]
-        joint_vel = self.env.unwrapped.data.qvel[6:]  # Joint velocities
+        # Actuated joints only: a passive spring DOF (compliant waist) is not something the
+        # policy commands, so charging its motion to the smoothness reward would penalise
+        # the policy for the bracket flexing.
+        joint_vel = self.env.unwrapped.data.qvel[self.act_dofadr]
         
         # Target height
         target_height = self.base_target_height
@@ -590,6 +708,17 @@ class StandingEnv(gym.Wrapper):
             )
         else:
             raw_action_rate_penalty = 0.0
+
+        # ==========  CLAMP-SATURATION PENALTY (keeps the gradient alive) ==========
+        # The only term that has any gradient beyond the box edge; see __init__ for why that
+        # matters. Capped like the rate penalties so one transient cannot spike value targets.
+        if self.residual_sat_weight > 0.0:
+            saturation_penalty = -min(
+                self.residual_sat_weight * float(np.sum(np.square(self._last_saturation))),
+                self.residual_sat_cap,
+            )
+        else:
+            saturation_penalty = 0.0
 
         # ==========  YAW-RATE DAMPING (anti-spin) ==========
         # angular_vel = qvel[3:6] (base frame); [2] is yaw rate. Penalize its
@@ -697,6 +826,7 @@ class StandingEnv(gym.Wrapper):
             sustained_bonus +
             action_rate_penalty +
             raw_action_rate_penalty +
+            saturation_penalty +
             yaw_rate_penalty +
             stance_reward +
             termination_penalty
@@ -728,6 +858,15 @@ class StandingEnv(gym.Wrapper):
 
     def _process_action(self, action: np.ndarray) -> np.ndarray:
         """Process actions with optional smoothing, symmetry, and PD control."""
+        # Joint range FIRST, then the residual box -- the order deploy_standing.py uses
+        # (lines ~314-318: clip to range -> residual clamp -> EMA -> clip to range). With a
+        # ctrlrange-sized action space SB3 already did this clip upstream, so it is a no-op
+        # and old configs are byte-identical. With wide_action_space it is load-bearing:
+        # without it an elbow asked for -0.69 would be clamped to -0.2 by the residual box
+        # and carried into last_action, while the robot clamps it to 0 at the stop -- the
+        # two would feed the policy different observations for the same command.
+        low, high = self.env.action_space.low, self.env.action_space.high
+        action = np.clip(action, low, high)
         if np.any(self.residual_clamp > 0.0):
             action = np.clip(action, self._res_base_ep - self.residual_clamp,
                              self._res_base_ep + self.residual_clamp)
@@ -743,8 +882,8 @@ class StandingEnv(gym.Wrapper):
 
         if self.enable_pd_assist and (self.pd_kp > 0.0 or self.pd_kd > 0.0):
             try:
-                qpos = self.env.unwrapped.data.qpos[7:7+action.shape[-1]]
-                qvel = self.env.unwrapped.data.qvel[6:6+action.shape[-1]]
+                qpos = self.env.unwrapped.data.qpos[self.act_qposadr]
+                qvel = self.env.unwrapped.data.qvel[self.act_dofadr]
                 pd = (-self.pd_kp * qpos) + (-self.pd_kd * qvel)
                 action = np.clip(action + pd, -1.0, 1.0)
             except (AttributeError, IndexError):
@@ -759,6 +898,46 @@ class StandingEnv(gym.Wrapper):
         self.prev_action = action.copy()
         return action
 
+    def _load_actuator_profiles(self, spec):
+        """Per-joint (delay_ms, tau_ms) from a measured profile file, in ACTION order.
+
+        The profile is keyed by joint name; the action vector is ordered by actuator index.
+        Getting that correspondence wrong would silently give every joint a neighbour's
+        dynamics, so the order is taken from joint_servo_map.yaml -- the same file the deploy
+        loop uses to decide which servo an action element drives -- rather than from whatever
+        order the profile happens to be written in.
+
+        Joints the profile marks `valid: false` fall back to the global range. waist_roll is
+        marked that way on purpose: it is mechanically resonant, its first-order fit does not
+        describe it, and its 5.9 ms "dead time" is an artefact of the overshoot.
+        """
+        import yaml
+        path = spec if isinstance(spec, str) else spec.get("path")
+        prof = yaml.safe_load(open(path))["joints"]
+        map_path = self.cfg.get("joint_map", "config/joint_servo_map.yaml")
+        order = [j["dof"] for j in yaml.safe_load(open(map_path))["joints"]]
+        n = int(self.env.action_space.shape[0])
+        if len(order) != n:
+            raise ValueError(f"{map_path} lists {len(order)} joints but the action space is {n}")
+        d_mid = float(np.mean(self.actuator_delay_ms[:2]))
+        t_mid = float(np.mean(self.actuator_tau_ms[:2]))
+        delay = np.full(n, d_mid)
+        tau = np.full(n, t_mid)
+        used = skipped = 0
+        for i, dof in enumerate(order):
+            e = prof.get(dof)
+            if not e or not e.get("valid", True):
+                skipped += 1
+                continue
+            delay[i] = float(e["delay_ms"])
+            tau[i] = float(e["tau_ms"])
+            used += 1
+        print(f"  Actuator profiles from {path}: {used}/{n} joints measured"
+              + (f", {skipped} fell back to the global range" if skipped else ""))
+        print(f"    delay {delay.min():.0f}-{delay.max():.0f} ms, tau {tau.min():.0f}-{tau.max():.0f} ms"
+              f", jitter +-{100*self.actuator_profile_jitter:.0f}% per episode")
+        return delay, tau
+
     def _apply_actuator_lag(self, cmd: np.ndarray) -> np.ndarray:
         """Model the real servo: dead-time delay then first-order lag toward the command.
 
@@ -767,7 +946,13 @@ class StandingEnv(gym.Wrapper):
         mechanical time constant (and, implicitly, the ~2 rad/s slew ceiling). Clipped to the
         action range so the lagged signal is always a valid actuator command."""
         self._lag_buffer.append(cmd.copy())
-        delayed = self._lag_buffer[0]            # oldest sample = command from delay_steps ago
+        # Per-joint dead time: joint i reads the command from its OWN delay_steps[i] ago, so a
+        # 46 ms elbow and a 67 ms hip yaw are different servos in the same robot rather than
+        # one shared delay line.
+        idx = len(self._lag_buffer) - 1 - self._lag_delay_steps
+        np.clip(idx, 0, len(self._lag_buffer) - 1, out=idx)
+        buf = np.asarray(self._lag_buffer)
+        delayed = buf[idx, np.arange(buf.shape[1])]
         self._servo_state = self._servo_state + self._lag_alpha * (delayed - self._servo_state)
         low, high = self.env.action_space.low, self.env.action_space.high
         return np.clip(self._servo_state, low, high).astype(np.float32)
@@ -876,9 +1061,9 @@ class StandingEnv(gym.Wrapper):
         # base angular velocity, free-joint local frame (matches IMU gyro)
         base_ang_vel = np.asarray(data.qvel[3:6], dtype=np.float32)
         # joint angles relative to home pose (encoder-minus-home on hardware)
-        jpos = np.asarray(data.qpos[7:7 + self.n_joints], dtype=np.float32) - self.default_joint_pos
+        jpos = np.asarray(data.qpos[self.act_qposadr], dtype=np.float32) - self.default_joint_pos
         # joint velocities (finite-difference of encoders on hardware)
-        jvel = np.asarray(data.qvel[6:6 + self.n_joints], dtype=np.float32)
+        jvel = np.asarray(data.qvel[self.act_dofadr], dtype=np.float32)
         # last applied (smoothed) action
         last_action = np.asarray(self.prev_action, dtype=np.float32).ravel()
 

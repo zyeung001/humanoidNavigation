@@ -22,6 +22,7 @@ import yaml
 import numpy as np
 import torch
 from stable_baselines3 import PPO
+from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 from stable_baselines3.common.callbacks import CallbackList, BaseCallback
 
@@ -48,6 +49,12 @@ def make_env_fns(n_envs: int, seed: int, cfg: dict):
         def _init():
             configure_mujoco_gl()
             env = factory(render_mode=None, config=cfg)
+            # Monitor populates info["episode"] with the return and length of each finished
+            # episode. Without it nothing downstream can see them: SB3's own rollout table
+            # shows no ep_len_mean, and JsonlMetricsCallback's episode/* keys never appear
+            # because its deques stay empty. 155M steps were trained with no record of the
+            # one quantity that IS the standing objective -- how long it stays up.
+            env = Monitor(env)
             if hasattr(env, 'reset'):
                 env.reset(seed=seed + rank)
             try:
@@ -172,6 +179,13 @@ def main():
         try:
             print(f"Attempting to load VecNormalize from: {env_load_path}")
             env = VecNormalize.load(env_load_path, vec)
+            # VecNormalize.load unpickles the wrapper whole, including the action_space it
+            # had when it was SAVED, and does not refresh it from the env underneath. So a
+            # .pkl from a run on the old ctrlrange-sized space silently narrows the space
+            # again, SB3 clips to it, and wide_action_space does nothing -- with no error.
+            # Found 9/24 by tracing: env +-pi, VecNormalize +0.349. The normalizer owns
+            # observation statistics, not action bounds; take the bounds from the env.
+            env.action_space = vec.action_space
             vecnorm_loaded = True
             print("✓ Successfully loaded VecNormalize statistics")
             print(f"  - Mean: {env.obs_rms.mean[:5]}...")
@@ -231,7 +245,13 @@ def main():
     if resume:
         try:
             print(f"Loading model from: {args.model}")
-            model = PPO.load(args.model, env=env, device=device)
+            # The action space's BOUNDS belong to the env, not the weights -- the network's
+            # output layer is 17 wide whatever the bounds say. Taking them from the env lets
+            # a model trained on the old ctrlrange-sized space resume under
+            # wide_action_space (or after a range correction in the MJCF) instead of failing
+            # SB3's space check. A changed SHAPE still fails, as it should.
+            model = PPO.load(args.model, env=env, device=device,
+                             custom_objects={"action_space": env.action_space})
             
             # Update schedules for continued training
             model.learning_rate = lr_fn
@@ -252,9 +272,14 @@ def main():
             print(f"  Will train for {remaining_timesteps:,} more steps to reach {total_timesteps:,} total")
             
         except Exception as e:
-            print(f"✗ Failed to load model: {e}")
-            print("  Starting fresh training instead...")
-            resume = False
+            # REFUSE rather than fall back. This used to print "Starting fresh training
+            # instead..." and train a brand-new model from zero, silently discarding the
+            # --model that was asked for -- a 175M-step run lost to one line scrolling past.
+            # Asking to resume and getting a fresh start is never what was meant.
+            print(f"✗ Failed to load model {args.model}: {e}")
+            print("  NOT starting fresh -- that would silently discard the model you asked")
+            print("  to resume. Fix the load, or omit --model to train from scratch on purpose.")
+            sys.exit(1)
     
     if not resume:
         model = PPO(

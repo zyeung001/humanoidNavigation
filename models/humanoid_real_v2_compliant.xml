@@ -160,8 +160,13 @@
       </body>
       <body name="0003_6" pos="0.482752 -0.417042 1.07481">
         <inertial pos="0.085091 0.477962 -0.560107" mass="0.154732" fullinertia="6.2717e-05 8.7002e-05 6.2619e-05 -3.8531e-07 -1.0349e-05 -1.3163e-06" />
-        <joint name="Revolute 22" pos="0.05248 0.47970 -0.58852" axis="-1 0 0" range="-0.610865 0.610865" actuatorfrcrange="-100 100" />
-        <body name="0003_7" pos="-0.472252 0.395027 0.010165">
+        <joint name="Revolute 22" pos="0.05248 0.47970 -0.58852" axis="-1 0 0" range="-0.610865 0.610865" actuatorfrcrange="-100 100" armature="0.0437" damping="0" />
+        <geom class="visual" mesh="0003_6" pos="-0.482752 0.417042 -1.07481" quat="1 0 0 0" />
+        <geom class="visual" mesh="XYWaist_1" pos="-0.482752 0.417042 -1.07481" quat="1 0 0 0" />
+        <geom class="visual" mesh="0004_4" pos="-0.482752 0.417042 -1.07481" quat="1 0 0 0" />
+        <geom class="visual" mesh="Servo_SC15_1" pos="-0.482752 0.417042 -1.07481" quat="1 0 0 0" />
+        <geom class="collision" type="box" pos="0.08313 0.47849 -0.56513" quat="0.50202 0.49797 0.50202 0.49797" size="0.02555 0.03237 0.03265" />
+      <body name="waist_flex_roll" pos="0 0 0"><inertial pos="0 0 0" mass="1e-5" diaginertia="1e-9 1e-9 1e-9" /><joint name="waist_flex_roll_j" pos="0.05248 0.47970 -0.58852" axis="-1 0 0" range="-0.5 0.5" stiffness="1.551" damping="0.0566" armature="0" actuatorfrcrange="-100 100" /><body name="0003_7" pos="-0.472252 0.395027 0.010165">
           <inertial pos="0.562558 0.083961 -0.514154" mass="0.117680" fullinertia="9.0400e-05 9.2508e-05 4.2372e-05 -6.3421e-08 -1.2598e-05 -3.9081e-07" />
           <joint name="Revolute 20" pos="0.55329 0.05789 -0.55354" axis="0 -0.999979 0.006517" range="-0.349066 1.5708" actuatorfrcrange="-100 100" />
           <body name="0003_8" pos="0 0.677737 -0.408133">
@@ -241,12 +246,7 @@
           <geom class="visual" mesh="Servo_SC15_2" pos="-0.0105 0.022015 -1.08498" quat="1 0 0 0" />
           <geom class="collision" type="capsule" pos="0.56602 0.08395 -0.51365" quat="0.00000 -0.00000 -0.00326 -0.99999" size="0.02672 0.02259" />
         </body>
-        <geom class="visual" mesh="0003_6" pos="-0.482752 0.417042 -1.07481" quat="1 0 0 0" />
-        <geom class="visual" mesh="XYWaist_1" pos="-0.482752 0.417042 -1.07481" quat="1 0 0 0" />
-        <geom class="visual" mesh="0004_4" pos="-0.482752 0.417042 -1.07481" quat="1 0 0 0" />
-        <geom class="visual" mesh="Servo_SC15_1" pos="-0.482752 0.417042 -1.07481" quat="1 0 0 0" />
-        <geom class="collision" type="box" pos="0.08313 0.47849 -0.56513" quat="0.50202 0.49797 0.50202 0.49797" size="0.02555 0.03237 0.03265" />
-      </body>
+        </body></body>
       <geom class="visual" mesh="base_link" pos="0 0 0" quat="1 0 0 0" />
       <geom class="visual" mesh="0004_1" pos="0 0 0" quat="1 0 0 0" />
       <geom class="visual" mesh="Servo_SC15_7" pos="0 0 0" quat="1 0 0 0" />
@@ -297,7 +297,7 @@
     <position name="Revolute 28" joint="Revolute 28" kp="12.0" kv="2.0" ctrlrange="-0.9599 1.5708" forcerange="-1.47 1.47" />
     <position name="Revolute 25" joint="Revolute 25" kp="12.0" kv="2.0" ctrlrange="-1.5708 0.3491" forcerange="-1.47 1.47" />
     <position name="Revolute 27" joint="Revolute 27" kp="12.0" kv="2.0" ctrlrange="-1.5708 1.5708" forcerange="-1.47 1.47" />
-    <position name="Revolute 22" joint="Revolute 22" kp="12.0" kv="2.0" ctrlrange="-0.6109 0.6109" forcerange="-1.47 1.47" />
+    <position name="Revolute 22" joint="Revolute 22" kp="8.81" kv="0.642" ctrlrange="-0.6109 0.6109" forcerange="-1.47 1.47" />
     <position name="Revolute 20" joint="Revolute 20" kp="12.0" kv="2.0" ctrlrange="-0.3491 1.5708" forcerange="-1.47 1.47" />
     <position name="Revolute 19" joint="Revolute 19" kp="12.0" kv="2.0" ctrlrange="-1.5708 1.5708" forcerange="-1.47 1.47" />
     <position name="Revolute 2" joint="Revolute 2" kp="5.0" kv="0.5" ctrlrange="-2.0944 2.0944" forcerange="-0.226 0.226" />

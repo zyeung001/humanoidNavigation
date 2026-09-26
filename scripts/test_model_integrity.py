@@ -79,12 +79,22 @@ def main(xml_path):
                          f"{m.nbody-1} bodies all articulated" if not welded
                          else f"bodies with no joint: {welded}"))
 
-    # 2d. DOF inventory + every joint actuated
+    # 2d. DOF inventory + every joint actuated.
+    # A hinge with nonzero stiffness is a modelled SPRING, not a joint someone forgot to
+    # actuate -- the compliant-waist model (scripts/debug/make_compliant_waist.py) adds one
+    # on purpose to carry the bracket flex measured on hardware. Exempt those and keep the
+    # check meaningful for everything else, rather than deleting an invariant that has
+    # caught real conversion faults.
     HINGE = mujoco.mjtJoint.mjJNT_HINGE
     n_hinge = int((m.jnt_type == HINGE).sum())
     n_free = int((m.jnt_type == mujoco.mjtJoint.mjJNT_FREE).sum())
-    results.append(check("every articulated joint is actuated", m.nu == n_hinge,
-                         f"{n_hinge} hinges, {n_free} free, {m.nu} actuators"))
+    passive = [m.joint(j).name for j in range(m.njnt)
+               if m.jnt_type[j] == HINGE and m.jnt_stiffness[j] > 0]
+    detail = f"{n_hinge} hinges, {n_free} free, {m.nu} actuators"
+    if passive:
+        detail += f"; {len(passive)} passive spring joint(s) exempt: {passive}"
+    results.append(check("every articulated joint is actuated or a declared spring",
+                         m.nu == n_hinge - len(passive), detail))
 
     # 3. inertial sanity (mass > 0, radius of gyration not wildly inflated)
     bad_mass, inflated = [], []
