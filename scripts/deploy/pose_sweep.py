@@ -297,8 +297,10 @@ def main():
                     where = ("FORWARD" if ln > args.upright_deg else
                              "BACKWARD" if ln < -args.upright_deg else "UPRIGHT")
                     ctxt = "  --  " if c is None else f"{c - args.cop_offset:+6.1f}"
-                    side = ("RIGHT" if roll > args.upright_deg else
-                            "LEFT " if roll < -args.upright_deg else "     ")
+                    # roll + = the robot's LEFT (verified on hardware 9/26 against the gyro).
+                    # This used to print RIGHT for +, i.e. the wrong side.
+                    side = ("LEFT " if roll > args.upright_deg else
+                            "RIGHT" if roll < -args.upright_deg else "     ")
                     off = f"{dead} UP " if dead else "       "
                     print(f"\r  pitch {ln:+6.1f} {where:8s} roll {roll:+6.1f} {side} "
                           f"CoP {ctxt} mm {off} load {1000*tot:5.2f} mS  upright {held:4.1f}s  ",

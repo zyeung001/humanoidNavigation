@@ -105,6 +105,85 @@ def fsr_conductance(volts, rfixed, vcc):
     return np.where(np.isfinite(volts), g, np.nan)
 
 
+PUSH_RATE = 0.5         # rad/s of body rotation: well above quiet standing (~0.09 on 9/24)
+CALM_RATE = 0.2         # ...and back under this, for CALM_S, counts as stopped moving
+CALM_S = 0.5
+HOME_DEG = 3.0          # back within this of where it stood before the push = recovered
+
+
+def push_report(t, pitch, roll, pg, rows, end, v0, v1, args):
+    """One line per disturbance: how hard, which way, and whether it came back by itself.
+
+    "Did it correct itself" has two failure modes that look like success from across the
+    room. It can stop moving somewhere else -- on 9/24 it settled 3.4 deg further back after
+    a burst of touches, which is surviving, not correcting. And a hand can do the
+    correcting: during every 9/24 disturbance the instrumented foot lost most of its load,
+    which a supporting hand produces -- but so does the foot rolling onto an edge, since the
+    sensors sit on two small pads. So the foot column reports what the sensors saw and does
+    not claim to know which. The protocol has to make it unambiguous: tap, hands off.
+    """
+    av = np.linalg.norm(np.array([col(rows, f"av_{a}") for a in "xyz"]), axis=0)
+    has_fsr = np.isfinite(v0).any() or np.isfinite(v1).any()
+    if has_fsr:
+        load = (np.nan_to_num(fsr_conductance(v0, args.rfixed, args.vcc))
+                + np.nan_to_num(fsr_conductance(v1, args.rfixed, args.vcc)))
+    busy = np.isfinite(av) & (av > PUSH_RATE)
+    if not busy[:end].any():
+        return None
+    calm_n = max(1, int(round(CALM_S / max(float(np.median(np.diff(t))), 1e-3))))
+    # Normal standing load = the median over every calm frame before any tip. Taking only
+    # the frames before the first disturbance landed inside the startup ramp on 9/24 and
+    # left the foot column blank.
+    quiet_ref = (np.arange(len(t)) < end) & (av < CALM_RATE) & (t > t[0] + 3.0)
+    if has_fsr:
+        quiet_ref &= load > 0
+    ref_load = float(np.median(load[quiet_ref])) if has_fsr and quiet_ref.any() else None
+
+    lines, i, n_home, n_else, n_never = [], 0, 0, 0, 0
+    while i < end:
+        if not busy[i]:
+            i += 1
+            continue
+        j = i                                    # end of the disturbance: rotation dies down
+        while j < end and np.any(busy[j:j + calm_n]):
+            j += 1
+        pre = slice(max(0, i - 2 * calm_n), i)
+        p0, r0 = float(np.nanmedian(pitch[pre])), float(np.nanmedian(roll[pre]))
+        dp, dr = pitch[i:j + 1] - p0, roll[i:j + 1] - r0
+        k = int(np.nanargmax(np.hypot(dp, dr)))
+        size = float(np.hypot(dp[k], dr[k]))
+        # pitch + = forward; roll + = the robot's LEFT (sim convention, verified on hardware
+        # 9/26 against the gyro on two runs)
+        way = (("forward" if dp[k] > 0 else "back") if abs(dp[k]) >= abs(dr[k])
+               else ("to its left" if dr[k] > 0 else "to its right"))
+        foot = ""
+        if ref_load:
+            low = float(np.min(load[i:j + 1])) < 0.3 * ref_load
+            foot = "   foot unloaded (hand, or foot on its edge)" if low else "   foot kept its load"
+        # where it ends up once it has actually stopped: search from the END of this push
+        s = next((m for m in range(j, max(j, end - calm_n))
+                  if np.all(av[m:m + calm_n] < CALM_RATE)), None)
+        if s is None:
+            verdict = "did NOT settle before the run ended"
+            n_never += 1
+        else:
+            off = float(np.hypot(np.nanmedian(pitch[s:s + calm_n]) - p0,
+                                 np.nanmedian(roll[s:s + calm_n]) - r0))
+            if off <= HOME_DEG:
+                verdict = f"came back in {t[s] - t[i]:.1f}s"
+                n_home += 1
+            else:
+                verdict = f"stopped {off:.1f} deg away from where it was"
+                n_else += 1
+        lines.append(f"t={t[i]:5.1f}s  {size:5.1f} deg {way:12s} {verdict}{foot}")
+        i = j + calm_n
+    total = n_home + n_else + n_never
+    lines.append(f"-> {n_home} of {total} came back to where they started, {n_else} stopped "
+                 f"somewhere else, {n_never} never settled"
+                 + ("; it tipped over" if end < len(t) else "; it never tipped over"))
+    return lines
+
+
 def main():
     p = argparse.ArgumentParser(description="Turn a frame log into a timeline of events")
     p.add_argument("log")
@@ -144,7 +223,7 @@ def main():
         i = int(np.argmax(tipped))
         way = ("FORWARD" if pitch[i] > abs(roll[i]) else
                "BACKWARD" if -pitch[i] > abs(roll[i]) else
-               "RIGHT" if roll[i] > 0 else "LEFT")
+               "to its LEFT" if roll[i] > 0 else "to its RIGHT")
         events.append((t[i], f"TIPPED OVER {way} (upright_cos {up[i]:.2f}, "
                              f"pitch {pitch[i]:+.1f} roll {roll[i]:+.1f}) "
                              f"-- nothing after this is a standing measurement"))
@@ -155,7 +234,10 @@ def main():
         for lo, hi in runs_where(np.abs(sig) > args.lean_deg, t[:end], SETTLE_S):
             seg = sig[lo:hi + 1]
             k = lo + int(np.argmax(np.abs(seg)))
-            way = {"pitch": ("FORWARD", "BACKWARD"), "roll": ("RIGHT", "LEFT")}[name]
+            # roll + = the robot's LEFT (sim convention; verified on hardware 9/26 against the gyro
+            # on two runs). This used to say RIGHT, which is how a fall to its left got reported
+            # as a fall to its right.
+            way = {"pitch": ("FORWARD", "BACKWARD"), "roll": ("to its LEFT", "to its RIGHT")}[name]
             events.append((t[lo], f"leaned {way[0] if sig[k] > 0 else way[1]} past "
                                   f"{args.lean_deg:.0f} deg for {t[hi] - t[lo]:.1f}s, "
                                   f"peak {sig[k]:+.1f} deg at t={t[k]:.1f}"))
@@ -204,6 +286,8 @@ def main():
                                       f"for {t[hi] - t[lo]:.1f}s -- the servo clips this "
                                       f"silently, with no force and no error"))
 
+    pushes = push_report(t, pitch, roll, pg, rows, end, v0, v1, args)
+
     # ---- loop and bus health --------------------------------------------------------
     notes = []
     lm = col(rows, "loop_ms")
@@ -234,6 +318,11 @@ def main():
     else:
         print("  Nothing notable: no tip, no sustained lean, no joint failed to follow,")
         print("  no command hit a servo limit.")
+
+    if pushes:
+        print("\n  PUSHES -- did it correct itself?")
+        for line in pushes:
+            print(f"    {line}")
 
     if notes:
         print("\n  RIG HEALTH")
