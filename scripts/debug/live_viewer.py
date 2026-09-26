@@ -67,7 +67,13 @@ def tilt_quat(pg):
         return np.array([1.0, 0.0, 0.0, 0.0]) if g[2] < 0 else np.array([0.0, 1.0, 0.0, 0.0])
     axis /= s
     ang = np.arctan2(s, float(np.dot(down, g)))
-    return np.concatenate([[np.cos(ang / 2)], np.sin(ang / 2) * axis])
+    # CONJUGATE, because pg is gravity in the BODY frame: the root orientation R we want
+    # satisfies R^T @ down = pg, i.e. R rotates pg onto down. The rotation built above takes
+    # down onto pg -- that is R^T, not R. Returning it unconjugated drew every tilt MIRRORED
+    # on both axes (a 10 deg forward lean drawn as 10 deg back, left as right), from the day
+    # this viewer was written on 8/14 until a round-trip test caught it on 9/26: pose a known
+    # tilt, read what the IMU would report, reconstruct from that, compare.
+    return np.concatenate([[np.cos(ang / 2)], -np.sin(ang / 2) * axis])
 
 
 class Poser:
