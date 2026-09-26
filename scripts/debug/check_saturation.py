@@ -99,8 +99,12 @@ def main():
     print(f"{'joint':18s} {'% outside':>10s} {'wants':>9s}")
     print("-" * 42)
     for i in np.argsort(-frac):
-        flag = ("  <-- PINNED, not learning" if frac[i] > 0.5 else
-                "  <-- pressing" if frac[i] > 0.1 else "")
+        # "not learning" is only true when nothing charges the dead zone. With the penalty
+        # on, a pinned joint is being pulled in -- saying otherwise sent 9/26 chasing a
+        # non-problem on joints that were converging.
+        pinned_lbl = ("  <-- PINNED, not learning" if float(cfg.get("residual_saturation_penalty", 0.0)) <= 0
+                      else "  <-- PINNED (penalty pulling it in)")
+        flag = (pinned_lbl if frac[i] > 0.5 else "  <-- pressing" if frac[i] > 0.1 else "")
         print(f"{dofs[i]:18s} {100 * frac[i]:9.1f}% {np.degrees(want[i]):+8.1f}d{flag}")
 
     pinned = int((frac > 0.5).sum())
