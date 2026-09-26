@@ -148,8 +148,17 @@ def push_report(t, pitch, roll, pg, rows, end, v0, v1, args):
         while j < end and np.any(busy[j:j + calm_n]):
             j += 1
         pre = slice(max(0, i - 2 * calm_n), i)
+        # A disturbance at the very start of the log has no "before" to measure against --
+        # 9/26 13:52 opened with the robot already moving and crashed this on an empty
+        # window. Skip it rather than invent a reference attitude.
+        if i < calm_n or not np.isfinite(pitch[pre]).any():
+            i = j + calm_n
+            continue
         p0, r0 = float(np.nanmedian(pitch[pre])), float(np.nanmedian(roll[pre]))
         dp, dr = pitch[i:j + 1] - p0, roll[i:j + 1] - r0
+        if not np.isfinite(np.hypot(dp, dr)).any():
+            i = j + calm_n
+            continue
         k = int(np.nanargmax(np.hypot(dp, dr)))
         size = float(np.hypot(dp[k], dr[k]))
         # pitch + = forward; roll + = the robot's LEFT (sim convention, verified on hardware

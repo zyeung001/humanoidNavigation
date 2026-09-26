@@ -198,13 +198,57 @@ class IMU:
     def angular_velocity(self) -> np.ndarray:
         return (self.axis_remap @ self._read_gyro_rads() - self.gyro_bias).astype(np.float32)
 
-    def calibrate_gyro_bias(self, seconds: float = 2.0, hz: float = 100.0):
-        n = max(1, int(seconds * hz))
-        acc = np.zeros(3, dtype=np.float32)
-        for _ in range(n):
-            acc += self.axis_remap @ self._read_gyro_rads()
-            time.sleep(1.0 / hz)
-        self.gyro_bias = acc / n
+    def calibrate_gyro_bias(self, seconds: float = 2.0, hz: float = 100.0,
+                            tries: int = 5, max_tilt_deg: float = 1.0):
+        """Gyro zero offset, measured only over a window in which the robot did not ROTATE.
+
+        WHY THE GATE. The offset is the mean gyro reading over the window, so any real rotation
+        during it is baked in as "zero" and then subtracted from every reading for the rest of
+        the run. deploy_standing calibrates right after the ramp to home, while the robot is
+        being held and settling. On 9/24 and 9/26 that left +0.079 and +0.133 rad/s of false
+        pitch rate -- 2.6x and 4.4x the +-0.03 rad/s bias the policy was trained against --
+        while the true offset measured on a still robot is 0.008, and this same calibration
+        leaves 0.0001 when the robot is still. 175M stood on 9/24 and fell forward on 9/26 with
+        the only measured difference being how still it was held for those 1.5 s.
+
+        The accelerometer sees rotation independently of the gyro, so the window is rejected
+        if the tilt it reports moved by more than max_tilt_deg between the start and end. Hand
+        tremor with no net rotation passes, and averages out of the mean anyway. A 1 deg gate
+        over a 1.5 s window caps the error at ~0.012 rad/s, inside the trained range.
+        """
+        n = max(20, int(seconds * hz))
+        edge = 10
+        best = None
+        for attempt in range(tries):
+            acc = np.zeros(3, dtype=np.float64)
+            pg_start, pg_end = [], []
+            for i in range(n):
+                acc += self.axis_remap @ self._read_gyro_rads()
+                if i < edge:
+                    pg_start.append(self.projected_gravity())
+                elif i >= n - edge:
+                    pg_end.append(self.projected_gravity())
+                time.sleep(1.0 / hz)
+            a, b = np.mean(pg_start, axis=0), np.mean(pg_end, axis=0)
+            tilt = lambda g: np.degrees([np.arctan2(g[0], -g[2]), np.arctan2(g[1], -g[2])])  # noqa: E731
+            moved = float(np.max(np.abs(tilt(b) - tilt(a))))
+            bias = (acc / n).astype(np.float32)
+            if best is None or moved < best[0]:
+                best = (moved, bias)
+            if moved <= max_tilt_deg:
+                if attempt:
+                    print(f"[imu] gyro calibrated on attempt {attempt + 1} "
+                          f"(robot was still to {moved:.2f} deg)")
+                self.gyro_bias = bias
+                return self.gyro_bias
+            print(f"[imu] robot rotated {moved:.1f} deg during gyro calibration -- hold it STILL "
+                  f"(try {attempt + 1}/{tries})")
+        moved, bias = best
+        err = np.radians(moved) / (n / hz)
+        print(f"[imu] WARNING: never still for {n / hz:.1f} s. Using the stillest window "
+              f"({moved:.1f} deg of rotation, so up to ~{err:.3f} rad/s of false gyro rate; "
+              f"the policy was trained for +-0.03). Consider restarting.")
+        self.gyro_bias = bias
         return self.gyro_bias
 
     def close(self):

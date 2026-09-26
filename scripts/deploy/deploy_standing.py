@@ -457,6 +457,10 @@ def main():
             u = (cur + (home_units - cur) * k / steps).round().astype(int)
             bus.write_all(m.servo_ids, u, speed=args.speed)
             time.sleep(dt)
+        # The gyro zero is measured HERE, so any rotation now poisons the whole run (9/24,
+        # 9/26: +0.079 / +0.133 rad/s of false pitch rate from being held unsteadily). The
+        # calibration rejects windows where the robot rotated; this tells the operator why.
+        print("Hold the robot STILL now -- calibrating the gyro (1.5 s)...", flush=True)
         imu.calibrate_gyro_bias(seconds=1.5)
 
         # warm up history with real frames at rest
