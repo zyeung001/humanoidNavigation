@@ -146,11 +146,30 @@ class IMU:
         except ImportError:
             import smbus2 as smbus
         self._bus = smbus.SMBus(self.busnum)
-        self._bus.write_byte_data(self.addr, self.REG_BANK_SEL, 0x00)  # bank 0
-        time.sleep(0.01)
-        self._bus.write_byte_data(self.addr, self.PWR_MGMT_1, 0x01)    # wake, auto clock
-        time.sleep(0.05)
-        return self
+        # Bounded retry, at CONNECT ONLY. On 9/26 the very first bank-select write failed with
+        # EIO and killed a deploy before the policy ran; a scan minutes later found the IMU
+        # answering (WHO_AM_I 0xEA) and 3000 back-to-back frame reads with zero errors. A
+        # startup transient -- most likely the IMU not yet up when the script first spoke --
+        # should cost a fraction of a second, not the attempt. Mid-run reads deliberately do
+        # NOT retry: a fault there must surface, and the loop's shutdown path handles it.
+        last = None
+        for attempt in range(5):
+            try:
+                self._bus.write_byte_data(self.addr, self.REG_BANK_SEL, 0x00)  # bank 0
+                time.sleep(0.01)
+                who = self._bus.read_byte_data(self.addr, 0x00)                 # WHO_AM_I
+                if who != 0xEA:
+                    raise OSError(f"WHO_AM_I 0x{who:02X} at 0x{self.addr:02X}, expected 0xEA")
+                self._bus.write_byte_data(self.addr, self.PWR_MGMT_1, 0x01)    # wake, auto clock
+                time.sleep(0.05)
+                if attempt:
+                    print(f"[imu] connected on attempt {attempt + 1} (startup transient)")
+                return self
+            except OSError as e:
+                last = e
+                time.sleep(0.2)
+        raise OSError(f"IMU not answering on I2C bus {self.busnum} at 0x{self.addr:02X} after 5 "
+                      f"tries ({last}). Check its power and SDA/SCL wiring.")
 
     @staticmethod
     def _s16(hi, lo):
