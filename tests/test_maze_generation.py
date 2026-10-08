@@ -2,6 +2,7 @@
 """Tests for maze generation, MJCF output, maps, and rendering."""
 
 import numpy as np
+import pytest
 import xml.etree.ElementTree as ET
 
 from src.maze.maze_generator import generate_maze_dfs, generate_maze_prims, open_arena, corridor
@@ -104,16 +105,20 @@ def test_mjcf_generates_valid_xml():
     assert root.tag == "mujoco"
 
 
-def test_mjcf_wall_count():
+def test_mjcf_walls_cover_every_wall_cell_once():
+    # Walls are merged into runs (8d16e37), so there is no longer one geom per wall cell --
+    # what must hold is that the merged boxes cover exactly the wall cells, no more, no less.
     grid = open_arena(2, 2)
     gen = MazeMJCFGenerator()
     xml_path = gen.generate(grid)
-    tree = ET.parse(xml_path)
-    root = tree.getroot()
-    wall_geoms = root.findall(".//*[@name]")
-    maze_walls = [g for g in wall_geoms if g.get("name", "").startswith("maze_wall_")]
-    expected_walls = int(np.sum(grid == 1))
-    assert len(maze_walls) == expected_walls
+    root = ET.parse(xml_path).getroot()
+    maze_walls = [g for g in root.findall(".//geom") if g.get("name", "").startswith("maze_wall_")]
+    cells = 0.0
+    for g in maze_walls:
+        sx, sy, _ = (float(v) for v in g.get("size").split())
+        cells += (2 * sx / gen.cell_size) * (2 * sy / gen.cell_size)
+    assert 0 < len(maze_walls) < int(np.sum(grid == 1))
+    assert cells == pytest.approx(float(np.sum(grid == 1)), abs=1e-2)
 
 
 def test_mjcf_has_topdown_camera():

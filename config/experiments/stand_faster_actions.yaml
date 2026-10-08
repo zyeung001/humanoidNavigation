@@ -1,0 +1,19 @@
+# THE ACTION PIPELINE MAY BE TOO SLOW TO CATCH A PUSH. From a policy decision to the servo
+# being 63% of the way there: command EMA at tau 0.3 ~70 ms (0.7^n = 0.37 -> 2.8 steps), servo
+# dead time ~54 ms (median, measured 8/14), servo time constant ~40 ms (legs) -- ~165 ms. This
+# robot falls with a time constant of sqrt(h/g) = sqrt(0.42/9.81) ~ 207 ms, and it has no
+# ankles, so every correction goes through the hips and knees. The correction arrives about
+# as late as the fall develops. tau 0.5 cuts the EMA's part to ~35 ms; the action-rate
+# penalties stay on to keep the output smooth.
+#
+# DEPLOY NOTE: the smoothing runs on the robot too -- deploy_standing.py must get --tau 0.5
+# with a policy from this run, or it will be driven through the old, slower filter.
+experiment:
+  name: stand_faster_actions
+  base: config/experiments/stand_pushes.yaml
+  description: stand_pushes with the command EMA loosened from tau 0.3 to 0.5.
+  hypothesis: Beats stand_pushes on push_5N/push_6N and kick_3x; costs a little quiet jitter.
+  tags: [standing, finetune, robustness, actions]
+overrides:
+  standing:
+    action_smoothing_tau: 0.5

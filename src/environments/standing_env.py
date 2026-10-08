@@ -141,6 +141,23 @@ class StandingEnv(gym.Wrapper):
         self._servo_state = None
         self._lag_alpha = 1.0
         self._lag_delay_steps = None
+        # Multiplies every sampled dead time and time constant. 1.0 is exact, so nothing changes
+        # unless a scenario asks for slower servos (src/robustness).
+        self.actuator_lag_scale = 1.0
+
+        # Exact sensor errors set by a scenario (set_sensor_offsets). Independent of obs_noise,
+        # whose biases are random draws: these are the values a test asks for.
+        self._sensor_gyro_bias = None
+        self._sensor_imu_rotation = None
+        self._sensor_jpos_bias = None
+
+        # The env prints one status line every this many steps. 0 silences it (evaluation runs
+        # thousands of episodes).
+        self.debug_print_every = int(self.cfg.get('debug_print_every', 500))
+        # Filled by _compute_task_reward. A subclass with its own reward (RealTurningEnv)
+        # leaves them at these defaults, which step() must tolerate.
+        self._last_reward_terms = {}
+        self._termination_cause = None
 
         #Random height initialization for recovery training
         self.random_height_init = self.cfg.get('random_height_init', True)
@@ -499,6 +516,8 @@ class StandingEnv(gym.Wrapper):
             else:
                 delay_ms = np.full(n, np.random.uniform(*self.actuator_delay_ms[:2]))
                 tau_ms = np.full(n, np.random.uniform(*self.actuator_tau_ms[:2]))
+            delay_ms = delay_ms * self.actuator_lag_scale
+            tau_ms = tau_ms * self.actuator_lag_scale
             self._lag_delay_steps = np.maximum(0, np.round(delay_ms / 1000.0 / dt)).astype(int)
             self._lag_alpha = (1.0 - np.exp(-dt / np.maximum(tau_ms / 1000.0, 1e-4))).astype(np.float32)
             depth = int(self._lag_delay_steps.max()) + 1
@@ -612,9 +631,13 @@ class StandingEnv(gym.Wrapper):
         # Override termination for standing to allow indefinite episodes
         truncated = self.current_step >= self.max_episode_steps
         
-        # Add task info 
+        # Add task info
         info.update(self._get_task_info())
-        
+        for name, value in self._last_reward_terms.items():
+            info[f'reward/{name}'] = float(value)
+        if terminated:
+            info['termination_cause'] = self._termination_cause or 'unknown'
+
         # Process observation with dimension verification
         if self.enable_history or self.include_com or self.feature_norm or self.proprioceptive:
             observation = self._process_observation(observation)
@@ -841,8 +864,24 @@ class StandingEnv(gym.Wrapper):
         self.reward_history['velocity'].append(stability_reward)
         self.reward_history['control'].append(control_cost)
         
+        # Every term, by name, so training logs can show which one is driving the policy. A
+        # single total of ~200k per episode says nothing about whether the robot is balancing or
+        # farming the sustained bonus.
+        self._last_reward_terms = {
+            'height': height_reward, 'upright': upright_reward, 'stability': stability_reward,
+            'smoothness': smoothness_reward, 'control': control_cost,
+            'action_rate': action_rate_penalty, 'raw_action_rate': raw_action_rate_penalty,
+            'saturation': saturation_penalty, 'yaw_rate': yaw_rate_penalty,
+            'height_maintenance': height_maintenance, 'recovery': recovery_bonus,
+            'velocity': velocity_penalty, 'sustained_bonus': sustained_bonus,
+            'stance': stance_reward, 'termination': termination_penalty,
+        }
+        if terminate:
+            self._termination_cause = ('height_low' if height < 0.75 else
+                                       'tilt' if upright_cos < 0.5 else 'height_high')
+
         # ========== DEBUG LOGGING  ==========
-        if self.current_step % 500 == 0:
+        if self.debug_print_every and self.current_step % self.debug_print_every == 0:
             print(f"Step {self.current_step:4d}: "
                 f"h={height:.3f} (err={height_error:.3f}), "
                 f"tilt_cos={upright_cos:.3f}, yaw_rate={float(angular_vel[2]):+.2f}, "
@@ -1079,6 +1118,16 @@ class StandingEnv(gym.Wrapper):
             if self._bias_jpos is not None:
                 jpos = jpos + self._bias_jpos
 
+        # Scenario-chosen sensor errors (set_sensor_offsets): an IMU mounted crooked rotates the
+        # gravity it reports; a gyro zeroed while moving reads a constant false rate; an encoder
+        # zeroed off-centre reads every angle shifted. None (the default) adds nothing.
+        if self._sensor_imu_rotation is not None:
+            proj_grav = (self._sensor_imu_rotation @ proj_grav).astype(np.float32)
+        if self._sensor_gyro_bias is not None:
+            base_ang_vel = base_ang_vel + self._sensor_gyro_bias
+        if self._sensor_jpos_bias is not None:
+            jpos = jpos + self._sensor_jpos_bias
+
         # Observation filter (applied AFTER noise so the order is "noisy sensor -> filter", exactly
         # like hardware): quantize jpos to encoder resolution, derive jvel as a clamped finite-diff
         # of the quantized jpos (not exact qvel), and EMA-low-pass both jvel and proj_grav. This is
@@ -1124,7 +1173,124 @@ class StandingEnv(gym.Wrapper):
             'z_velocity': self.env.unwrapped.data.qvel[2],
             'quaternion_w': self.env.unwrapped.data.qpos[3],
         }
-    
+
+    # ======== Hooks for scenario testing (src/robustness) ========
+    # A scenario needs to put the robot somewhere and to make its sensors lie. Both touch state
+    # this class keeps consistent with itself (servo lag, command smoothing, obs history), so
+    # they live here instead of in the wrapper reaching into private fields.
+
+    @property
+    def episode_baseline(self) -> np.ndarray:
+        """The pose the residual box is centred on this episode (after residual_baseline_rand).
+        Without residual mode it is the home keyframe, the pose the obs measures from."""
+        if np.any(self.residual_clamp > 0.0):
+            return self._res_base_ep.copy()
+        return self.default_joint_pos.copy()
+
+    def set_sensor_offsets(self, gyro=None, imu_rotation=None, jpos=None):
+        """Exact, constant sensor errors, until changed. None removes that error.
+
+        gyro: (3,) rad/s added to base_ang_vel. imu_rotation: (3,3) rotation applied to
+        proj_grav, an IMU mounted crooked. jpos: (n_joints,) rad added to the joint-angle
+        reading, encoder zeros measured off-centre. Applied whether or not obs_noise is on.
+        """
+        def as_vec(v, n):
+            return None if v is None else np.asarray(v, dtype=np.float32).reshape(n)
+        self._sensor_gyro_bias = as_vec(gyro, 3)
+        self._sensor_jpos_bias = as_vec(jpos, self.n_joints)
+        self._sensor_imu_rotation = (None if imu_rotation is None else
+                                     np.asarray(imu_rotation, dtype=np.float32).reshape(3, 3))
+
+    def place_robot(self, joint_pos=None, tilt_axis=None, tilt_rad=0.0, base_lin_vel=None,
+                    base_ang_vel=None, smoothing_from_zero=False) -> np.ndarray:
+        """Edit the start state right after reset(), and return the observation for it.
+
+        joint_pos: actuated joint angles. The servos are placed AT this pose -- the lag model's
+            state and the command smoothing start there too -- so the first step does not drag
+            every joint back toward the reset pose. smoothing_from_zero instead starts the
+            command EMA at zero, which is what deploy_standing.py does on the robot (its
+            last_action starts at 0 while the servos sit on the baseline).
+        tilt_axis, tilt_rad: lean the whole robot about the point between its feet, as if it
+            were let go leaning. It is then re-seated so its lowest point touches the floor.
+        base_lin_vel (world, m/s) is added to the root. base_ang_vel (world, rad/s) sets the
+            whole robot rotating about the point between its feet -- the root also gets the
+            linear velocity that rotation implies. Spinning the root about itself instead
+            would swing the feet through the floor at ~0.4 m/s per rad/s.
+        """
+        import mujoco
+        model, data = self.env.unwrapped.model, self.env.unwrapped.data
+        if joint_pos is not None:
+            q = np.asarray(joint_pos, dtype=np.float32).reshape(self.n_joints)
+            data.qpos[self.act_qposadr] = q
+            data.qvel[self.act_dofadr] = 0.0
+            if self._servo_state is not None:
+                self._servo_state[:] = q
+                for slot in self._lag_buffer:
+                    slot[:] = q
+            self.prev_action[:] = 0.0 if smoothing_from_zero else q
+            self._prev_raw_action[:] = q
+        mujoco.mj_forward(model, data)
+
+        if tilt_axis is not None and tilt_rad != 0.0:
+            pivot = self._feet_center(model, data)
+            rot = np.zeros(4)
+            mujoco.mju_axisAngle2Quat(rot, np.asarray(tilt_axis, dtype=np.float64), float(tilt_rad))
+            rmat = np.zeros(9)
+            mujoco.mju_quat2Mat(rmat, rot)
+            data.qpos[0:3] = pivot + rmat.reshape(3, 3) @ (data.qpos[0:3] - pivot)
+            q_new = np.zeros(4)
+            mujoco.mju_mulQuat(q_new, rot, np.asarray(data.qpos[3:7], dtype=np.float64))
+            data.qpos[3:7] = q_new
+            mujoco.mj_forward(model, data)
+
+        if joint_pos is not None or (tilt_axis is not None and tilt_rad != 0.0):
+            # Re-seat on the floor: the new pose may have pushed a foot into it or lifted both.
+            data.qpos[2] += 1e-4 - self._lowest_collision_z(model, data)
+        if base_lin_vel is not None:
+            data.qvel[0:3] += np.asarray(base_lin_vel, dtype=np.float64)
+        if base_ang_vel is not None:
+            mujoco.mj_forward(model, data)
+            w = np.asarray(base_ang_vel, dtype=np.float64)
+            pivot = self._feet_center(model, data)
+            # Free joint: qvel[0:3] is the root's linear velocity in world, qvel[3:6] its
+            # angular velocity in its OWN frame.
+            data.qvel[0:3] += np.cross(w, data.qpos[0:3] - pivot)
+            root = int(model.jnt_bodyid[0])
+            data.qvel[3:6] += data.xmat[root].reshape(3, 3).T @ w
+        mujoco.mj_forward(model, data)
+
+        # The obs history and filters describe the state before the edit; start them over.
+        self.obs_history = []
+        self._obs_pg_ema = self._obs_jvel_ema = self._obs_prev_jpos_q = None
+        self.prev_height = self._get_height()
+        return self._process_observation(self.env.unwrapped._get_obs())
+
+    def _collision_geoms(self, model):
+        if getattr(self, '_coll_geoms', None) is None:
+            self._coll_geoms = np.array([g for g in range(model.ngeom)
+                                         if model.geom_bodyid[g] != 0 and
+                                         (model.geom_contype[g] or model.geom_conaffinity[g])])
+        return self._coll_geoms
+
+    def _lowest_collision_z(self, model, data) -> float:
+        """Lowest point of the robot's collision geometry (corners of each geom's local AABB)."""
+        corners = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)])
+        low = np.inf
+        for g in self._collision_geoms(model):
+            local = model.geom_aabb[g, :3] + corners * model.geom_aabb[g, 3:]
+            world_z = data.geom_xpos[g, 2] + local @ data.geom_xmat[g].reshape(3, 3)[2]
+            low = min(low, float(world_z.min()))
+        return low
+
+    def _feet_center(self, model, data) -> np.ndarray:
+        """Floor point midway between the feet: the pivot a released robot leans about."""
+        feet = list(self.model_spec.foot_body_ids)[:2] if self._is_custom else []
+        geoms = [g for g in self._collision_geoms(model) if model.geom_bodyid[g] in feet]
+        pts = data.geom_xpos[geoms] if geoms else data.subtree_com[:1]
+        center = np.asarray(pts, dtype=np.float64).mean(axis=0)
+        center[2] = 0.0
+        return center
+
     def get_observation_info(self):
         """Helper method to understand observation space"""
         obs, _ = self.env.reset()

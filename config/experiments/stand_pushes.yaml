@@ -1,0 +1,20 @@
+# On 10/7 the suite found the policy rides out a 5 N torso push only a little better than
+# holding the pose with NO policy (52% vs 38% of the test upright). Its training kicks are
+# the eval's kick_1x, which the no-policy pose already survives 93% of the time -- so training
+# hardly ever needs active balance, and with action_rate_penalty 70 and raw_action_rate 25,
+# keeping still is the cheapest thing on offer. These disturbances are big enough that
+# keeping still loses.
+experiment:
+  name: stand_pushes
+  base: config/real_humanoid_stand.yaml
+  description: 60% of episodes add torso pushes up to 7 N or velocity kicks up to 3x.
+  hypothesis: Raises the push and kick families well clear of the hold-pose reference.
+  tags: [standing, finetune, robustness, pushes]
+  resume:
+    model: models/final_real_standing_stand.zip
+    vecnorm: models/vecnorm_real_standing_stand.pkl
+    timesteps: 215000000
+overrides:
+  standing:
+    training_scenarios:
+      mix: {as_configured: 0.4, torso_pushes: 0.4, big_kicks: 0.2}

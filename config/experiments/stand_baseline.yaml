@@ -1,0 +1,17 @@
+# CONTROL ARM for every fine-tune in this directory. Same code, same start (195M), same
+# number of steps, and nothing changed -- so a fine-tune that beats this beat THIS, not the
+# code changes that landed alongside it (the 10/7 entropy-schedule fix applies to every arm,
+# this one included).
+#
+#   python scripts/train_standing.py --config config/experiments/stand_baseline.yaml
+experiment:
+  name: stand_baseline
+  base: config/real_humanoid_stand.yaml
+  description: Continue the deployed 195M policy for 20M steps with nothing changed.
+  hypothesis: Control. Whatever this scores is what 20M more steps buys on their own.
+  tags: [standing, finetune, control]
+  resume:
+    model: models/final_real_standing_stand.zip
+    vecnorm: models/vecnorm_real_standing_stand.pkl
+    timesteps: 215000000
+overrides: {}
