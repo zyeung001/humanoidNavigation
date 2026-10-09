@@ -195,3 +195,108 @@ def test_the_turning_env_survives_a_fall_with_its_own_reward():
             break
     else:
         pytest.skip("random actions did not topple the robot in 400 steps")
+
+
+# ---------------------------------------------------------------- nothing on the side may kill a run
+# 10/9: Windows ran short of memory while two runs evaluated at once, W&B's service was shut
+# down, and the next wandb call raised inside the training loop. Each test below is one way
+# that night could have gone, and must not stop training.
+
+def test_a_dead_wandb_is_dropped_and_the_jsonl_keeps_logging(tmp_path, capsys):
+    class DeadRun:
+        summary = {}
+
+        def log(self, *a, **k):
+            raise ConnectionAbortedError("WinError 10053")
+
+        def finish(self):
+            raise ConnectionAbortedError("WinError 10053")
+    sink = MetricsSink(tmp_path / "m.jsonl", DeadRun())
+    sink.log({"eval/score": 70.0}, 1)
+    sink.log({"eval/score": 71.0}, 2)
+    sink.summary({"best/score": 71.0})
+    sink.close()
+    lines = (tmp_path / "m.jsonl").read_text().splitlines()
+    assert [json.loads(x)["eval/score"] for x in lines] == [70.0, 71.0]
+    assert capsys.readouterr().out.count("W&B log failed") == 1
+
+
+def test_eval_workers_are_capped_by_free_memory(monkeypatch):
+    from src.robustness import suite
+    monkeypatch.setattr(suite, "available_memory_gb", lambda: 12.0)
+    assert suite.memory_safe_workers(11) == 2          # (12 - 8 reserve) // 2 GB each
+    monkeypatch.setattr(suite, "available_memory_gb", lambda: 5.0)
+    assert suite.memory_safe_workers(11) == 1
+    monkeypatch.setattr(suite, "available_memory_gb", lambda: None)
+    assert suite.memory_safe_workers(11) == 11
+
+
+def test_a_broken_worker_pool_falls_back_to_the_same_answer(monkeypatch):
+    from src.robustness import scenarios, suite
+    from src.robustness.policies import HoldPosePolicy
+    cfg = yaml.safe_load(open(ROOT / "config" / "real_humanoid_stand.yaml"))["standing"]
+    sc = scenarios.suite_scenarios(names=["push_5N"])
+    good = suite.evaluate(HoldPosePolicy(cfg["residual_baseline"]), cfg, sc, episodes=2, seconds=3.0,
+                          workers=1, progress=None)
+    broken = HoldPosePolicy(cfg["residual_baseline"])
+    broken.recipe = ("no-such-policy-kind",)           # every worker fails to start
+    monkeypatch.setattr(suite, "memory_safe_workers", lambda n: 2)
+    notes = []
+    r = suite.evaluate(broken, cfg, sc, episodes=2, seconds=3.0, workers=2, progress=notes.append)
+    assert any("parallel evaluation failed" in n for n in notes)
+    same = lambda e: (e.seed, e.steps, e.fell, e.lean_deg, e.sway_deg)   # noqa: E731 (nan != nan)
+    assert [same(e) for e in r.scenarios[0].episodes] == [same(e) for e in good.scenarios[0].episodes]
+
+
+def _fake_trainer():
+    class Env:
+        def save(self, p):
+            Path(p).write_bytes(b"vecnorm")
+    return SimpleNamespace(num_timesteps=210_000_000, get_env=lambda: Env(),
+                           save=lambda p: Path(p).write_bytes(b"model"))
+
+
+def test_a_failed_eval_keeps_the_checkpoint_and_lets_training_continue(tmp_path, monkeypatch):
+    from src.robustness import suite
+    from src.training.experiment import RunDir
+    from src.training.robustness_eval import RobustnessEvalCallback
+    run = RunDir.create("r", base=tmp_path)
+
+    def boom(*a, **k):
+        raise MemoryError("paging file is too small")
+    monkeypatch.setattr(suite, "evaluate", boom)
+    monkeypatch.setattr("src.robustness.policies.SB3Policy.load", lambda *a, **k: None)
+    sink = MetricsSink(run.metrics)
+    cb = RobustnessEvalCallback({}, run, sink, every=5_000_000, at_start=False)
+    cb.model, cb.num_timesteps = _fake_trainer(), 210_000_000
+    assert cb.evaluate() is None
+    ck = run.checkpoint(210_000_000)
+    assert (ck / "model.zip").exists() and (ck / "vecnorm.pkl").exists()
+    assert json.loads(run.metrics.read_text().splitlines()[-1])["eval/failed"] == 1.0
+
+
+def test_resuming_finds_the_furthest_trained_weights_and_keeps_the_best(tmp_path):
+    import zipfile
+    from src.training.experiment import RunDir
+    from src.training.robustness_eval import RobustnessEvalCallback
+    run = RunDir.create("r", base=tmp_path)
+    (run.root / "config.yaml").write_text("experiment: {resolved: true}\nstanding: {}\n")
+
+    def weights(folder, steps):
+        folder.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(folder / "model.zip", "w") as z:
+            z.writestr("data", json.dumps({"num_timesteps": steps}))
+        (folder / "vecnorm.pkl").write_bytes(b"")
+    weights(run.checkpoint(205_000_000), 205_000_000)
+    weights(run.checkpoint(210_000_000), 210_000_000)
+    weights(run.root / "crashed", 212_345_678)
+    assert RunDir.open(run.root).latest_weights() == run.root / "crashed"
+
+    scored = _result("r@205M", {"push_5N": [0.5, 0.5]})
+    scored.save(run.checkpoint(205_000_000) / "eval.json")
+    scored.save(run.best / "eval.json")
+    cb = RobustnessEvalCallback({}, run, MetricsSink(run.metrics), at_start=True)
+    assert cb.best.score == scored.score and cb.previous.score == scored.score
+    cb.model, cb.num_timesteps = _fake_trainer(), 205_000_000
+    cb._on_training_start()                     # this step is already scored: no re-eval
+    assert cb._last_step == 205_000_000

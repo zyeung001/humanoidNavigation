@@ -298,14 +298,60 @@ def default_workers() -> int:
     return max(1, (os.cpu_count() or 2) - 1)
 
 
+# Measured 10/9 on this machine: one worker process (python + mujoco env + torch + SB3 + the
+# policy) commits ~1.8 GB. Windows refuses allocations past its commit limit (RAM + page file),
+# it does not swap them, and it is the limit two parallel runs hit at 00:10:25 that night.
+WORKER_COMMIT_GB = 2.0
+COMMIT_RESERVE_GB = 8.0
+
+
+def available_memory_gb() -> Optional[float]:
+    """Memory a new process can still claim: available COMMIT on Windows (the limit that bites
+    there), MemAvailable + free swap on Linux. None if it cannot be read."""
+    import sys  # noqa: PLC0415
+    try:
+        if sys.platform == "win32":
+            import ctypes  # noqa: PLC0415
+
+            class _Status(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+            st = _Status()
+            st.dwLength = ctypes.sizeof(st)
+            if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
+                return None
+            return st.ullAvailPageFile / 1e9
+        info = {}
+        for line in open("/proc/meminfo"):
+            k, v = line.split(":", 1)
+            info[k] = float(v.split()[0]) * 1024
+        return (info["MemAvailable"] + info.get("SwapFree", 0.0)) / 1e9
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def memory_safe_workers(requested: int) -> int:
+    """`requested`, cut down to what memory can hold right now. Two runs training side by side
+    each spawn their own pool, so this has to look at what is free, not at the core count."""
+    avail = available_memory_gb()
+    if avail is None:
+        return requested
+    fit = int((avail - COMMIT_RESERVE_GB) // WORKER_COMMIT_GB)
+    return max(1, min(requested, fit))
+
+
 def evaluate(policy, env_cfg: dict, scenarios: Optional[List[Scenario]] = None, episodes: int = 8,
              seconds: float = 15.0, seed: int = 12345, config_path: str = "", step: Optional[int] = None,
              workers: int = 1, progress=print) -> SuiteResult:
     """Score `policy` on `scenarios` (default: the whole suite).
 
     workers > 1 runs episodes in parallel processes; the policy must then carry a `.recipe`
-    (anything loaded from a file does). Every episode seeds itself, so the result is identical
-    for any number of workers.
+    (anything loaded from a file does). The count is cut to what free memory can hold, and if
+    the pool breaks anyway (a worker killed, a DLL that cannot load) the episodes are finished
+    in this process instead. Every episode seeds itself, so the result is identical either way.
 
     Restores numpy's global RNG afterwards, so evaluating in the middle of training does not
     change what training draws next.
@@ -315,15 +361,25 @@ def evaluate(policy, env_cfg: dict, scenarios: Optional[List[Scenario]] = None, 
     tasks = [(s, episode_seed(seed, i), (i, episodes)) for s in scenarios for i in range(episodes)]
     rng_state = np.random.get_state()
     t0 = time.time()
+    flat = None
     try:
-        if workers > 1 and getattr(policy, "recipe", None) is not None:
+        n = memory_safe_workers(min(workers, len(tasks))) if workers > 1 else 1
+        if n < workers and workers > 1 and progress:
+            progress(f"  (using {n} of {workers} eval workers: ~{available_memory_gb():.0f} GB free, "
+                     f"~{WORKER_COMMIT_GB:.0f} GB each)")
+        if n > 1 and getattr(policy, "recipe", None) is not None:
             import multiprocessing as mp  # noqa: PLC0415
             from concurrent.futures import ProcessPoolExecutor  # noqa: PLC0415
-            with ProcessPoolExecutor(max_workers=min(workers, len(tasks)),
-                                     mp_context=mp.get_context("spawn"), initializer=_worker_init,
-                                     initargs=(env_cfg, seconds, policy.recipe)) as pool:
-                flat = list(pool.map(_worker_run, tasks, chunksize=1))
-        else:
+            try:
+                with ProcessPoolExecutor(max_workers=n, mp_context=mp.get_context("spawn"),
+                                         initializer=_worker_init,
+                                         initargs=(env_cfg, seconds, policy.recipe)) as pool:
+                    flat = list(pool.map(_worker_run, tasks, chunksize=1))
+            except Exception as e:  # noqa: BLE001 -- any pool failure; the fallback is exact
+                if progress:
+                    progress(f"  parallel evaluation failed ({type(e).__name__}: {e}); "
+                             f"finishing in this process, one episode at a time")
+        if flat is None:
             wenv = make_eval_env(env_cfg, seconds)
             steps = int(round(seconds / wenv.base._control_dt))
             flat = [run_episode(policy, wenv, s, sd, steps, st) for s, sd, st in tasks]

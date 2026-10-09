@@ -175,6 +175,32 @@ class RunDir:
         root.mkdir(parents=True)
         return cls(root)
 
+    @classmethod
+    def open(cls, path) -> "RunDir":
+        root = Path(path)
+        if not (root / "config.yaml").exists():
+            raise FileNotFoundError(f"{root} is not a run directory (no config.yaml)")
+        return cls(root)
+
+    def latest_weights(self) -> Optional[Path]:
+        """The directory holding the furthest-trained model of this run: a checkpoint, or what
+        Ctrl+C (interrupted/) or a crash (crashed/) left behind. Judged by the step count
+        stored inside each model.zip, not by folder names or file times."""
+        import json  # noqa: PLC0415
+        import zipfile  # noqa: PLC0415
+        best, best_steps = None, -1
+        for d in [*self.root.glob("checkpoints/*"), self.root / "interrupted", self.root / "crashed"]:
+            z = d / "model.zip"
+            if not (z.exists() and (d / "vecnorm.pkl").exists()):
+                continue
+            try:
+                steps = int(json.loads(zipfile.ZipFile(z).read("data"))["num_timesteps"])
+            except (KeyError, ValueError, zipfile.BadZipFile):
+                continue
+            if steps > best_steps:
+                best, best_steps = d, steps
+        return best
+
     @property
     def name(self) -> str:
         return self.root.name

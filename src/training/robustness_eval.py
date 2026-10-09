@@ -25,6 +25,13 @@ from src.robustness import policies, suite
 from src.robustness.scenarios import training_scenarios
 
 
+def _notes_only(line: str) -> None:
+    """Pass the evaluator's notes (worker count cut, pool fallback) through, but not its
+    per-scenario progress lines: the full table is printed right after."""
+    if not line.startswith("  ") or line.lstrip().startswith(("(", "parallel")):
+        print(line)
+
+
 class RobustnessEvalCallback(BaseCallback):
 
     def __init__(self, env_cfg: dict, run_dir, sink, every: int = 5_000_000, episodes: int = 12,
@@ -48,10 +55,25 @@ class RobustnessEvalCallback(BaseCallback):
         self._next = None
         self._last_step = None
         self._saved = []
+        self._pick_up_where_the_run_left_off()
+
+    def _pick_up_where_the_run_left_off(self) -> None:
+        """A resumed run (--resume-run) keeps its best, its last eval and its checkpoint list,
+        so "best" still means best over the whole run and pruning still keeps the newest."""
+        if (self.run.best / "eval.json").exists():
+            self.best = suite.SuiteResult.load(self.run.best / "eval.json")
+        scored = sorted(self.run.root.glob("checkpoints/*/eval.json"))
+        if scored:
+            self.previous = suite.SuiteResult.load(scored[-1])
+        self._saved = [p.parent for p in scored]
 
     def _on_training_start(self) -> None:
         self._next = (self.num_timesteps // self.every + 1) * self.every
-        if self.at_start:
+        # Skip the starting eval if this exact step was already scored (resuming from it).
+        already = (self.run.checkpoint(int(self.num_timesteps)) / "eval.json").exists()
+        if already:
+            self._last_step = int(self.num_timesteps)
+        elif self.at_start:
             self.evaluate()
 
     def _on_step(self) -> bool:
@@ -64,27 +86,34 @@ class RobustnessEvalCallback(BaseCallback):
         if self._last_step != self.num_timesteps:
             self.evaluate()
 
-    def evaluate(self) -> suite.SuiteResult:
+    def evaluate(self) -> Optional[suite.SuiteResult]:
+        """Checkpoint, then score. The checkpoint is written FIRST, so if scoring fails the
+        weights are still on disk; a failed score is reported and training carries on."""
         step = int(self.num_timesteps)
         ck = self.run.checkpoint(step)
         ck.mkdir(parents=True, exist_ok=True)
         self.model.save(ck / "model.zip")
         self.model.get_env().save(str(ck / "vecnorm.pkl"))
-        pol = policies.SB3Policy.load(ck / "model.zip", ck / "vecnorm.pkl",
-                                      label=f"{self.run.name}@{step / 1e6:.2f}M")
+        self._last_step = step
         print(f"\n[robustness] scoring {step / 1e6:.2f}M on {len(suite.SUITE)} scenarios "
-              f"x {self.episodes} episodes ({self.workers} workers)...", flush=True)
-        r = suite.evaluate(pol, self.env_cfg, episodes=self.episodes, seconds=self.seconds,
-                           seed=self.seed, step=step, workers=self.workers, progress=None,
-                           config_path=str(self.run.root / "config.yaml"))
-        r.save(ck / "eval.json")
+              f"x {self.episodes} episodes...", flush=True)
+        try:
+            pol = policies.SB3Policy.load(ck / "model.zip", ck / "vecnorm.pkl",
+                                          label=f"{self.run.name}@{step / 1e6:.2f}M")
+            r = suite.evaluate(pol, self.env_cfg, episodes=self.episodes, seconds=self.seconds,
+                               seed=self.seed, step=step, workers=self.workers,
+                               progress=_notes_only, config_path=str(self.run.root / "config.yaml"))
+            r.save(ck / "eval.json")
+        except Exception as e:  # noqa: BLE001 -- an eval must never cost the training run
+            print(f"  EVAL FAILED at {step / 1e6:.2f}M ({type(e).__name__}: {e}). Training "
+                  f"continues. The checkpoint is saved; score it later with\n"
+                  f"    python scripts/eval_standing.py --run {self.run.root} "
+                  f"--checkpoint checkpoints/{ck.name}")
+            self.sink.log({"eval/failed": 1.0}, step)
+            return None
         with open(self.run.evals, "a", encoding="utf-8") as f:
             f.write(json.dumps({"timesteps": step, "checkpoint": str(ck), **r.metrics("")}) + "\n")
         self.sink.log(r.metrics("eval/"), step)
-        self.sink.table("eval/scenarios", ["scenario", "family", "upright_pct", "never_fell",
-                                           "about"],
-                        [(s.name, s.family, round(s.standing_pct, 1),
-                          f"{s.survived}/{len(s.episodes)}", s.about) for s in r.scenarios], step)
 
         print(suite.format_result(r, previous=self.previous))
         if self.best is None or r.score > self.best.score:
@@ -100,14 +129,16 @@ class RobustnessEvalCallback(BaseCallback):
             print(f"  best is still {self.best.score:.1f} @ {self.best.step / 1e6:.2f}M "
                   f"({r.score - self.best.score:+.1f})")
         self.previous = r
-        self._last_step = step
         self._prune(ck)
         if self.adaptive_floor is not None and self.base_mix:
             self._adapt(r, step)
         return r
 
     def _prune(self, ck) -> None:
-        self._saved.append(ck)
+        """Keep the newest `keep` SCORED checkpoints. One whose eval failed never gets here, so
+        it is never deleted: it is the only copy of those weights until someone scores it."""
+        if ck not in self._saved:
+            self._saved.append(ck)
         while len(self._saved) > self.keep:
             shutil.rmtree(self._saved.pop(0), ignore_errors=True)
 

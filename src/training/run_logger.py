@@ -49,7 +49,13 @@ def _scalar(v):
 
 
 class MetricsSink:
-    """One dict, two destinations: the run's JSONL, and W&B when a run is attached."""
+    """One dict, two destinations: the run's JSONL, and W&B when a run is attached.
+
+    W&B is a mirror, never a dependency. On 10/9 Windows ran short of memory, both runs' W&B
+    services were shut down, and the next wandb.log raised inside the training loop and took
+    a 15M-step fine-tune down with it. Now the first W&B failure is reported once and W&B is
+    dropped for the rest of the run; the JSONL keeps every number either way.
+    """
 
     def __init__(self, jsonl_path: Path, wandb_run=None):
         self.path = Path(jsonl_path)
@@ -57,37 +63,44 @@ class MetricsSink:
         self._fh = open(self.path, "a", encoding="utf-8", buffering=1)
         self.wandb = wandb_run
 
+    def _wandb_call(self, what: str, fn) -> None:
+        if self.wandb is None:
+            return
+        try:
+            fn(self.wandb)
+        except Exception as e:  # noqa: BLE001 -- any W&B failure, the point is to survive it
+            print(f"\n  WARNING: W&B {what} failed ({type(e).__name__}: {e}). Training continues; "
+                  f"W&B is off for the rest of this run, every metric is still in {self.path}\n")
+            self.wandb = None
+
     def log(self, metrics: Dict[str, float], step: int) -> None:
         rec = {"timesteps": int(step), "wall_time": time.time(),
                **{k: _scalar(v) for k, v in metrics.items()}}
         self._fh.write(json.dumps(rec, default=float) + "\n")
-        if self.wandb is not None:
-            self.wandb.log({k: v for k, v in rec.items() if k != "wall_time"}, step=int(step))
+        data = {k: v for k, v in rec.items() if k != "wall_time"}
+        self._wandb_call("log", lambda run: run.log(data, step=int(step)))
 
     def summary(self, values: Dict[str, object]) -> None:
-        if self.wandb is not None:
+        def write(run):
             for k, v in values.items():
-                self.wandb.summary[k] = _scalar(v)
-
-    def table(self, key: str, columns, rows, step: int) -> None:
-        if self.wandb is not None:
-            import wandb  # noqa: PLC0415
-            self.wandb.log({key: wandb.Table(columns=list(columns), data=[list(r) for r in rows])},
-                           step=int(step))
+                run.summary[k] = _scalar(v)
+        self._wandb_call("summary", write)
 
     def close(self) -> None:
         try:
             self._fh.close()
         except OSError:
             pass
-        if self.wandb is not None:
-            self.wandb.finish()
-            self.wandb = None
+        self._wandb_call("finish", lambda run: run.finish())
+        self.wandb = None
 
 
 def start_wandb(experiment, run_dir, task_cfg: dict, mode: Optional[str], extra: dict):
     """A W&B run whose config makes runs comparable at a glance in the runs table:
-    `changes.*` is what this run changed relative to its base, `cfg.*` is everything."""
+    `changes.*` is what this run changed relative to its base, `cfg.*` is everything.
+
+    The run id is kept in runs/<name>/wandb_id, so a run resumed with --resume-run keeps
+    drawing on the same W&B charts instead of starting a new run."""
     mode = mode or task_cfg.get("wandb_mode") or ("online" if task_cfg.get("use_wandb") else "disabled")
     if mode == "disabled":
         return None
@@ -98,18 +111,26 @@ def start_wandb(experiment, run_dir, task_cfg: dict, mode: Optional[str], extra:
                          "(or pass --wandb disabled). Refusing to train without the logs you "
                          "asked for.") from e
     from .experiment import flatten  # noqa: PLC0415
+    id_file = run_dir.root / "wandb_id"
+    run_id = id_file.read_text().strip() if id_file.exists() else None
+    if run_id is None:
+        # Runs started before wandb_id was written: W&B names its folder run-<date>-<id>.
+        old = sorted((run_dir.root / "wandb").glob("*run-*-*"))
+        run_id = old[-1].name.rsplit("-", 1)[-1] if old else None
     root = (experiment.lineage or [experiment.path])[0]
     run = wandb.init(
         project=task_cfg.get("wandb_project", "humanoid-standing"),
         entity=task_cfg.get("wandb_entity"),
         name=run_dir.name, group=Path(root).stem, job_type="train",
         tags=list(experiment.tags), notes=experiment.hypothesis or experiment.description,
-        dir=str(run_dir.root), mode=mode,
-        config={"experiment": {"name": experiment.name, "source": experiment.path,
-                               "base": experiment.base, "lineage": experiment.lineage},
-                "changes": experiment.changes_flat() or {"none": True},
-                "cfg": flatten(task_cfg), **extra},
+        dir=str(run_dir.root), mode=mode, id=run_id, resume="allow" if run_id else None,
     )
+    # After init, with allow_val_change: a resumed run legitimately has a new start step.
+    run.config.update({"experiment": {"name": experiment.name, "source": experiment.path,
+                                      "base": experiment.base, "lineage": experiment.lineage},
+                       "changes": experiment.changes_flat() or {"none": True},
+                       "cfg": flatten(task_cfg), **extra}, allow_val_change=True)
+    id_file.write_text(run.id)
     for key in ("eval/score", "eval/survival_pct"):
         run.define_metric(key, summary="max")
     run.define_metric("train/fall_rate", summary="last")

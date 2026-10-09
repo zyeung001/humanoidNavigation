@@ -23,6 +23,7 @@ import os
 import sys
 import warnings
 import argparse
+import time
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -38,6 +39,7 @@ from src.utils import configure_mujoco_gl, get_subprocess_start_method
 configure_mujoco_gl()
 
 import numpy as np
+import yaml
 import torch
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
@@ -204,7 +206,24 @@ def main():
     parser.add_argument('--dry-run', action='store_true',
                         help='build everything and score the starting model, then stop before '
                              'training: checks an experiment file in a minute, not an hour')
+    parser.add_argument('--resume-run', type=str, default=None,
+                        help='continue a run that stopped (crash, Ctrl+C, power) in its own '
+                             'directory and W&B run, from its furthest-trained saved weights')
     args = parser.parse_args()
+
+    resumed = None
+    if args.resume_run:
+        resumed = RunDir.open(args.resume_run)
+        weights = resumed.latest_weights()
+        if weights is None:
+            raise SystemExit(f"{resumed.root} has no saved weights to resume from")
+        meta = (yaml.safe_load(open(resumed.root / 'config.yaml', encoding='utf-8'))
+                .get('experiment') or {})
+        args.config = str(resumed.root / 'config.yaml')
+        args.model = args.model or str(weights / 'model.zip')
+        args.vecnorm = args.vecnorm or str(weights / 'vecnorm.pkl')
+        args.timesteps = args.timesteps or (meta.get('resume') or {}).get('timesteps')
+        print(f"Resuming run {resumed.name} from {weights}")
 
     print(f"Loading config: {args.config}")
     exp = load_experiment(args.config)
@@ -236,7 +255,16 @@ def main():
 
     if args.seed is not None:
         seed = standing['seed'] = args.seed
-    run = RunDir.create(args.run_name or exp.run_name() + (f"-s{seed}" if args.seed is not None else ""))
+    if resumed is not None:
+        # Same directory, same config file (it already holds the effective, redirected task
+        # block); only a note of the resume is added.
+        run = resumed
+        with open(run.root / ('resumes.txt' if not args.dry_run else 'dry_runs.txt'), 'a',
+                  encoding='utf-8') as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M')} from {args.model} to {total_timesteps:,} "
+                    f"git {git_sha()} argv {sys.argv[1:]}\n")
+    else:
+        run = RunDir.create(args.run_name or exp.run_name() + (f"-s{seed}" if args.seed is not None else ""))
     if exp.base:
         # An experiment reads and writes only its own files. Inheriting the base config's
         # final_model_path / vecnormalize_path would let two experiments overwrite each other
@@ -247,10 +275,11 @@ def main():
         if 'vecnormalize_path' not in own:
             standing['vecnormalize_path'] = str(run.root / 'vecnorm_latest.pkl')
     task_key = 'turning' if exp.config.get('turning') else 'standing'
-    (run.root / 'config.yaml').write_text(exp.resolved_yaml({
-        'run': run.name, 'git': git_sha(), 'argv': sys.argv[1:], 'seed': seed,
-        'resume': {'model': args.model, 'vecnorm': args.vecnorm, 'timesteps': total_timesteps}},
-        task=task_key, task_block=standing))
+    if resumed is None:
+        (run.root / 'config.yaml').write_text(exp.resolved_yaml({
+            'run': run.name, 'git': git_sha(), 'argv': sys.argv[1:], 'seed': seed,
+            'resume': {'model': args.model, 'vecnorm': args.vecnorm, 'timesteps': total_timesteps}},
+            task=task_key, task_block=standing))
     print(f"Run directory: {run.root}")
 
     # Vectorized env
@@ -452,20 +481,30 @@ def main():
               f"work. Nothing was trained. ({run.root})")
         return
 
+    def save_where_it_got_to(folder: str, why: str) -> None:
+        # Never over the legacy final path: a stop is often because the run was going badly,
+        # and that path is what the next plain-config resume reads.
+        out = run.root / folder
+        try:
+            out.mkdir(exist_ok=True)
+            model.save(str(out / 'model.zip'))
+            env.save(str(out / 'vecnorm.pkl'))
+            print(f"\n{why} at {model.num_timesteps:,} steps; weights saved to {out}")
+            print(f"  continue this run: python scripts/train_standing.py --resume-run {run.root}")
+        except Exception as e:  # noqa: BLE001 -- report, then let the original error through
+            print(f"\n{why}, and saving the weights failed too ({e}); the newest checkpoint "
+                  f"is under {run.root / 'checkpoints'}")
+        sink.close()
+
     try:
         model.learn(total_timesteps=learn_timesteps, callback=CallbackList(callbacks),
                     reset_num_timesteps=reset_num_timesteps)
     except KeyboardInterrupt:
-        # Save where it got to, but NOT over the legacy final path: an interrupt is often
-        # because the run was going badly, and that path is what the next resume reads.
-        out = run.root / 'interrupted'
-        out.mkdir(exist_ok=True)
-        model.save(str(out / 'model.zip'))
-        env.save(str(out / 'vecnorm.pkl'))
-        sink.close()
-        print(f"\nInterrupted at {model.num_timesteps:,} steps; saved to {out}")
-        print(f"  resume: --model {out / 'model.zip'} --vecnorm {out / 'vecnorm.pkl'}")
+        save_where_it_got_to('interrupted', 'Interrupted')
         return
+    except Exception:
+        save_where_it_got_to('crashed', 'Training crashed')
+        raise
 
     # Save final model + vecnorm: the run's own copy, then the legacy paths
     run.final.mkdir(exist_ok=True)
