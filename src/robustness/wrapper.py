@@ -10,6 +10,7 @@ observations as the bare env (tests/test_robustness.py holds it to that).
 
 from __future__ import annotations
 
+from collections import deque
 from typing import Dict, Optional
 
 import gymnasium as gym
@@ -58,8 +59,18 @@ def _rotation(axis, angle) -> np.ndarray:
 class ScenarioWrapper(gym.Wrapper):
 
     def __init__(self, env, mix: Optional[Dict[str, float]] = None,
-                 scenarios: Optional[Dict[str, Scenario]] = None):
+                 scenarios: Optional[Dict[str, Scenario]] = None, mix_unit: str = "steps"):
         super().__init__(env)
+        # WHAT A MIX WEIGHT MEANS. "steps" (default): the share of training STEPS a scenario
+        # gets. "episodes": the share of episodes, which is what stand_pushes ran with on 10/8
+        # -- and its pushed episodes fell after ~9 s against ~110 s for unpushed ones, so 40%
+        # of episodes came to 6.8% of steps and 86% of its training was the control arm's.
+        # For "steps" each scenario is drawn in proportion to weight / mean episode length,
+        # with the lengths measured as training goes.
+        if mix_unit not in ("steps", "episodes"):
+            raise ValueError(f"mix_unit must be 'steps' or 'episodes', not {mix_unit!r}")
+        self.mix_unit = mix_unit
+        self._lengths: Dict[str, deque] = {}
         self.base = env
         while not hasattr(self.base, "place_robot"):     # find the StandingEnv inside
             self.base = self.base.env
@@ -98,6 +109,17 @@ class ScenarioWrapper(gym.Wrapper):
     def get_scenario_mix(self) -> Dict[str, float]:
         return dict(self._weights)
 
+    def episode_probabilities(self) -> Dict[str, float]:
+        """The chance each scenario is drawn at the next reset. A scenario not yet seen is
+        assumed to run the full episode, so the first draws follow the weights."""
+        if self.mix_unit == "episodes":
+            return dict(self._weights)
+        full = float(getattr(self.base, "max_episode_steps", 1000))
+        raw = {n: w / max(1.0, float(np.mean(self._lengths[n])) if self._lengths.get(n) else full)
+               for n, w in self._weights.items()}
+        total = sum(raw.values()) or 1.0
+        return {n: v / total for n, v in raw.items()}
+
     # ------------------------------------------------------------------ gym API
     def _seed_streams(self, seed):
         # One independent stream per aspect, so what one scenario draws for its sensors cannot
@@ -114,8 +136,9 @@ class ScenarioWrapper(gym.Wrapper):
         if isinstance(requested, str):
             requested = self._scenarios[requested]
         if requested is None and self._weights:
-            names = list(self._weights)
-            p = np.array([self._weights[n] for n in names])
+            probs = self.episode_probabilities()
+            names = list(probs)
+            p = np.array([probs[n] for n in names])
             requested = self._scenarios[names[int(self._rng_mix.choice(len(names), p=p))]]
         self.scenario = requested
         self._stratum = (options or {}).get("stratum")
@@ -147,6 +170,7 @@ class ScenarioWrapper(gym.Wrapper):
         self._t += 1
         if self.scenario is not None and (terminated or truncated):
             info["scenario"] = self.scenario.name
+            self._lengths.setdefault(self.scenario.name, deque(maxlen=50)).append(self._t)
         return obs, reward, terminated, truncated, info
 
     # ------------------------------------------------------------------ internals

@@ -188,10 +188,14 @@ class TrainingLogger(BaseCallback):
             causes = [e[3] for e in eps if e[1]]
             for c in set(causes):
                 m[f"train/fall_cause/{c}"] = causes.count(c) / len(eps)
+            total_s = float(secs.sum()) or 1.0
             for sc in {e[2] for e in eps}:
                 sub = [e for e in eps if e[2] == sc]
                 m[f"train/scenario/{sc}/fall_rate"] = float(np.mean([e[1] for e in sub]))
                 m[f"train/scenario/{sc}/ep_len_s"] = float(np.mean([e[0] for e in sub]))
+                # The share of training this scenario actually got. Compare it with the mix:
+                # on 10/8 a 40% weight came to 6.8% of steps and nothing said so.
+                m[f"train/scenario/{sc}/step_share"] = sum(e[0] for e in sub) / total_s
         m["train/episodes_total"] = self._seen_eps
 
         means = {k: s / n for k, (s, n) in self._terms.items() if n}
@@ -235,6 +239,10 @@ class TrainingLogger(BaseCallback):
             top = sorted(means.items(), key=lambda kv: -abs(kv[1]))[:3]
             if top:
                 line += " | reward mostly " + ", ".join(f"{k} {v:+.1f}" for k, v in top)
+            shares = {k.split("/")[2]: v for k, v in m.items() if k.endswith("/step_share")}
+            if len(shares) > 1:
+                line += " | steps: " + " ".join(f"{k} {100 * v:.0f}%" for k, v in
+                                               sorted(shares.items(), key=lambda kv: -kv[1]))
             print(line + ("" if warnings else "  [ok]"))
             for w in warnings:
                 print(f"    WARNING {w}")

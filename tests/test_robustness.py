@@ -196,3 +196,34 @@ def test_suite_names_are_unique_and_every_family_is_scored():
     names = [s.name for s in sc.SUITE]
     assert len(names) == len(set(names))
     assert {s.family for s in sc.SUITE} >= {"quiet", "start", "push", "kick", "sensor", "plant"}
+
+
+# ---------------------------------------------------------------- what a mix weight means (10/9)
+
+def test_mix_weights_are_shares_of_training_steps_not_episodes():
+    """stand_pushes (10/8): 40% of episodes were pushed, but they fell after ~9 s against
+    ~110 s, so pushes got 6.8% of the steps. A weight must mean a share of steps."""
+    from collections import deque
+    w = ScenarioWrapper(_env(), mix={"as_configured": 0.5, "torso_pushes": 0.5})
+    assert w.episode_probabilities() == pytest.approx({"as_configured": 0.5, "torso_pushes": 0.5})
+    w._lengths = {"as_configured": deque([4400]), "torso_pushes": deque([350])}
+    p = w.episode_probabilities()
+    steps = {k: p[k] * {"as_configured": 4400, "torso_pushes": 350}[k] for k in p}
+    total = sum(steps.values())
+    assert steps["torso_pushes"] / total == pytest.approx(0.5)
+    w.mix_unit = "episodes"
+    assert w.episode_probabilities() == pytest.approx({"as_configured": 0.5, "torso_pushes": 0.5})
+
+
+def test_the_wrapper_measures_each_scenarios_episode_length():
+    w = ScenarioWrapper(_env(max_episode_steps=20), mix={"as_configured": 1.0})
+    w.reset(seed=0)
+    for _ in range(20):
+        *_, truncated, _ = w.step(w.base.episode_baseline)
+    assert truncated and list(w._lengths["as_configured"]) == [20]
+
+
+def test_every_scenario_survives_the_round_trip_into_a_run_config():
+    for s in [*sc.SUITE, *sc.TRAINING]:
+        back = sc.Scenario.from_dict(s.name, yaml.safe_load(yaml.safe_dump(s.to_dict())))
+        assert back == s, s.name

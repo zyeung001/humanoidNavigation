@@ -19,7 +19,7 @@ scalar means (v, v).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields
 from typing import Dict, Iterable, List, Optional, Tuple
 
 Range = Tuple[float, float]
@@ -101,6 +101,19 @@ class Scenario:
     # them off so that ONLY what the scenario names is happening.
     env_pushes: Optional[bool] = None
     env_randomisation: Optional[bool] = None
+
+    def to_dict(self) -> dict:
+        """The inverse of from_dict, YAML-safe: what a run's config.yaml records, so the run
+        says exactly what it trained on even after the definitions in this file change."""
+        def plain(v):
+            if isinstance(v, tuple):
+                return [float(x) for x in v]
+            if isinstance(v, dict):
+                return {k: plain(x) for k, x in v.items()}
+            return v
+        d = {k: plain(v) for k, v in asdict(self).items()}
+        d.pop("name")
+        return d
 
     @classmethod
     def from_dict(cls, name: str, d: dict) -> "Scenario":
@@ -225,11 +238,19 @@ TRAINING: List[Scenario] = [
                          joint_offset=(0, 0.12))),
     Scenario("deploy_start", "start", "the robot's real start: on the pose, smoothing at 0",
              start=Start(at_baseline=True, ema_from_zero=True, tilt_deg=(0, 5))),
-    Scenario("torso_pushes", "push", "0-7 N hand pushes on the upper torso, 0.1-0.4 s",
-             disturb=Disturb(kind="push", magnitude=(0, 7), duration_s=(0.1, 0.4),
+    # PUSH AND KICK RANGES ARE MEASURED, not guessed (10/9). The 195M policy was run in the
+    # training conditions (its own exploration noise, env kicks, sensor noise, randomisation)
+    # with one push at a time on a force x duration grid. What decides a fall is the impulse:
+    # ~4% below ~0.7 N*s, 22% at 4 N x 0.2 s, 48% at 5 N x 0.2 s, 91% at 4 N x 0.4 s.
+    # The first ranges (0-7 N x 0.1-0.4 s; kicks 0-3x) put only 31% / 42% of disturbances in
+    # the band where the policy's response decides the outcome (20-80% chance of a fall) --
+    # the rest it shrugged off without effort or could not survive at all. These put 65% / 75%
+    # there. Re-measure when the policy improves: the band moves with it.
+    Scenario("torso_pushes", "push", "3-6 N hand pushes on the upper torso for 0.15-0.25 s",
+             disturb=Disturb(kind="push", magnitude=(3, 6), duration_s=(0.15, 0.25),
                              first_s=(1.0, 3.0), interval_s=(2.0, 4.0))),
-    Scenario("big_kicks", "kick", "velocity kicks up to 3x the configured size",
-             disturb=Disturb(kind="kick", magnitude=(0, 0.45), yaw_rate=(0, 1.5),
+    Scenario("big_kicks", "kick", "velocity kicks of 1.5-2.5x the configured size",
+             disturb=Disturb(kind="kick", magnitude=(0.225, 0.375), yaw_rate=(0.75, 1.25),
                              first_s=(1.0, 3.0), interval_s=(2.0, 4.0))),
     Scenario("sensor_faults", "sensor", "gyro bias to 0.15, IMU tilt to 5 deg, encoders to 4 deg",
              sensors=Sensors(gyro_bias=(0, 0.15), imu_tilt_deg=(0, 5), encoder_bias=(0, 0.07))),

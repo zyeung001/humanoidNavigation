@@ -12,10 +12,11 @@ scripts/eval_standing.py (models/standing/evals/) and from training runs
 
 HOW TO READ A DIFFERENCE. Every result scores the same episodes (same seeds, same pushes),
 so two models are compared episode by episode: `vs ref` is the mean paired difference in %
-of test time upright, +- its standard error, and `won/lost` counts the episodes where this
-model stood longer / shorter than the reference. A difference smaller than ~2 SE, or with
-won and lost close together, is not a difference. Cells marked + or - in the scenario table
-are ones where the paired difference IS beyond 2 SE.
+of test time upright, +- its standard error (clustered by episode index, because episode i
+of every scenario shares its pushes). A difference smaller than ~2 SE is not a difference.
+`won/lost` counts the episodes where this model stood longer / shorter than the reference;
+it describes, it does not test. Cells marked + or - in the scenario table are ones where the
+paired difference in THAT scenario is beyond 2 SE.
 """
 import argparse
 import sys
@@ -45,20 +46,27 @@ def collect(paths):
 
 
 def paired(a: SuiteResult, b: SuiteResult):
-    """Mean and SE of a-b in % upright over every shared episode, and episodes won/lost."""
+    """Mean and SE of a-b in % upright, and episodes won/lost.
+
+    The SE is CLUSTERED by episode index: episode i of every scenario shares its seed and its
+    pushes, so the 19 scenario differences at one index are not 19 independent observations.
+    Pooling them as if they were (until 10/9) made the SE ~1.5x too small and turned a -2.3
+    with a 95% interval of [-6.5, +0.8] into a "real" drop. won/lost is descriptive only.
+    """
     if (a.seed, a.episodes_per_scenario, a.seconds) != (b.seed, b.episodes_per_scenario, b.seconds):
         return None
     bn = b.by_name()
-    d = []
+    rows = []
     for s in a.scenarios:
         o = bn.get(s.name)
-        if o is None:
-            continue
-        d.extend(100.0 * (x.upright_frac - y.upright_frac) for x, y in zip(s.episodes, o.episodes))
-    if not d:
+        if o is not None:
+            rows.append([100.0 * (x.upright_frac - y.upright_frac) for x, y in zip(s.episodes, o.episodes)])
+    if not rows:
         return None
-    d = np.array(d)
-    return float(d.mean()), float(d.std(ddof=1) / np.sqrt(len(d))), int((d > 0).sum()), int((d < 0).sum())
+    d = np.array(rows)                      # scenarios x episode index
+    per_ep = d.mean(axis=0)
+    se = float(per_ep.std(ddof=1) / np.sqrt(len(per_ep))) if len(per_ep) > 1 else 0.0
+    return float(d.mean()), se, int((d > 0).sum()), int((d < 0).sum())
 
 
 def scenario_delta(sa, sb):

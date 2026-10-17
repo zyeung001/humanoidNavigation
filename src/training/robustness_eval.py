@@ -83,7 +83,9 @@ class RobustnessEvalCallback(BaseCallback):
         return True
 
     def _on_training_end(self) -> None:
-        if self._last_step != self.num_timesteps:
+        # The last rollout overshoots the target by up to one rollout (215.00M, then training
+        # stops at 215.014M), so a step-based check scored nearly the same weights twice.
+        if self._last_step is None or self.num_timesteps - self._last_step >= self.every // 10:
             self.evaluate()
 
     def evaluate(self) -> Optional[suite.SuiteResult]:

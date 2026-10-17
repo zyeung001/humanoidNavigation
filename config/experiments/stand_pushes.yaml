@@ -1,14 +1,21 @@
 # On 10/7 the suite found the policy rides out a 5 N torso push only a little better than
 # holding the pose with NO policy (52% vs 38% of the test upright). Its training kicks are
-# the eval's kick_1x, which the no-policy pose already survives 93% of the time -- so training
-# hardly ever needs active balance, and with action_rate_penalty 70 and raw_action_rate 25,
-# keeping still is the cheapest thing on offer. These disturbances are big enough that
-# keeping still loses.
+# the eval's kick_1x, which the no-policy pose already survives 93% of the time, so training
+# hardly ever needs active balance.
+#
+# FIRST ATTEMPT (10/8, 195M -> 215M) DID NOT TEST THIS. Its mix weights counted EPISODES, and
+# pushed episodes fell after ~9 s against ~110 s for unpushed ones, so the 40% / 20% weights
+# below came to 6.8% / 7.6% of training steps -- 86% of its training was the control arm's,
+# and the two arms ended level (+0.7 +- 2.0). Also only 31% of its pushes were in the band
+# where the policy's response decides the outcome. Both fixed 10/9: weights are now shares of
+# training STEPS (training_scenarios.mix_unit), and torso_pushes / big_kicks were recalibrated
+# from a measured per-push survival grid (src/robustness/scenarios.py). Watch
+# train/scenario/*/step_share: it should sit near these weights.
 experiment:
   name: stand_pushes
   base: config/real_humanoid_stand.yaml
-  description: 60% of episodes add torso pushes up to 7 N or velocity kicks up to 3x.
-  hypothesis: Raises the push and kick families well clear of the hold-pose reference.
+  description: 60% of training steps under 3-6 N torso pushes or 1.5-2.5x velocity kicks.
+  hypothesis: Raises the push and kick families above stand_baseline (same code, same start).
   tags: [standing, finetune, robustness, pushes]
   resume:
     model: models/final_real_standing_stand.zip

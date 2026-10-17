@@ -300,3 +300,49 @@ def test_resuming_finds_the_furthest_trained_weights_and_keeps_the_best(tmp_path
     cb.model, cb.num_timesteps = _fake_trainer(), 205_000_000
     cb._on_training_start()                     # this step is already scored: no re-eval
     assert cb._last_step == 205_000_000
+
+
+# ---------------------------------------------------------------- 10/9 corrections
+
+def _train_standing_module():
+    spec = importlib.util.spec_from_file_location("train_standing", ROOT / "scripts" / "train_standing.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_a_run_config_pins_the_definitions_of_the_scenarios_it_mixed():
+    from src.robustness.scenarios import training_scenarios
+    cfg = {"training_scenarios": {"mix": {"as_configured": 0.6, "torso_pushes": 0.4}}}
+    _train_standing_module().pin_scenario_definitions(cfg)
+    ts = cfg["training_scenarios"]
+    assert ts["mix_unit"] == "steps" and set(ts["define"]) == {"as_configured", "torso_pushes"}
+    assert training_scenarios(ts["define"])["torso_pushes"] == training_scenarios()["torso_pushes"]
+
+
+def test_the_score_se_is_clustered_by_episode_index():
+    """Episode i of every scenario shares its pushes. Two scenarios that always agree carry
+    the information of one, so the SE must not shrink by sqrt(2) for having two."""
+    one = _result("a", {"s1": [1.0, 0.5, 0.0, 0.25]})
+    two = _result("a", {"s1": [1.0, 0.5, 0.0, 0.25], "s2": [1.0, 0.5, 0.0, 0.25]})
+    assert two.score_se == pytest.approx(one.score_se)
+    spec = importlib.util.spec_from_file_location("compare_models", ROOT / "scripts" / "compare_models.py")
+    cm = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cm)
+    ref1, ref2 = _result("r", {"s1": [0.5] * 4}), _result("r", {"s1": [0.5] * 4, "s2": [0.5] * 4})
+    assert cm.paired(two, ref2)[1] == pytest.approx(cm.paired(one, ref1)[1])
+
+
+def test_the_end_of_training_does_not_score_the_same_weights_twice(tmp_path):
+    from src.training.experiment import RunDir
+    from src.training.robustness_eval import RobustnessEvalCallback
+    run = RunDir.create("r", base=tmp_path)
+    cb = RobustnessEvalCallback({}, run, MetricsSink(run.metrics), every=5_000_000, at_start=False)
+    calls = []
+    cb.evaluate = lambda: calls.append(1)
+    cb._last_step, cb.num_timesteps = 215_000_000, 215_014_000     # one rollout past the last eval
+    cb._on_training_end()
+    assert calls == []
+    cb._last_step = 211_000_000
+    cb._on_training_end()
+    assert calls == [1]

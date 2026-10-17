@@ -70,6 +70,26 @@ def scenario_mix(cfg: dict):
     return dict(mix), known
 
 
+def pin_scenario_definitions(cfg: dict) -> None:
+    """Write every mixed scenario's full definition into the config, plus what a weight means.
+
+    A run's config.yaml used to record only the names in its mix. torso_pushes was then
+    recalibrated (10/9), and stand_pushes' config could no longer say what it trained on. With
+    the definitions written into training_scenarios.define, the file is the whole story and a
+    --resume-run trains on exactly what the run started with, whatever the code says later.
+    """
+    ts = cfg.get('training_scenarios') or {}
+    mix, known = scenario_mix(cfg)
+    if not mix:
+        return
+    define = dict(ts.get('define') or {})
+    for name in mix:
+        define.setdefault(name, known[name].to_dict())
+    ts['define'] = define
+    ts.setdefault('mix_unit', 'steps')
+    cfg['training_scenarios'] = ts
+
+
 def make_env_fns(n_envs: int, seed: int, cfg: dict):
     # env_kind selects the factory: 'standing' (default, height curriculum) or
     # 'real_turning' (the WTR turning env on the real body). Absent -> standing, so
@@ -77,6 +97,7 @@ def make_env_fns(n_envs: int, seed: int, cfg: dict):
     factory = (make_real_turning_env if cfg.get('env_kind') == 'real_turning'
                else make_standing_curriculum_env)
     mix, scenarios = scenario_mix(cfg)
+    mix_unit = (cfg.get('training_scenarios') or {}).get('mix_unit', 'steps')
 
     def make(rank: int):
         def _init():
@@ -86,7 +107,7 @@ def make_env_fns(n_envs: int, seed: int, cfg: dict):
             # sensor fault, a plant change) from a weighted mix, on top of the env's own
             # randomisation. Without the block the env is not wrapped at all.
             if mix:
-                env = ScenarioWrapper(env, mix=mix, scenarios=scenarios)
+                env = ScenarioWrapper(env, mix=mix, scenarios=scenarios, mix_unit=mix_unit)
             # Monitor populates info["episode"] with the return and length of each finished
             # episode. Without it nothing downstream can see them: SB3's own rollout table
             # shows no ep_len_mean, and the training logger never sees an episode end. 155M
@@ -274,6 +295,7 @@ def main():
             standing['final_model_path'] = str(run.final / 'model')
         if 'vecnormalize_path' not in own:
             standing['vecnormalize_path'] = str(run.root / 'vecnorm_latest.pkl')
+    pin_scenario_definitions(standing)
     task_key = 'turning' if exp.config.get('turning') else 'standing'
     if resumed is None:
         (run.root / 'config.yaml').write_text(exp.resolved_yaml({
@@ -465,7 +487,9 @@ def main():
     print(f"  Device: {device}")
     print(f"  VecNormalize: {'LOADED' if vecnorm_loaded else 'NEW'}")
     print(f"  Policy: {n_params:,} parameters, obs {env.observation_space.shape[0]}")
+    unit = (standing.get('training_scenarios') or {}).get('mix_unit', 'steps')
     print(f"  Training scenarios: {mix or 'none (env as configured)'}"
+          f"{f'  (weights = shares of training {unit})' if mix else ''}"
           f"{'  [adaptive]' if floor is not None else ''}")
     print(f"  Robustness eval: {'every ' + f'{eval_every:,}' + ' steps' if eval_every else 'off'}")
     print(f"  W&B: {'off' if wb is None else wb.url or wb.settings.mode}")

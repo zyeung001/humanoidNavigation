@@ -11,9 +11,10 @@ Why share-of-time rather than survived/failed: a binary pass on 8 episodes moves
 12.5% and cannot see a model that now falls at 12 s instead of 3 s. The survival count is
 still reported beside it.
 
-How big a difference is real: `score_se` is the standard error from the episode spread. Two
-scores closer than ~2 combined SEs could be noise, and compare_models.py also counts, per
-paired episode, which model stood longer -- the more sensitive test when seeds are shared.
+How big a difference is real: `score_se` is the standard error clustered by episode index
+(~3 points at 12 episodes). Two models are better compared PAIRED, episode by episode, which
+cancels most of that spread: scripts/compare_models.py reports the paired difference with its
+own clustered SE. Under ~2 SE is noise.
 """
 
 from __future__ import annotations
@@ -137,8 +138,17 @@ class SuiteResult:
 
     @property
     def score_se(self) -> float:
-        k = len(self.scenarios)
-        return float(np.sqrt(sum(s.standing_se ** 2 for s in self.scenarios)) / k)
+        """Standard error of the score, CLUSTERED by episode index. Episode i of every
+        scenario shares its seed, pushes and directions, so the scenarios' results move
+        together and cannot be pooled as independent -- doing that (until 10/9) reported 1.5
+        where the honest figure is ~3.0."""
+        counts = {len(s.episodes) for s in self.scenarios}
+        if len(counts) != 1 or counts.pop() < 2:
+            k = len(self.scenarios)
+            return float(np.sqrt(sum(s.standing_se ** 2 for s in self.scenarios)) / k)
+        per_ep = 100.0 * np.array([[e.upright_frac for e in s.episodes]
+                                   for s in self.scenarios]).mean(axis=0)
+        return float(per_ep.std(ddof=1) / np.sqrt(len(per_ep)))
 
     @property
     def survival_pct(self) -> float:
