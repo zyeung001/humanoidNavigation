@@ -283,6 +283,7 @@
     <exclude body1="mount_1" body2="mount_4" />
     <exclude body1="mount_4" body2="mount_3" />
     <exclude body1="base_link" body2="0003_3" />
+    <exclude body1="base_link" body2="0003_11" />
     <exclude body1="mount_5" body2="0003_8" />
     <exclude body1="mount_2" body2="0003_8" />
     <exclude body1="mount_4" body2="0003_8" />

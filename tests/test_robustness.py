@@ -192,6 +192,31 @@ def test_yaml_scenarios_accept_scalars_and_reject_typos():
         sc.Scenario.from_dict("x", {"distrub": {}})
 
 
+def _overlapping_parts(xml, joint_pos):
+    """Robot-robot geom pairs that interpenetrate with the actuated joints at joint_pos."""
+    import mujoco
+    m = mujoco.MjModel.from_xml_path(xml)
+    d = mujoco.MjData(m)
+    for a, q in enumerate(joint_pos):
+        d.qpos[m.jnt_qposadr[m.actuator_trnid[a, 0]]] = q
+    mujoco.mj_forward(m, d)
+
+    def name(g):
+        return mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, m.geom_bodyid[g])
+
+    return sorted({tuple(sorted((name(c.geom1), name(c.geom2)))) for c in d.contact[:d.ncon]
+                   if m.geom_bodyid[c.geom1] and m.geom_bodyid[c.geom2] and c.dist < 0})
+
+
+def test_no_two_parts_of_the_robot_overlap_where_it_stands():
+    """Real parts cannot overlap, so an overlap at rest is a modelling error, and in sim it is a
+    hard stop. Until 10/16 the right hip-yaw link sat 3.8 mm inside the pelvis (the left one's
+    exclude existed, its mirror did not): R_hip_roll was held at -0.03 rad at full torque, every
+    policy braced against it, and on the robot -- where nothing stops the leg -- they tipped
+    over to the right within 1.5 s."""
+    assert _overlapping_parts(CFG["xml_file"], CFG["residual_baseline"]) == []
+
+
 def test_suite_names_are_unique_and_every_family_is_scored():
     names = [s.name for s in sc.SUITE]
     assert len(names) == len(set(names))

@@ -50,7 +50,9 @@ TABLE = PROJ / "models" / "standing" / "robustness.csv"
 def record(result: suite.SuiteResult, evals_dir=EVALS, table=TABLE) -> Path:
     """Save the full result as JSON and append its summary row to the CSV."""
     safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in result.label)
-    path = result.save(Path(evals_dir) / f"{safe}__{result.fingerprint}.json")
+    # The suite version is in the name: the same weights scored on a changed suite or plant are
+    # a new result, not a replacement for the old one.
+    path = result.save(Path(evals_dir) / f"{safe}__{result.fingerprint}__{result.suite_version}.json")
     row = {"when": result.when, "label": result.label, "fingerprint": result.fingerprint,
            "suite": result.suite_version, "complete": int(result.complete), "seed": result.seed,
            "episodes": result.episodes_per_scenario, "git": result.git, "config": result.config,

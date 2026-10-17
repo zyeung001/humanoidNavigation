@@ -26,7 +26,9 @@ Range = Tuple[float, float]
 
 # Bump whenever SUITE changes in any way. Results carry it, and comparisons refuse to mix
 # versions -- a score is only comparable with scores from the same suite.
-SUITE_VERSION = "standing-v1"
+# Also bump when the PLANT changes: v2 (10/16) = the right hip-yaw link no longer collides with
+# the pelvis, a phantom stop that held R_hip_roll at -0.03 rad in every v1 score.
+SUITE_VERSION = "standing-v2"
 
 
 def as_range(v) -> Range:
