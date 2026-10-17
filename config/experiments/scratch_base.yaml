@@ -1,0 +1,26 @@
+# FROM-SCRATCH CONTROL ARM for architecture and observation experiments. Those change the
+# network or the observation size, so they cannot resume the 195M weights -- and comparing a
+# fresh 60M run against a 195M fine-tune would measure the 135M extra steps, not the idea.
+# Every scratch_* file builds on this one, so any two differ only by what they name. Run each
+# with 3 seeds before believing a difference:
+#
+#   python scripts/train_standing.py --config config/experiments/scratch_base.yaml --seed 1
+#   (then --seed 2, --seed 3; the same for each scratch_* arm)
+#
+# 60M steps at the ~1,100 steps/s this machine trains at is ~15 h per run.
+experiment:
+  name: scratch_base
+  base: config/real_humanoid_stand.yaml
+  description: The stand config trained from nothing for 60M steps, with the robust mix.
+  hypothesis: Control for the scratch_* arms.
+  tags: [standing, scratch, control]
+overrides:
+  standing:
+    total_timesteps: 60000000
+    learning_rate: 0.0003
+    final_learning_rate: 0.0001
+    ent_coef: 0.005
+    final_ent_coef: 0.001
+    training_scenarios:
+      mix: {as_configured: 0.4, wide_start: 0.15, torso_pushes: 0.2, big_kicks: 0.1,
+            sensor_faults: 0.1, slow_plant: 0.05}

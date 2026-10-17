@@ -1,0 +1,3328 @@
+{
+ "label": "hold-baseline",
+ "fingerprint": "hold-baseline",
+ "suite_version": "standing-v1",
+ "seed": 12345,
+ "seconds": 15.0,
+ "episodes_per_scenario": 12,
+ "complete": true,
+ "config": "config/real_humanoid_stand.yaml",
+ "git": "8441f1a+dirty",
+ "when": "2026-10-07 22:12",
+ "step": null,
+ "wall_s": 24.63872456550598,
+ "scenarios": [
+  {
+   "name": "quiet",
+   "family": "quiet",
+   "about": "nominal robot, clean sensors, nothing happens for the whole test",
+   "episodes": [
+    {
+     "seed": 2144853463,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.6310307068074392,
+     "sway_deg": 0.3758246175831544,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 2139344044,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.5804040058026585,
+     "sway_deg": 0.4142329332375917,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 355455631,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.6540596242342955,
+     "sway_deg": 0.38428455728933,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 558802699,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.582809913035609,
+     "sway_deg": 0.37675362749716407,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 999502802,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.6055667184375286,
+     "sway_deg": 0.3959219855021763,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 1845858088,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.6450991568970865,
+     "sway_deg": 0.40333658356641794,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 928751980,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.649566623407707,
+     "sway_deg": 0.4250949339371745,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 1655135283,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.607816987359667,
+     "sway_deg": 0.4025656057499007,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 1349727475,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.6263303655995673,
+     "sway_deg": 0.41976578393593095,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 613336997,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.6560813570548305,
+     "sway_deg": 0.3827875431113831,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 686600534,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.6228802557084565,
+     "sway_deg": 0.3604491881867925,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 768885479,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.601105555110351,
+     "sway_deg": 0.33153639455887185,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    }
+   ]
+  },
+  {
+   "name": "deploy_start",
+   "family": "start",
+   "about": "starts on the baseline pose with command smoothing at 0 -- what deploy_standing does",
+   "episodes": [
+    {
+     "seed": 2144853463,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.951198003631549,
+     "sway_deg": 0.4552183770999431,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 2139344044,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.9357665548014085,
+     "sway_deg": 0.42423178842562503,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 355455631,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.962750431574654,
+     "sway_deg": 0.4257051486299805,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 558802699,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.940303879339754,
+     "sway_deg": 0.3985937526377062,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 999502802,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 3.048767559475058,
+     "sway_deg": 0.4363973706858781,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 1845858088,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.9548250370188045,
+     "sway_deg": 0.37825229715510955,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 928751980,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.93916187416197,
+     "sway_deg": 0.4539391605306186,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 1655135283,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.950314995901607,
+     "sway_deg": 0.43831642999566456,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 1349727475,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.9481372749978867,
+     "sway_deg": 0.434851690366899,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 613336997,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.936029773775201,
+     "sway_deg": 0.42689622163157487,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 686600534,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 3.124776266595444,
+     "sway_deg": 0.44710433680258965,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 768885479,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 3.1415482194592323,
+     "sway_deg": 0.4487843254478034,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    }
+   ]
+  },
+  {
+   "name": "lean_6deg",
+   "family": "start",
+   "about": "let go leaning 6 deg in a random direction",
+   "episodes": [
+    {
+     "seed": 2144853463,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 3.170053471149971,
+     "sway_deg": 0.7681227176434435,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 2139344044,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 5.259845026729501,
+     "sway_deg": 0.6078448094711221,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 355455631,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 7.276948837447183,
+     "sway_deg": 1.0419452565999712,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 558802699,
+     "steps": 383,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 9.202259499738188,
+     "sway_deg": 6.349355135170767,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 999502802,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 3.0858370142689173,
+     "sway_deg": 0.9658455713737127,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 1845858088,
+     "steps": 186,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 9.231456735379371,
+     "sway_deg": 9.267447645187673,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 928751980,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 3.2451094804872085,
+     "sway_deg": 0.6255860592339362,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 1655135283,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.5543741790932177,
+     "sway_deg": 0.563097347371268,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 1349727475,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.841735672106795,
+     "sway_deg": 1.04704488951451,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 613336997,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.8317319193457626,
+     "sway_deg": 0.8742585539190557,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 686600534,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.667766733407574,
+     "sway_deg": 0.797267433034869,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 768885479,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.6630987633344447,
+     "sway_deg": 0.8333141814612454,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    }
+   ]
+  },
+  {
+   "name": "lean_8deg",
+   "family": "start",
+   "about": "let go leaning 8 deg in a random direction",
+   "episodes": [
+    {
+     "seed": 2144853463,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 3.1999882486768323,
+     "sway_deg": 0.9532842649260157,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 2139344044,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 6.793105998930531,
+     "sway_deg": 1.1404262096285915,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 355455631,
+     "steps": 530,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 8.401635879724815,
+     "sway_deg": 5.534970633031825,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 558802699,
+     "steps": 494,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 9.146587294376292,
+     "sway_deg": 5.80687836429541,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 999502802,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 6.736307632130522,
+     "sway_deg": 0.23690044255218917,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 1845858088,
+     "steps": 72,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 12.40700145231835,
+     "sway_deg": 12.315763157952288,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 928751980,
+     "steps": 202,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 9.163181421904369,
+     "sway_deg": 8.687928708502715,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 1655135283,
+     "steps": 75,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 10.49077940130027,
+     "sway_deg": 12.218370475762576,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 1349727475,
+     "steps": 51,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 15.544119983408653,
+     "sway_deg": 13.993665743271213,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 613336997,
+     "steps": 61,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 13.083278364307814,
+     "sway_deg": 13.31123473450414,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 686600534,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.672053991026832,
+     "sway_deg": 1.0158161710299727,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 768885479,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.649395174529881,
+     "sway_deg": 1.026598278806611,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    }
+   ]
+  },
+  {
+   "name": "wobble",
+   "family": "start",
+   "about": "let go rotating 0.6 rad/s about the feet, drifting 0.1 m/s",
+   "episodes": [
+    {
+     "seed": 2144853463,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 3.84444930628268,
+     "sway_deg": 1.2025797850152646,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 2139344044,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 4.865163834365569,
+     "sway_deg": 1.3515508776573195,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 355455631,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 4.715818535517316,
+     "sway_deg": 1.3325022517230904,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 558802699,
+     "steps": 255,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 9.025785215572073,
+     "sway_deg": 7.8991172641277245,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 999502802,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.858778157134018,
+     "sway_deg": 0.43690674108537125,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 1845858088,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.92179774336592,
+     "sway_deg": 0.5738172565521286,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 928751980,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.9517844517329137,
+     "sway_deg": 1.1705627149064906,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 1655135283,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.9825975175203814,
+     "sway_deg": 0.49119589956231663,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 1349727475,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.95478906550529,
+     "sway_deg": 0.4301964469570165,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 613336997,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.930383973631849,
+     "sway_deg": 0.43282485857120706,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 686600534,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 3.143907329865059,
+     "sway_deg": 0.405451110553081,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 768885479,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 3.1891792188913666,
+     "sway_deg": 0.25745362138396694,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    }
+   ]
+  },
+  {
+   "name": "pose_off",
+   "family": "start",
+   "about": "joints start up to 0.1 rad off the standing pose",
+   "episodes": [
+    {
+     "seed": 2144853463,
+     "steps": 31,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 11.7506761846098,
+     "sway_deg": 7.6640915768179445,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 2139344044,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.5354639456835923,
+     "sway_deg": 0.43078461119448924,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 355455631,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.691014739956401,
+     "sway_deg": 0.5235231193451849,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 558802699,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 3.0312518555035695,
+     "sway_deg": 0.27683437360559804,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 999502802,
+     "steps": 201,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 9.131400762774742,
+     "sway_deg": 8.894014111344203,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 1845858088,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.629320243825073,
+     "sway_deg": 0.679931788931343,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 928751980,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 5.715755950879787,
+     "sway_deg": 1.6724697064571559,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 1655135283,
+     "steps": 94,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 9.297809625514505,
+     "sway_deg": 13.302803690130332,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 1349727475,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 3.068656467379893,
+     "sway_deg": 0.29221736839169754,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 613336997,
+     "steps": 141,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 10.374714354083995,
+     "sway_deg": 10.756245050806957,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 686600534,
+     "steps": 27,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 13.556017019178846,
+     "sway_deg": 4.287348657895514,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    },
+    {
+     "seed": 768885479,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 3.1142713160181987,
+     "sway_deg": 0.32642407526788214,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [],
+     "dt": 0.025
+    }
+   ]
+  },
+  {
+   "name": "push_4N",
+   "family": "push",
+   "about": "4 N on the upper torso for 0.2 s, every 3-4 s",
+   "episodes": [
+    {
+     "seed": 2144853463,
+     "steps": 416,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.307535445919461,
+     "sway_deg": 7.456723165213692,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.225,
+      0.6000000000000001,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 2139344044,
+     "steps": 438,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.6285283820964906,
+     "sway_deg": 6.881318284333038,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.275,
+      0.55,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 355455631,
+     "steps": 441,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.362310631507381,
+     "sway_deg": 7.0381342310592006,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.30000000000000004,
+      0.30000000000000004,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 558802699,
+     "steps": 540,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 5.1972186207362014,
+     "sway_deg": 7.146548531959509,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.325,
+      0.325,
+      0.5,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 999502802,
+     "steps": 315,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.21436357103043,
+     "sway_deg": 8.939449375056544,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.55,
+      0.4
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1845858088,
+     "steps": 272,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 3.754645496905883,
+     "sway_deg": 8.614012448319775,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.6000000000000001,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 928751980,
+     "steps": 280,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 3.1625630877142212,
+     "sway_deg": 8.620981004175873,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.30000000000000004,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1655135283,
+     "steps": 173,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.237870929488871,
+     "sway_deg": 11.914047573027629,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.30000000000000004
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1349727475,
+     "steps": 148,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2362600853848607,
+     "sway_deg": 12.365371107611008,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.35000000000000003
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 613336997,
+     "steps": 548,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 3.2611037029057224,
+     "sway_deg": 6.478659977821722,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.275,
+      0.30000000000000004,
+      0.55,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 686600534,
+     "steps": 560,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 6.477065537673093,
+     "sway_deg": 6.141631033662727,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.225,
+      0.375,
+      0.35000000000000003,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 768885479,
+     "steps": 458,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 4.519008709791299,
+     "sway_deg": 8.505384799943242,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.025,
+      0.625,
+      0.4
+     ],
+     "dt": 0.025
+    }
+   ]
+  },
+  {
+   "name": "push_5N",
+   "family": "push",
+   "about": "5 N on the upper torso for 0.2 s, every 3-4 s",
+   "episodes": [
+    {
+     "seed": 2144853463,
+     "steps": 410,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.182590630691356,
+     "sway_deg": 7.395642733129383,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.275,
+      0.35000000000000003,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 2139344044,
+     "steps": 149,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.1295041915883233,
+     "sway_deg": 11.876364378914543,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.375
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 355455631,
+     "steps": 150,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2658047614008714,
+     "sway_deg": 12.091792169841597,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 558802699,
+     "steps": 303,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 3.0514156874832024,
+     "sway_deg": 9.095068123373501,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.5,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 999502802,
+     "steps": 292,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2998983543222216,
+     "sway_deg": 8.906043234541302,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.7250000000000001,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1845858088,
+     "steps": 260,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 5.841617634741788,
+     "sway_deg": 8.409258032964031,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.8,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 928751980,
+     "steps": 265,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 7.339447199208981,
+     "sway_deg": 8.30450905105128,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.625,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1655135283,
+     "steps": 143,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.1942376335460607,
+     "sway_deg": 13.051135924422354,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1349727475,
+     "steps": 129,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2009094598785537,
+     "sway_deg": 13.343014001407532,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 613336997,
+     "steps": 197,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.3530557957206932,
+     "sway_deg": 10.382217315649596,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.35000000000000003
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 686600534,
+     "steps": 166,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.257382529537866,
+     "sway_deg": 11.498812483844949,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.30000000000000004
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 768885479,
+     "steps": 153,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.17759279102197,
+     "sway_deg": 11.257287418871128,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.65
+     ],
+     "dt": 0.025
+    }
+   ]
+  },
+  {
+   "name": "push_6N",
+   "family": "push",
+   "about": "6 N on the upper torso for 0.2 s, every 3-4 s",
+   "episodes": [
+    {
+     "seed": 2144853463,
+     "steps": 156,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.236906500418303,
+     "sway_deg": 11.626948197419708,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 2139344044,
+     "steps": 130,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.0931593690748,
+     "sway_deg": 12.88108754323584,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 355455631,
+     "steps": 139,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2484400398000424,
+     "sway_deg": 12.507520659919175,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 558802699,
+     "steps": 157,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.1571741480225506,
+     "sway_deg": 11.500436300879159,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 999502802,
+     "steps": 286,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.4476956808428776,
+     "sway_deg": 9.332454415260079,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.42500000000000004,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1845858088,
+     "steps": 257,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 3.7232002980540617,
+     "sway_deg": 8.892831661503314,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.47500000000000003,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 928751980,
+     "steps": 143,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.258989893392988,
+     "sway_deg": 12.943311844570982,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1655135283,
+     "steps": 134,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.178594463502156,
+     "sway_deg": 12.826712564191647,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1349727475,
+     "steps": 121,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.18254505559321,
+     "sway_deg": 13.156468784194375,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 613336997,
+     "steps": 153,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2982290852354934,
+     "sway_deg": 11.871599081071015,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 686600534,
+     "steps": 146,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2299120832766106,
+     "sway_deg": 11.811318105139108,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 768885479,
+     "steps": 134,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.1526589500671345,
+     "sway_deg": 11.618309442623564,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    }
+   ]
+  },
+  {
+   "name": "kick_1.5x",
+   "family": "kick",
+   "about": "1.5x the trained velocity kick, every 3-4 s",
+   "episodes": [
+    {
+     "seed": 2144853463,
+     "steps": 298,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 7.720539938154453,
+     "sway_deg": 9.067469974429256,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.07500000000000001,
+      0.17500000000000002
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 2139344044,
+     "steps": 341,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 6.259504497233816,
+     "sway_deg": 8.64919023290007,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.07500000000000001,
+      0.15000000000000002
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 355455631,
+     "steps": 431,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.5469673679870923,
+     "sway_deg": 6.930918381798102,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.1,
+      0.4,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 558802699,
+     "steps": 425,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.820580595107264,
+     "sway_deg": 7.319705001741998,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.1,
+      0.275,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 999502802,
+     "steps": 475,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.6857543685642704,
+     "sway_deg": 6.9084987382150365,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.07500000000000001,
+      0.1,
+      0.5
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1845858088,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.959238303966371,
+     "sway_deg": 2.161934054037227,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.05,
+      0.07500000000000001,
+      0.07500000000000001,
+      0.275
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 928751980,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.9438003294395885,
+     "sway_deg": 1.3289131239240985,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.07500000000000001,
+      0.05,
+      0.07500000000000001,
+      0.125
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1655135283,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 2.8718795029562108,
+     "sway_deg": 0.702010574908919,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.07500000000000001,
+      0.05,
+      0.07500000000000001,
+      0.1
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1349727475,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 3.045411480023327,
+     "sway_deg": 0.7039134793413053,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.1,
+      0.07500000000000001,
+      0.05,
+      0.07500000000000001
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 613336997,
+     "steps": 167,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.317483078306098,
+     "sway_deg": 10.97704871334363,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.1
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 686600534,
+     "steps": 164,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.25478543016163,
+     "sway_deg": 11.529720541186778,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.1
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 768885479,
+     "steps": 155,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.1949175092293394,
+     "sway_deg": 11.723968269425066,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.47500000000000003
+     ],
+     "dt": 0.025
+    }
+   ]
+  },
+  {
+   "name": "kick_2x",
+   "family": "kick",
+   "about": "2x the trained velocity kick, every 3-4 s",
+   "episodes": [
+    {
+     "seed": 2144853463,
+     "steps": 141,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2184039860141764,
+     "sway_deg": 12.015369735243198,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 2139344044,
+     "steps": 137,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.1048621229837616,
+     "sway_deg": 11.786792855591655,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 355455631,
+     "steps": 290,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 6.164618680198288,
+     "sway_deg": 9.12473067026413,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.125,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 558802699,
+     "steps": 405,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2263843078414665,
+     "sway_deg": 6.953620614303539,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.15000000000000002,
+      0.525,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 999502802,
+     "steps": 436,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.8602063341746575,
+     "sway_deg": 6.7870289277955065,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.1,
+      0.275,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1845858088,
+     "steps": 559,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.7361473604749182,
+     "sway_deg": 7.150861696738487,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.07500000000000001,
+      0.1,
+      0.125,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 928751980,
+     "steps": 556,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.916714340154579,
+     "sway_deg": 6.934448703281359,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.07500000000000001,
+      0.07500000000000001,
+      0.1,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1655135283,
+     "steps": 600,
+     "horizon": 600,
+     "fell": false,
+     "lean_deg": 4.2300582334285295,
+     "sway_deg": 6.049930563312372,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.125,
+      0.125,
+      0.1,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1349727475,
+     "steps": 409,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 7.672975807579238,
+     "sway_deg": 6.919441429562613,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.125,
+      0.1,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 613336997,
+     "steps": 137,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2723871118825585,
+     "sway_deg": 11.51711490863292,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 686600534,
+     "steps": 137,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2159746054629137,
+     "sway_deg": 12.193471649418134,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 768885479,
+     "steps": 126,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.1597655931243107,
+     "sway_deg": 12.103435704719393,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    }
+   ]
+  },
+  {
+   "name": "kick_3x",
+   "family": "kick",
+   "about": "3x the trained velocity kick, every 3-4 s",
+   "episodes": [
+    {
+     "seed": 2144853463,
+     "steps": 124,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.196994559802505,
+     "sway_deg": 11.575651536001216,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 2139344044,
+     "steps": 112,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.0664889129607475,
+     "sway_deg": 12.032869879929773,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 355455631,
+     "steps": 131,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2442433878098185,
+     "sway_deg": 11.561974645587535,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 558802699,
+     "steps": 286,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.8374864461862126,
+     "sway_deg": 10.144147594824476,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.2,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 999502802,
+     "steps": 290,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.178641284124753,
+     "sway_deg": 9.531890816043683,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.17500000000000002,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1845858088,
+     "steps": 409,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 3.0325535923444584,
+     "sway_deg": 7.083646272713865,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.1,
+      0.225,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 928751980,
+     "steps": 290,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 8.163923285084056,
+     "sway_deg": 9.38405565176273,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.15000000000000002,
+      0.15000000000000002
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1655135283,
+     "steps": 138,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.185750899197904,
+     "sway_deg": 11.608325163733875,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1349727475,
+     "steps": 120,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.1800360017751848,
+     "sway_deg": 12.724533688437461,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 613336997,
+     "steps": 124,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.246699946761872,
+     "sway_deg": 11.235568018058137,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 686600534,
+     "steps": 124,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.1928963326252284,
+     "sway_deg": 11.633599463121104,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 768885479,
+     "steps": 113,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.1351191528124254,
+     "sway_deg": 11.457165469227943,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    }
+   ]
+  },
+  {
+   "name": "push_5N_gyro",
+   "family": "sensor",
+   "about": "push_5N, and the gyro reads a false 0.12 rad/s (the 9/26 fault)",
+   "episodes": [
+    {
+     "seed": 2144853463,
+     "steps": 410,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.182590630691356,
+     "sway_deg": 7.395642733129383,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.275,
+      0.35000000000000003,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 2139344044,
+     "steps": 149,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.1295041915883233,
+     "sway_deg": 11.876364378914543,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.375
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 355455631,
+     "steps": 150,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2658047614008714,
+     "sway_deg": 12.091792169841597,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 558802699,
+     "steps": 303,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 3.0514156874832024,
+     "sway_deg": 9.095068123373501,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.5,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 999502802,
+     "steps": 292,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2998983543222216,
+     "sway_deg": 8.906043234541302,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.7250000000000001,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1845858088,
+     "steps": 260,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 5.841617634741788,
+     "sway_deg": 8.409258032964031,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.8,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 928751980,
+     "steps": 265,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 7.339447199208981,
+     "sway_deg": 8.30450905105128,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.625,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1655135283,
+     "steps": 143,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.1942376335460607,
+     "sway_deg": 13.051135924422354,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1349727475,
+     "steps": 129,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2009094598785537,
+     "sway_deg": 13.343014001407532,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 613336997,
+     "steps": 197,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.3530557957206932,
+     "sway_deg": 10.382217315649596,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.35000000000000003
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 686600534,
+     "steps": 166,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.257382529537866,
+     "sway_deg": 11.498812483844949,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.30000000000000004
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 768885479,
+     "steps": 153,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.17759279102197,
+     "sway_deg": 11.257287418871128,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.65
+     ],
+     "dt": 0.025
+    }
+   ]
+  },
+  {
+   "name": "push_5N_imu",
+   "family": "sensor",
+   "about": "push_5N, and the IMU reports gravity 4 deg off",
+   "episodes": [
+    {
+     "seed": 2144853463,
+     "steps": 410,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.182590630691356,
+     "sway_deg": 7.395642733129383,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.275,
+      0.35000000000000003,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 2139344044,
+     "steps": 149,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.1295041915883233,
+     "sway_deg": 11.876364378914543,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.375
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 355455631,
+     "steps": 150,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2658047614008714,
+     "sway_deg": 12.091792169841597,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 558802699,
+     "steps": 303,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 3.0514156874832024,
+     "sway_deg": 9.095068123373501,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.5,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 999502802,
+     "steps": 292,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2998983543222216,
+     "sway_deg": 8.906043234541302,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.7250000000000001,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1845858088,
+     "steps": 260,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 5.841617634741788,
+     "sway_deg": 8.409258032964031,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.8,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 928751980,
+     "steps": 265,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 7.339447199208981,
+     "sway_deg": 8.30450905105128,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.625,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1655135283,
+     "steps": 143,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.1942376335460607,
+     "sway_deg": 13.051135924422354,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1349727475,
+     "steps": 129,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2009094598785537,
+     "sway_deg": 13.343014001407532,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 613336997,
+     "steps": 197,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.3530557957206932,
+     "sway_deg": 10.382217315649596,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.35000000000000003
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 686600534,
+     "steps": 166,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.257382529537866,
+     "sway_deg": 11.498812483844949,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.30000000000000004
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 768885479,
+     "steps": 153,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.17759279102197,
+     "sway_deg": 11.257287418871128,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.65
+     ],
+     "dt": 0.025
+    }
+   ]
+  },
+  {
+   "name": "push_5N_encoders",
+   "family": "sensor",
+   "about": "push_5N, and every joint reads up to 3 deg off",
+   "episodes": [
+    {
+     "seed": 2144853463,
+     "steps": 410,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.182590630691356,
+     "sway_deg": 7.395642733129383,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.275,
+      0.35000000000000003,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 2139344044,
+     "steps": 149,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.1295041915883233,
+     "sway_deg": 11.876364378914543,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.375
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 355455631,
+     "steps": 150,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2658047614008714,
+     "sway_deg": 12.091792169841597,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 558802699,
+     "steps": 303,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 3.0514156874832024,
+     "sway_deg": 9.095068123373501,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.5,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 999502802,
+     "steps": 292,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2998983543222216,
+     "sway_deg": 8.906043234541302,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.7250000000000001,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1845858088,
+     "steps": 260,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 5.841617634741788,
+     "sway_deg": 8.409258032964031,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.8,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 928751980,
+     "steps": 265,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 7.339447199208981,
+     "sway_deg": 8.30450905105128,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.625,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1655135283,
+     "steps": 143,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.1942376335460607,
+     "sway_deg": 13.051135924422354,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1349727475,
+     "steps": 129,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2009094598785537,
+     "sway_deg": 13.343014001407532,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 613336997,
+     "steps": 197,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.3530557957206932,
+     "sway_deg": 10.382217315649596,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.35000000000000003
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 686600534,
+     "steps": 166,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.257382529537866,
+     "sway_deg": 11.498812483844949,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.30000000000000004
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 768885479,
+     "steps": 153,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.17759279102197,
+     "sway_deg": 11.257287418871128,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.65
+     ],
+     "dt": 0.025
+    }
+   ]
+  },
+  {
+   "name": "push_5N_noise",
+   "family": "sensor",
+   "about": "push_5N, with the training sensor noise and biases",
+   "episodes": [
+    {
+     "seed": 2144853463,
+     "steps": 410,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.182590630691356,
+     "sway_deg": 7.395642733129383,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.275,
+      0.35000000000000003,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 2139344044,
+     "steps": 149,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.1295041915883233,
+     "sway_deg": 11.876364378914543,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.375
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 355455631,
+     "steps": 150,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2658047614008714,
+     "sway_deg": 12.091792169841597,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 558802699,
+     "steps": 303,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 3.0514156874832024,
+     "sway_deg": 9.095068123373501,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.5,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 999502802,
+     "steps": 292,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2998983543222216,
+     "sway_deg": 8.906043234541302,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.7250000000000001,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1845858088,
+     "steps": 260,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 5.841617634741788,
+     "sway_deg": 8.409258032964031,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.8,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 928751980,
+     "steps": 265,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 7.339447199208981,
+     "sway_deg": 8.30450905105128,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.625,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1655135283,
+     "steps": 143,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.1942376335460607,
+     "sway_deg": 13.051135924422354,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1349727475,
+     "steps": 129,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2009094598785537,
+     "sway_deg": 13.343014001407532,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 613336997,
+     "steps": 197,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.3530557957206932,
+     "sway_deg": 10.382217315649596,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.35000000000000003
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 686600534,
+     "steps": 166,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.257382529537866,
+     "sway_deg": 11.498812483844949,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.30000000000000004
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 768885479,
+     "steps": 153,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.17759279102197,
+     "sway_deg": 11.257287418871128,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.65
+     ],
+     "dt": 0.025
+    }
+   ]
+  },
+  {
+   "name": "push_5N_slow",
+   "family": "plant",
+   "about": "push_5N, every servo 1.5x slower and 25% weaker",
+   "episodes": [
+    {
+     "seed": 2144853463,
+     "steps": 403,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.6010340875710996,
+     "sway_deg": 7.387885313430415,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.30000000000000004,
+      0.35000000000000003,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 2139344044,
+     "steps": 155,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2289526520500647,
+     "sway_deg": 12.144834722202374,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.375
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 355455631,
+     "steps": 151,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.3762322513062992,
+     "sway_deg": 11.755621400516793,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 558802699,
+     "steps": 305,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 3.2726854300103154,
+     "sway_deg": 9.111228583929748,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.47500000000000003,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 999502802,
+     "steps": 295,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.269497845875325,
+     "sway_deg": 9.655828268149174,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.7000000000000001,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1845858088,
+     "steps": 260,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 5.747745077465598,
+     "sway_deg": 8.212343810628399,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.35000000000000003,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 928751980,
+     "steps": 268,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 6.033351636088613,
+     "sway_deg": 8.527098667485019,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.6000000000000001,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1655135283,
+     "steps": 143,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.29544892750083,
+     "sway_deg": 12.96723504039523,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1349727475,
+     "steps": 129,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2680639442035178,
+     "sway_deg": 13.189458241741917,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 613336997,
+     "steps": 290,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 10.162131622969774,
+     "sway_deg": 8.24298325173129,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.325,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 686600534,
+     "steps": 173,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.3823590568293214,
+     "sway_deg": 11.044733327546508,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.30000000000000004
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 768885479,
+     "steps": 159,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.3078791861972907,
+     "sway_deg": 11.132690170833861,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.225
+     ],
+     "dt": 0.025
+    }
+   ]
+  },
+  {
+   "name": "push_5N_oddbody",
+   "family": "plant",
+   "about": "push_5N, masses +-35% and friction 0.4-1.6 (past training)",
+   "episodes": [
+    {
+     "seed": 2144853463,
+     "steps": 412,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.3562702638330295,
+     "sway_deg": 7.25458064858479,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.275,
+      0.325,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 2139344044,
+     "steps": 152,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.288151161100407,
+     "sway_deg": 11.911024242865906,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.375
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 355455631,
+     "steps": 146,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.3332267870588383,
+     "sway_deg": 11.677898517222916,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 558802699,
+     "steps": 310,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.9436833910985962,
+     "sway_deg": 9.166235162736685,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.325,
+      0.45
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 999502802,
+     "steps": 293,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.4205110105698595,
+     "sway_deg": 9.226144818709331,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.7250000000000001,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1845858088,
+     "steps": 258,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 6.012484951009213,
+     "sway_deg": 8.486206469792853,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.375,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 928751980,
+     "steps": 221,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 10.143455113775184,
+     "sway_deg": 10.307237726012021,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.625
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1655135283,
+     "steps": 142,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.2016135078901113,
+     "sway_deg": 12.563562925417132,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1349727475,
+     "steps": 129,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.168202087711081,
+     "sway_deg": 12.95675753858326,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 613336997,
+     "steps": 414,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 9.529784853615697,
+     "sway_deg": 7.746491981840852,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.325,
+      0.30000000000000004,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 686600534,
+     "steps": 155,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.200195786905789,
+     "sway_deg": 11.278621781964082,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 768885479,
+     "steps": 153,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.238071282048131,
+     "sway_deg": 11.166960436120686,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.675
+     ],
+     "dt": 0.025
+    }
+   ]
+  },
+  {
+   "name": "hardware_like",
+   "family": "combined",
+   "about": "deploy start leaning 3 deg + gyro 0.05 + IMU 2 deg + encoders 2 deg + noise + slower servos + 4 N pushes",
+   "episodes": [
+    {
+     "seed": 2144853463,
+     "steps": 448,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.363007749499694,
+     "sway_deg": 7.076315428395736,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.25,
+      0.65,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 2139344044,
+     "steps": 509,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 3.350359876912711,
+     "sway_deg": 6.652500423230269,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.30000000000000004,
+      0.30000000000000004,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 355455631,
+     "steps": 497,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 3.52208874760167,
+     "sway_deg": 6.404691377702442,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.30000000000000004,
+      0.325,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 558802699,
+     "steps": 485,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 5.395874702066472,
+     "sway_deg": 6.894352819544515,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.55,
+      0.35000000000000003,
+      0.55
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 999502802,
+     "steps": 332,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 3.071877867930261,
+     "sway_deg": 8.179464271054496,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.6000000000000001,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1845858088,
+     "steps": 300,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 4.4482531474643165,
+     "sway_deg": 8.083682418239695,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.6000000000000001,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 928751980,
+     "steps": 302,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 3.453310540252601,
+     "sway_deg": 7.96658177155257,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.30000000000000004,
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1655135283,
+     "steps": 194,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.823885968164359,
+     "sway_deg": 11.378521503616074,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.325
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 1349727475,
+     "steps": 300,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 6.694809901752242,
+     "sway_deg": 8.233341070339751,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      0.325,
+      0.5750000000000001
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 613336997,
+     "steps": 157,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.485343686338163,
+     "sway_deg": 11.075873426704064,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 686600534,
+     "steps": 144,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.228088693457914,
+     "sway_deg": 11.450457521891442,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    },
+    {
+     "seed": 768885479,
+     "steps": 148,
+     "horizon": 600,
+     "fell": true,
+     "lean_deg": 2.1345429363091277,
+     "sway_deg": 11.679184262032717,
+     "jitter": 0.0,
+     "excursion2": 0.0,
+     "recover_s": [
+      NaN
+     ],
+     "dt": 0.025
+    }
+   ]
+  }
+ ],
+ "score": 56.297514619883046,
+ "score_se": 1.4689310661046255,
+ "survival_pct": 27.19298245614035,
+ "families": {
+  "quiet": 100.0,
+  "start": 82.78611111111111,
+  "push": 42.41666666666667,
+  "kick": 51.15740740740741,
+  "sensor": 36.34722222222222,
+  "plant": 38.30555555555556,
+  "combined": 53.0
+ }
+}

@@ -60,25 +60,40 @@ GROUPS = {
     "all":   list(range(0, 17)),
 }
 
+# Joints whose straight pose really is a mechanical stop, so "extend until it stops" is a
+# repeatable reference and the extreme, not the median, is the estimate.
+#
+# This is stated rather than inferred. The first version detected it from the map -- a joint
+# whose centre sat on one end of its own servo_limit -- and that caught the KNEES, which have
+# no stop at all: they bend more than 90 degrees BOTH ways, and their one-sided servo_limit
+# is a designed +/-90 placeholder around the assumed 512, not a measurement. Reading a map
+# convention as physics put the knee centres out by 17 units. The elbows were bench-confirmed
+# one-sided on 6/22, so they stay.
+ONE_SIDED_DOFS = {"R_elbow", "L_elbow"}
+
 REG_ANGLE_LIMIT = 0x09               # 4 bytes, big-endian: min_hi min_lo max_hi max_lo
 DEG = 57.29577951308232
 
 # How to pose each group. Printed before torque comes off; advisory, not enforced.
 POSE_HINT = {
     "legs": (
-        "Lay the robot on its BACK on a flat table -- do NOT try this standing, the legs go\n"
-        "  limp the moment torque drops. Then, gently:\n"
+        "Lay the robot FLAT on a table -- on its back OR face-down, whichever the mounted\n"
+        "  electronics allow. The table PLANE is what sets the alignment; which side faces up\n"
+        "  does not matter, because each servo reads only its own shaft. Do NOT try this\n"
+        "  standing: the legs go limp the instant torque drops. Then, gently:\n"
+        "    - HANG THE FEET OFF THE EDGE of the table. This robot has no ankle, so each foot\n"
+        "      is rigid and perpendicular to its shin; left on the surface it acts as a prop,\n"
+        "      lifts the shin, and quietly destroys the very alignment you are setting.\n"
         "    - extend both knees fully, until they stop. Do not force past the stop; the\n"
         "      knees are one-sided hinges, so that stop IS the straight reference.\n"
-        "    - lay both legs flat and parallel: thighs in line with the torso, kneecaps\n"
-        "      facing straight up (this is what kills hip roll and hip yaw error), feet\n"
-        "      flat on the table.\n"
+        "    - lay both legs flat and parallel: thighs in line with the torso, kneecaps square\n"
+        "      to the table (this is what kills hip roll and hip yaw error).\n"
         "    - hold it there while this reads (a couple of seconds)."
     ),
     "waist": (
-        "With the robot flat on its back, align the chest with the pelvis: no twist (yaw),\n"
-        "  no side lean (roll), no forward bend (pitch). Press both the pelvis block and the\n"
-        "  chest flat to the table -- the table plane sets roll and pitch, its edge sets yaw."
+        "With the robot flat, align the chest with the pelvis: no twist (yaw), no side lean\n"
+        "  (roll), no forward bend (pitch). Press both the pelvis block and the chest flat to\n"
+        "  the table -- the table plane sets roll and pitch, its edge sets yaw."
     ),
     "arms": (
         "Pose BOTH arms hanging straight down, relaxed and symmetric."
@@ -203,13 +218,29 @@ def main():
         if not vals:
             bad.append(j)
             continue
-        med = int(statistics.median(vals))
+        # ONE-SIDED HINGES NEED THE EXTREME, NOT THE MEDIAN. The knees and elbows have their
+        # straight pose sitting exactly on a mechanical stop -- that is why the instructions
+        # say to extend until it stops. You can fail to reach a stop; you cannot push past
+        # it. So the posing error is entirely one-sided and the median sits in the middle of
+        # it, biased away from the stop by half the spread. On 9/3 that put R_knee at -19
+        # units when the rounds nearest the stop said -2, and L_knee at +19 against +8.
+        # Detected from the map, not guessed: a joint whose current centre already sits on
+        # one end of its own servo_limit is one-sided, and that end is the stop.
+        cur0 = int(j.get("center", default_center))
+        one_sided = j["dof"] in ONE_SIDED_DOFS
+        if one_sided:
+            # Which end the stop is on comes from the joint's own limits: the stop is the
+            # end its current centre already sits against.
+            hi_lim = int(j["servo_limit"][1])
+            med = max(vals) if cur0 == hi_lim else min(vals)
+        else:
+            med = int(statistics.median(vals))
         cur = int(j.get("center", default_center))
         off = med - cur
         lo, hi = int(j["servo_limit"][0]), int(j["servo_limit"][1])
         ee = eeprom.get(sid)
         rows.append({
-            "j": j, "sid": sid, "med": med, "vals": vals,
+            "j": j, "sid": sid, "med": med, "vals": vals, "one_sided": one_sided,
             "pose_spread": max(vals) - min(vals),
             "cur_center": cur, "off_units": off,
             "off_deg": off / upr * DEG,
@@ -238,8 +269,10 @@ def main():
             flags.append("EEPROM-CLIP")
         if r["eeprom"] is None:
             flags.append("no-eeprom-read")
-        if r["pose_spread"] > 8:
+        if r["pose_spread"] > 8 and not r["one_sided"]:
             flags.append("POSE-UNSTABLE")
+        if r["one_sided"]:
+            flags.append("one-sided stop: took the round nearest it, not the median")
         print(f"{r['j']['idx']:>3} {r['j']['dof']:<18} {r['sid']:>3} {r['med']:>8} "
               f"{r['cur_center']:>7} {r['off_units']:>+7d} {r['off_deg']:>+7.1f} "
               f"{r['off_rad']:>+8.3f} {r['pose_spread']:>6}  {' '.join(flags)}")

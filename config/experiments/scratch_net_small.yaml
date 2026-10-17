@@ -1,0 +1,16 @@
+# Is 512-512-256 (~0.9M parameters across actor and critic) more network than standing
+# needs? A smaller one that scores the same is cheaper on the Pi and has less room to memorise
+# the simulator. export_policy.py handles any SiLU MLP, so this deploys unchanged.
+experiment:
+  name: scratch_net_small
+  base: config/experiments/scratch_base.yaml
+  hypothesis: Scores within noise of scratch_base -- network size is not the bottleneck.
+  tags: [standing, scratch, architecture]
+overrides:
+  standing:
+    policy_kwargs:
+      net_arch:
+        - pi: [256, 256]
+          vf: [256, 256]
+      activation_fn: SiLU
+      ortho_init: true

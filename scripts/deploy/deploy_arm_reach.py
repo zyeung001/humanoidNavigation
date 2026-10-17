@@ -70,11 +70,25 @@ def main():
     p.add_argument("--ramp-secs", type=float, default=2.0)
     p.add_argument("--arm-step-units", type=int, default=8, help="per-step move clamp, arm servos")
     p.add_argument("--jvel-alpha", type=float, default=0.35,
-                   help="EMA on the jvel obs. NOTE lower alpha = HEAVIER smoothing = MORE "
-                        "lag: tau ~= dt(1-a)/a, so 0.35 -> 46ms but 0.15 -> 142ms. Training "
-                        "feeds instantaneous qvel with NO lag, so raising this toward 1.0 "
-                        "makes deploy closer to training, not further.")
-    p.add_argument("--jvel-clamp", type=float, default=2.5)
+                   help="EMA on the jvel obs. Acts as GAIN, not phase: at ~1 Hz this channel "
+                        "already leads by ~90 deg (it is a derivative), so smoothing cannot "
+                        "make it late enough to destabilise -- it attenuates the magnitude "
+                        "(|H| 0.97 at 0.35, 0.41 at 0.05). Measured 8/5: 1.0 was the WORST "
+                        "setting (err 0.497) and 0.15 changed nothing. Use --jvel-obs-clamp "
+                        "to limit this channel; it is honest about being a gain limit.")
+    p.add_argument("--jvel-clamp", type=float, default=2.5,
+                   help="jpos OUTLIER gate: a reading implying more than this is held for up "
+                        "to 2 frames as a suspected bus glitch. Leave at 2.5 -- lowering it "
+                        "suppresses real fast motion, including a push.")
+    p.add_argument("--jvel-obs-clamp", type=float, default=None,
+                   help="Clamp the jvel OBSERVATION only (rad/s), leaving the outlier gate "
+                        "alone. This is the fix for the arm limit cycle: the policy trained "
+                        "on a plant whose velocity ceiling was 0.226 rad/s (damping 1.0 vs "
+                        "forcerange 0.226) but hardware reaches 1.7+, ~5 sigma outside "
+                        "anything it ever saw, and it extrapolates into POSITIVE velocity "
+                        "feedback there (measured d(action)/d(jvel) = +0.92 on "
+                        "R_shoulder_roll). 0.8 = the training p99, so the channel stays live "
+                        "and in-distribution instead of being deleted.")
     p.add_argument("--zero-jvel", action="store_true",
                    help="Zero the jvel obs channel entirely (mirrors deploy_standing.py). "
                         "The single most discriminating test for the arm limit cycle: the "
@@ -104,6 +118,7 @@ def main():
     from hardware import ServoBus  # noqa: E402
     bus = ServoBus().connect()
     arm_ids = [m.servo_ids[i] for i in ARM_IDX]
+    ARM_NAMES = [m.joints[i].dof for i in ARM_IDX]
     straight_units = m.rad_to_units(np.zeros(NJ, dtype=np.float32))
 
     def full_units(arm_rad):
@@ -146,7 +161,17 @@ def main():
             raw = np.clip(np.where(hold, 0.0, raw), -args.jvel_clamp, args.jvel_clamp)
         prev_jpos = jpos.copy()
         jvel_f = (1.0 - args.jvel_alpha) * jvel_f + args.jvel_alpha * raw
-        jvel_obs = np.zeros(N_ARM, dtype=np.float32) if args.zero_jvel else jvel_f
+        if args.zero_jvel:
+            jvel_obs = np.zeros(N_ARM, dtype=np.float32)
+        elif args.jvel_obs_clamp is not None:
+            # Gain-limit ONLY the observation. Deliberately separate from --jvel-clamp,
+            # which is the jpos outlier gate: reusing one number for both would hold jpos
+            # for 2 frames on any motion faster than the limit, i.e. it would blunt exactly
+            # the push the demo exists to show. Here a shove still registers at full speed
+            # in jpos while the policy sees a velocity inside its trained range.
+            jvel_obs = np.clip(jvel_f, -args.jvel_obs_clamp, args.jvel_obs_clamp)
+        else:
+            jvel_obs = jvel_f
         return np.concatenate([target, jpos, jvel_obs, last_action]).astype(np.float32)
 
     def obs_of(frame):
@@ -199,6 +224,19 @@ def main():
                 print(f"[{step:5d}] pose={pose_name:8s} max|err|={np.abs(err).max():.3f} "
                       f"max|jvel_f|={np.abs(jvel_f).max():.2f} "
                       f"busy={(time.time() - t0) * 1000:4.1f}ms")
+                # Per-joint, because max|err| alone cannot tell "the policy never asked for
+                # the pose" from "it asked and the joint could not get there". want = the
+                # commanded target; cmd = what the policy actually applied (post EMA+clip);
+                # at = the measured angle. cmd near want but at lagging = the joint is not
+                # executing (torque, friction, or a limit). cmd near 0 = the policy is not
+                # asking, and no amount of hardware tuning will fix it.
+                u_now = units.astype(int)
+                for k, nm in enumerate(ARM_NAMES):
+                    lo_u, hi_u = int(m.lim_lo[ARM_IDX[k]]), int(m.lim_hi[ARM_IDX[k]])
+                    edge = "  <<AT-LIMIT" if u_now[k] <= lo_u or u_now[k] >= hi_u else ""
+                    print(f"        {nm:<18} want{target[k]:+.3f}  cmd{applied[k]:+.3f}  "
+                          f"at{prev_jpos[k]:+.3f}  err{err[k]:+.3f}  "
+                          f"u={u_now[k]:4d}[{lo_u}..{hi_u}]{edge}")
             step += 1
             time.sleep(max(0.0, dt - (time.time() - t0)))
     except KeyboardInterrupt:
