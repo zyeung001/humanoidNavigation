@@ -1,0 +1,56 @@
+# scratch_base on the plant the 10/25 hardware logs describe, not the one every earlier run trained on.
+#
+# WHY. Two things made the sim far steadier than the robot (scripts/debug/make_flex_model.py):
+#   1. The MJCF default class gave the FLOATING BASE damping 1 + armature 0.05: the whole robot moved
+#      through honey. No sim pose ever swung past upright (the robot swings 2-6 deg past), and the
+#      shove that topples it was 5.2-5.6 N (3.75 N without the drag).
+#   2. Servo play: with a foot flat the pelvis pitches ~3x what the encoders explain (every log since
+#      10/18). Modelled as a passive pitch hinge at each foot, k 7 per leg, randomised per episode.
+# With both, the hold swings past upright after a release, swings with a ~1.7-2.9 s period, and
+# topples at ~1.2-1.6 N -- the ~3x weakness the 10/18 pendulum test showed. Every policy so far
+# learned to balance a robot that cannot fall the way this one does.
+#
+# Also: the 16 cm feet the robot now has, and the knee2 stance it stands in (config/stances/knee2.yaml).
+#
+# A KNEE LAW UNDER THE POLICY (feedback_prior): knees += 0.5 * pg_x + 0.8 * gyro_y -- bend as the
+# body pitches forward, straighten as it pitches back. Held-out suite on this plant (777 x 24):
+#   hold 39.9 | knees d0.2 +3.1 | d0.4 +5.1 | d0.8 +7.3 | p0.5 d0.8 +8.9 +- 1.1 (used) | p1.0 d0.8 +9.0
+#   hips 0.5/0.1 (the 10/17 scratch_prior law) -8.0 -- worse, as it was on the ROBOT on 10/18; the
+#   old plant said +6. Knees the other way -23.0.
+# One 0.2 s torso push, % that fall (env kicks off): hold 1 N 12, 1.5 N 46, 2 N 83, 3 N 88;
+# law 1 N 4, 1.5 N 8, 2 N 38, 3 N 75.
+#
+# DISTURBANCES RESIZED to this plant (the 10/9 sizes were measured on the dragged one, where the
+# hold never fell): the suite's 4-6 N pushes topple everything here (the push family is ~22 for every
+# controller), and so would the training's 3-6 N. The env's own kicks at 0.15 m/s / 0.5 rad/s fell
+# the hold 71-88% of 10 s episodes; at half size 46% (law 38%), a quarter of which is the start
+# lean push_enabled adds. Pushes now 1-3 N, env kicks halved.
+#
+#   python scripts/train_standing.py --config config/experiments/flex_plant.yaml --wandb online
+# 60M steps ~15 h; best/ is kept by the robustness score as it goes, so a shorter run is usable.
+# The law alone, for the robot (deploy with --residual-config config/stances/knee2.yaml):
+#   python scripts/deploy/export_policy.py --prior-only --pose-from-config \
+#       --config config/experiments/flex_plant.yaml --out models/real_standing_knee2_kneelaw.npz
+experiment:
+  name: flex_plant
+  base: config/experiments/scratch_base.yaml
+  description: scratch_base on the hardware-matched plant (16 cm feet, knee2, undamped base, servo play).
+  hypothesis: A plant that rebounds and topples like the robot gives PPO falls to learn from that the hold suffers.
+  tags: [standing, scratch, flex, sysid]
+overrides:
+  standing:
+    xml_file: models/humanoid_real_v2_soleplate_flex.xml
+    residual_baseline: [0.0, 0.0, 0.0067, 0.00926, 0.0, 0.0, 0.0067, 0.00926, 0.0, 0.1231, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    flex_rand_range: [0.85, 1.45]          # k 6-10 per leg: share of pelvis pitch in no encoder 0.5-0.7
+    flex_damping_rand_range: [0.5, 2.0]
+    feedback_prior:
+      R_knee: {pg_x: 0.5, gyro_y: 0.8}
+      L_knee: {pg_x: 0.5, gyro_y: 0.8}
+    push_lin_vel: 0.075
+    push_ang_vel: 0.25
+    training_scenarios:
+      define:
+        torso_pushes:
+          family: push
+          about: 1-3 N hand pushes on the upper torso for 0.15-0.25 s (sized to the flex plant)
+          disturb: {kind: push, magnitude: [1, 3], duration_s: [0.15, 0.25], first_s: [1.0, 3.0], interval_s: [2.0, 4.0]}

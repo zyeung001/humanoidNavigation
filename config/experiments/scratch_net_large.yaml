@@ -1,0 +1,17 @@
+# The other direction, on the critic only. A bigger value function matters most when heavy
+# randomisation makes returns hard to predict (explained_variance on the 195M run swung
+# 0.35-0.92). The actor keeps the base size, so any change is the critic's, and deploy is
+# unchanged (only the actor is exported).
+experiment:
+  name: scratch_net_large
+  base: config/experiments/scratch_base.yaml
+  hypothesis: Higher, steadier explained_variance and a higher score than scratch_base.
+  tags: [standing, scratch, architecture]
+overrides:
+  standing:
+    policy_kwargs:
+      net_arch:
+        - pi: [512, 512, 256]
+          vf: [1024, 1024, 512]
+      activation_fn: SiLU
+      ortho_init: true

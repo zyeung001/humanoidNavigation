@@ -26,6 +26,14 @@ Command block (11 dims, appended once, not per-frame):
 
 Base standing (balance) environment.
 
+**Logging:** every step's info carries each reward term as `reward/<term>` (15 terms; they sum
+to the reward) and, on termination, `termination_cause` (`tilt` / `height_low` / `height_high`).
+
+**Scenario hooks** (used by `src/robustness`, inert unless called): `place_robot()` (start pose,
+lean about the feet, start velocities; keeps servo-lag and EMA state consistent),
+`set_sensor_offsets()` (exact gyro / IMU-tilt / encoder errors), `episode_baseline`,
+`actuator_lag_scale`, `debug_print_every` (0 silences the per-500-step line).
+
 **Reward components:**
 1. Height reward: Asymmetric piecewise, peak at 1.40m (max 50)
 2. Upright: `12 × exp(-8 × error²)` if height ≥ 1.2m

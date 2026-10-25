@@ -1,0 +1,12 @@
+# 16 frames = 375 ms: long enough to see a whole servo response, and for a 0.12 rad/s gyro
+# bias to integrate to ~2.6 deg. If 8 helps and 16 helps more, the window was the limit; if
+# 16 is worse than 8, the extra 900 inputs cost more than they tell. Same deploy note as
+# scratch_history8 (HISTORY = 16).
+experiment:
+  name: scratch_history16
+  base: config/experiments/scratch_base.yaml
+  hypothesis: A further gain over scratch_history8 on the slow-servo and sensor scenarios.
+  tags: [standing, scratch, observation]
+overrides:
+  standing:
+    obs_history: 16

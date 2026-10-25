@@ -13,6 +13,22 @@
 
 Stages 1 (standing) and 2 (walking) use `training_config.yaml` directly with no override.
 
+## `experiments/` — new standing variants go HERE, not in another full config copy
+
+An experiment file = `experiment:` (name, `base`, description, hypothesis, tags, optional
+`resume: {model, vecnorm, timesteps}`) + `overrides:` (only the keys that change). `base` may
+be another experiment (chains merge in order; `resume` is inherited). Its overrides are logged
+as `changes.*` in W&B, so the runs table shows what each run changed.
+
+- `stand_baseline` is the CONTROL ARM for the `stand_*` fine-tunes (all resume 195M -> 215M).
+- `scratch_base` is the control for the `scratch_*` architecture/observation arms (from
+  scratch, 60M; run each with `--seed 1/2/3`).
+- `scratch_prior` = scratch_base + `feedback_prior` (a fixed hip-pitch tilt law under the
+  policy). scratch_base tied the no-feedback pose (10/17); the law alone scores 74.8.
+- `training_scenarios: {mix: {name: weight}, adaptive: <floor>|false, define: {...}}` mixes
+  scenarios from `src/robustness/scenarios.py` TRAINING into training episodes.
+- One variable per file. obs_history / net_arch changes cannot resume old weights.
+
 ## `training_config.yaml`
 
 Single YAML file with three top-level keys: `standing`, `walking`, and `maze`. Standing and walking share most parameter names but with different values.

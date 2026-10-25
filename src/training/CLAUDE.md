@@ -1,5 +1,19 @@
 # src/training/ — Transfer Learning, Model Management, Callbacks
 
+## Standing training pipeline (used by `scripts/train_standing.py`)
+
+| File | What |
+|------|------|
+| `experiment.py` | `load_experiment(path)`: a plain config, or an experiment file = `experiment: {base, name, hypothesis, resume}` + `overrides:`. Chains (an experiment's base may be an experiment). `changes_flat()` is what the run changed. `RunDir`: `runs/<name>/{config.yaml, checkpoints/, best/, final/, metrics.jsonl, evals.jsonl}` |
+| `run_logger.py` | `MetricsSink` (one dict -> run JSONL + W&B), `start_wandb()`, `TrainingLogger` callback (`train/` `reward/` `ppo/` `health/` `perf/`) and the console line. Module docstring = how to read the dashboard |
+| `robustness_eval.py` | `RobustnessEvalCallback`: every N steps (and at start) checkpoint -> score on `src/robustness` SUITE -> `eval/*`, copy best to `runs/<name>/best/`, optional adaptive training mix |
+
+- `eval/score` is the only number comparable across runs with different rewards/obs/nets.
+- Experiments never read or write the base config's `final_model_path`/`vecnormalize_path`
+  (they go to the run dir), and never implicitly load its vecnorm.
+- A run's `config.yaml` is the effective config (`experiment.resolved: true`); loading it does
+  not re-merge and does not auto-resume.
+
 ## `transfer_utils.py` — Standing → Walking Transfer
 
 The core transfer pipeline. Called by `scripts/train_walking.py` when `--from-standing` is passed.

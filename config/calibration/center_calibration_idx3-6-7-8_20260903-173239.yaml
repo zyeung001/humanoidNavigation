@@ -1,0 +1,107 @@
+measured_utc: '2026-09-03T21:32:39.212093+00:00'
+group: idx3-6-7-8
+samples: 15
+repeat: 4
+units_per_rad: 195.0
+servo_center: 512
+joints:
+- idx: 3
+  dof: R_knee
+  servo_id: 7
+  straight_units: 492
+  rounds:
+  - 491
+  - 485
+  - 494
+  - 493
+  pose_spread: 9
+  center_in_use: 512
+  offset_units: -20
+  offset_deg: -5.88
+  offset_sim_rad: 0.1026
+  map_limit_now:
+  - 206
+  - 512
+  map_limit_shifted:
+  - 186
+  - 492
+  eeprom_limit:
+  - 206
+  - 512
+  clips_map: false
+  clips_eeprom: false
+- idx: 6
+  dof: L_hip_pitch
+  servo_id: 10
+  straight_units: 498
+  rounds:
+  - 496
+  - 496
+  - 501
+  - 500
+  pose_spread: 5
+  center_in_use: 512
+  offset_units: -14
+  offset_deg: -4.11
+  offset_sim_rad: -0.0718
+  map_limit_now:
+  - 411
+  - 613
+  map_limit_shifted:
+  - 397
+  - 599
+  eeprom_limit:
+  - 413
+  - 615
+  clips_map: false
+  clips_eeprom: false
+- idx: 7
+  dof: L_knee
+  servo_id: 11
+  straight_units: 537
+  rounds:
+  - 529
+  - 529
+  - 546
+  - 547
+  pose_spread: 18
+  center_in_use: 512
+  offset_units: 25
+  offset_deg: 7.35
+  offset_sim_rad: 0.1282
+  map_limit_now:
+  - 512
+  - 818
+  map_limit_shifted:
+  - 537
+  - 843
+  eeprom_limit:
+  - 516
+  - 822
+  clips_map: false
+  clips_eeprom: false
+- idx: 8
+  dof: waist_roll
+  servo_id: 3
+  straight_units: 495
+  rounds:
+  - 496
+  - 500
+  - 494
+  - 492
+  pose_spread: 8
+  center_in_use: 485
+  offset_units: 10
+  offset_deg: 2.94
+  offset_sim_rad: -0.0513
+  map_limit_now:
+  - 411
+  - 613
+  map_limit_shifted:
+  - 421
+  - 623
+  eeprom_limit:
+  - 414
+  - 616
+  clips_map: false
+  clips_eeprom: false

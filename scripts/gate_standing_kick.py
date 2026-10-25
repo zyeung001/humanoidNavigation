@@ -59,7 +59,9 @@ def main():
     venv = VecNormalize.load(str(PROJ / args.vecnorm), venv)
     venv.training = False
     venv.norm_reward = False
-    model = PPO.load(str(PROJ / args.model), device="cpu")
+    # Bounds from the env so the gate exercises what the robot runs (see check_saturation).
+    model = PPO.load(str(PROJ / args.model), device="cpu",
+                     custom_objects={"action_space": env.action_space})
 
     m = env.unwrapped.model
     d = env.unwrapped.data

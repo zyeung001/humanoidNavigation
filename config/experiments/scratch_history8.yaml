@@ -1,0 +1,16 @@
+# 4 frames at 40 Hz is a 75 ms window. The measured servo dead time is 41-67 ms with a
+# 17-94 ms time constant on top, so a command's effect has barely begun before the command
+# scrolls out of view: the policy cannot watch its own actions land, and cannot tell a slow
+# servo from a fast one. A 0.12 rad/s gyro bias integrates to only 0.5 deg over 75 ms -- under
+# the proj_grav noise -- so it cannot be told from a real rotation either. 8 frames = 175 ms.
+#
+# DEPLOY NOTE: deploy_standing.py has HISTORY = 4 and asserts obs_dim == 228, so a policy
+# from this run is refused there (loudly, not silently) until HISTORY is set to 8.
+experiment:
+  name: scratch_history8
+  base: config/experiments/scratch_base.yaml
+  hypothesis: A longer history raises push_5N_slow and push_5N_gyro over scratch_base.
+  tags: [standing, scratch, observation]
+overrides:
+  standing:
+    obs_history: 8
