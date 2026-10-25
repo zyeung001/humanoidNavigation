@@ -20,6 +20,10 @@ Standing (5M steps)  →  Transfer Learning  →  Walking (30M steps)  →  Maze
 | `src/training/` | Transfer learning, model management, callbacks | [CLAUDE.md](src/training/CLAUDE.md) |
 | `src/maze/` | Procedural maze generation + navigation | [CLAUDE.md](src/maze/CLAUDE.md) |
 | `src/agents/` | High-level agent wrappers + diagnostics | [CLAUDE.md](src/agents/CLAUDE.md) |
+| `src/robustness/` | Scenarios (starts, pushes, sensor/plant faults) for training mixes + the eval suite and its score | [CLAUDE.md](src/robustness/CLAUDE.md) |
+| `config/experiments/` | Standing experiments: a base config + only the keys that change | [config/CLAUDE.md](config/CLAUDE.md) |
+| `runs/` | One directory per training run (gitignored): config, checkpoints, best/, final/, logs | — |
+| `tests/` | `python -m pytest` (robustness mechanics, training pipeline, maze) | — |
 | `src/utils/` | Visualization + WandB utilities | [CLAUDE.md](src/utils/CLAUDE.md) |
 | `scripts/` | Training, evaluation, debug entry points | [CLAUDE.md](scripts/CLAUDE.md) |
 | `config/` | Single YAML config for all tasks | [CLAUDE.md](config/CLAUDE.md) |
@@ -62,6 +66,14 @@ make evaluate ARGS="--task walking --model models/walking/final/final_walking_mo
 
 # Maze navigation
 python scripts/run_maze_nav.py --maze-type corridor --model models/walking/best/model.zip --record
+
+# Real-robot standing: experiment -> robustness score -> compare (see scripts/CLAUDE.md)
+python scripts/train_standing.py --config config/experiments/stand_pushes.yaml --wandb online
+python scripts/eval_standing.py --run runs/<name>
+python scripts/compare_models.py
+
+# Tests
+python -m pytest
 ```
 
 ## Common Pitfalls
@@ -72,4 +84,7 @@ python scripts/run_maze_nav.py --maze-type corridor --model models/walking/best/
 - **Standing exploit**: Walking Stage 0 requires `actual_speed ≥ 0.5 × commanded_speed` to prevent the agent from earning rewards by standing still.
 - **Reward scale**: Walking rewards were scaled down 10× from original values. High rewards cause PPO KL divergence explosion.
 - **Value function re-init**: During transfer, the standing value function must be re-initialized — standing value estimates corrupt walking gradients.
+- **Judge standing models by `eval/score`, against the no-feedback poses**: training reward is not comparable across runs. On 10/7 the deployed 195M policy scored 70.5, indistinguishable from commanding the straight pose with no feedback (70.8), which is also what an UNTRAINED net does.
+- **Phantom self-collision** (fixed 10/16, suite -> standing-v2): the real-robot MJCF excluded the LEFT hip-yaw link vs the pelvis but not the right, so sim R_hip_roll sat on a stop the robot does not have. Every policy since 8/14 braced on it and fell sideways on hardware. If a policy works in sim and not on the robot, compare each joint's command vs position in sim first.
+- **Entropy schedule on resume** (fixed 10/7): it divided cumulative steps by this call's steps, so every fine-tune ran ent_coef ~ -0.024. LR and clip follow SB3's progress, which on a resume starts near 0.1, so a fine-tune runs at close to the FINAL lr/clip.
 - **Yaw bandwidth too soft**: `reward_yaw_bandwidth` controls yaw tracking sharpness. At 4.0 (old hardcoded value), the agent retained 91% of yaw reward while producing zero turning. Default is now 10.0 (configurable). Curriculum advancement also gates on yaw error.

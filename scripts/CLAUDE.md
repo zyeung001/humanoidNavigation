@@ -4,20 +4,41 @@
 
 ### `train_standing.py`
 
-Train the standing (balance) controller from scratch.
+Train the standing (balance) controller. `--config` takes a plain config or an experiment file
+(`config/experiments/`). Every run writes `runs/<experiment>-<date>/` (resolved config,
+checkpoints, `best/` by robustness score, `final/`, logs); plain configs also still write their
+legacy `final_model_path`/`vecnormalize_path`.
 
 ```bash
-# Fresh training
-python scripts/train_standing.py --timesteps 5000000
-
-# Resume from checkpoint
-python scripts/train_standing.py --model models/best_standing_model.zip \
-    --vecnorm models/vecnorm.pkl --timesteps 5000000
+# Experiment (resume model comes from the file), W&B on
+python scripts/train_standing.py --config config/experiments/stand_pushes.yaml --wandb online
+# Check an experiment builds and see its starting score, without training
+python scripts/train_standing.py --config config/experiments/scratch_history8.yaml --dry-run
+# Plain config, as before
+python scripts/train_standing.py --config config/real_humanoid_stand.yaml \
+    --model models/final_real_standing_stand.zip --vecnorm models/vecnorm_real_standing_stand.pkl \
+    --timesteps 215000000
 ```
 
-Key args: `--timesteps`, `--model` (resume from), `--vecnorm` (VecNormalize stats).
+Key args: `--timesteps` (cumulative), `--model`/`--vecnorm`, `--wandb online|offline|disabled`,
+`--seed`, `--eval-every N` (0 = off), `--dry-run`, `--run-name`. Ctrl+C saves to
+`runs/<name>/interrupted/` (never over the legacy final path).
 
-Includes callbacks for entropy scheduling, log_std clamping, and VecNormalize saving. Uses `StandingCurriculumEnv` with 6 stages.
+### `eval_standing.py` / `compare_models.py` — which model is best
+
+```bash
+python scripts/eval_standing.py --npz models/real_standing_stand_195M.npz --config config/real_humanoid_stand.yaml --label stand-195M
+python scripts/eval_standing.py --run runs/<name>            # its best/ checkpoint
+python scripts/eval_standing.py --hold-pose straight --config config/real_humanoid_stand.yaml   # no-feedback reference
+python scripts/compare_models.py                             # ranked, paired vs the best no-feedback pose
+python scripts/compare_models.py --run-history runs/<name>   # one run over time
+```
+
+`eval_standing.py` runs the `src/robustness` suite (~1 min, 11 workers) and records JSON to
+`models/standing/evals/` + a row in `models/standing/robustness.csv`. `compare_models.py` only
+reads results. The old `models/standing/scoreboard.csv` (9/19 harness) is history; its rows
+are not comparable with the new score. `gate_standing_kick.py` is superseded (binary, every
+model passed it).
 
 ### `train_walking.py`
 
