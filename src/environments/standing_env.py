@@ -10,6 +10,7 @@ import numpy as np
 from typing import Optional
 from gymnasium.spaces import Box
 
+from . import feedback_prior
 from .model_spec import introspect_model, is_custom_xml
 
 logger = logging.getLogger(__name__)
@@ -107,6 +108,13 @@ class StandingEnv(gym.Wrapper):
         self.actuator_rand_range = self.cfg.get('actuator_rand_range', [0.8, 1.2])
         self._nominal_gainprm = None
         self._nominal_biasprm = None
+        # Servo-play randomization (models/humanoid_real_v2_soleplate_flex.xml): scale the passive
+        # foot hinges' stiffness and damping per episode. The play was measured only as a share of
+        # the pelvis pitch the encoders miss and a swing period, so the policy gets a range, not
+        # one spring. Inert on a model without ankle_flex_* joints.
+        self.flex_rand_range = self.cfg.get('flex_rand_range', None)
+        self.flex_damping_rand_range = self.cfg.get('flex_damping_rand_range', None)
+        self._flex_dofs = None
 
         # Actuator LAG model: the dominant sim2real gap for the real robot. Bench step-response
         # (scripts/deploy/servo_step_response.py) measured the SCS servos at ~50 ms dead time +
@@ -360,6 +368,20 @@ class StandingEnv(gym.Wrapper):
         else:
             self.default_joint_pos = np.zeros(self.n_joints, dtype=np.float32)
 
+        # FEEDBACK PRIOR: a fixed law added to every action, K @ (pg, gyro) of the newest frame
+        # the policy saw. See feedback_prior.py for why. None = off, byte-identical.
+        self.prior_gain = None
+        self._prior_signals = np.zeros(len(feedback_prior.SIGNALS), dtype=np.float32)
+        if self.cfg.get('feedback_prior') is not None:
+            if not self.proprioceptive:
+                raise ValueError("feedback_prior needs proprioceptive_obs: it reads the IMU frame")
+            names = feedback_prior.joint_names(self.cfg.get("joint_map", "config/joint_servo_map.yaml"))
+            if len(names) != self.n_joints:
+                raise ValueError(f"joint map lists {len(names)} joints, the model has {self.n_joints}")
+            self.prior_gain = feedback_prior.gain_matrix(self.cfg['feedback_prior'], names)
+            print(f"  Feedback prior: {feedback_prior.describe(self.prior_gain, names)}")
+        self.prior_deadband = feedback_prior.deadband_vector(self.cfg.get('feedback_prior_deadband'))
+
         # Humanoid-v5 reports a smaller observation_space than it actually
         # returns (the +15 below is the historical correction for the default
         # capsule model). Custom MJCFs don't have this discrepancy — measure
@@ -485,6 +507,19 @@ class StandingEnv(gym.Wrapper):
             self._bias_jpos = np.random.normal(0.0, self.bias_jpos_std, size=self.n_joints).astype(np.float32)
             self._bias_angvel = np.random.normal(0.0, self.bias_angvel_std, size=3).astype(np.float32)
 
+        if self.flex_rand_range or self.flex_damping_rand_range:
+            m = self.env.unwrapped.model
+            if self._flex_dofs is None:
+                js = [j for j in range(m.njnt) if m.joint(j).name.startswith("ankle_flex")]
+                self._flex_dofs = (np.array(js, dtype=int), m.jnt_stiffness[js].copy(),
+                                   m.dof_damping[m.jnt_dofadr[js]].copy())
+            js, k0, c0 = self._flex_dofs
+            if len(js):
+                ks = np.random.uniform(*self.flex_rand_range) if self.flex_rand_range else 1.0
+                cs = np.random.uniform(*self.flex_damping_rand_range) if self.flex_damping_rand_range else 1.0
+                m.jnt_stiffness[js] = k0 * ks          # one draw per episode: both legs alike
+                m.dof_damping[m.jnt_dofadr[js]] = c0 * cs
+
         # Actuator-gain randomization: scale each position servo's kp/kv per episode, relative
         # to nominal (captured once). gainprm[:,0]=kp, biasprm[:,1]=-kp, biasprm[:,2]=-kv.
         if self.actuator_rand:
@@ -589,6 +624,12 @@ class StandingEnv(gym.Wrapper):
                 qvel[3:6] += np.random.uniform(-self.push_ang_vel, self.push_ang_vel, size=3)
                 lo, hi = self.push_interval_steps
                 self._push_countdown = int(np.random.randint(int(lo), int(hi) + 1))
+
+        # The prior is added FIRST, so everything after -- clipping, smoothing, every penalty --
+        # treats policy + prior exactly as it would a policy that had output the sum.
+        if self.prior_gain is not None:
+            action = np.asarray(action, dtype=np.float32) + self.prior_gain @ feedback_prior.apply_deadband(
+                self._prior_signals, self.prior_deadband)
 
         # Action preprocessing. Capture the previously-applied (smoothed) action
         # before _process_action overwrites prev_action, so the reward can charge
@@ -1002,6 +1043,7 @@ class StandingEnv(gym.Wrapper):
             # Rebuild obs from measurable-only signals; ignore the privileged
             # Humanoid-v5 obs entirely.
             feat_vec = self._proprioceptive_features()
+            self._prior_signals = feat_vec[:len(feedback_prior.SIGNALS)].copy()
         else:
             features = [obs]
 

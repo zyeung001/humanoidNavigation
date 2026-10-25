@@ -1,0 +1,30 @@
+# scratch_base + a FEEDBACK PRIOR under the policy (src/environments/feedback_prior.py).
+#
+# scratch_base-1016-2124 (60M from scratch on the fixed plant) tied commanding the straight
+# pose with no feedback: 68.0 vs 68.6, held-out -1.0 +- 1.2. All its reward gain was the
+# action-rate and saturation penalties shrinking. A two-gain hip-pitch law beats that pose by
+# +6.0 +- 1.1 on held-out seeds, so balance is possible here and PPO did not find it. With the
+# law in the command path an untrained net starts at the law's score, and the policy learns
+# corrections on top of a controller that already balances.
+#
+# The gains (10/17, full suite, then 24 held-out episodes at seed 777 vs hold-straight):
+#   kp 0.5  kd 0.05   +5.0 +- 1.0
+#   kp 0.5  kd 0.1    +6.0 +- 1.1   every family >= hold, hardware_like +8.2   <- used
+#   kp 0.75 kd 0.1    +7.7 +- 1.4   but hardware_like -5.5
+#   kp 1.0+           falls off fast (kp 1.5: -5.1 on the suite)
+# Hip-roll feedback did nothing at these gains; waist-pitch added nothing measurable.
+#
+# Compare against scratch_base (same mix, steps, schedule; only the prior differs):
+#   python scripts/train_standing.py --config config/experiments/scratch_prior.yaml --wandb online
+# The robot runs the prior from the exported npz (export_policy.py writes it in).
+experiment:
+  name: scratch_prior
+  base: config/experiments/scratch_base.yaml
+  description: scratch_base with a fixed hip-pitch tilt feedback law under the policy.
+  hypothesis: Starting from a controller that balances, PPO improves on it instead of settling for the posture.
+  tags: [standing, scratch, prior]
+overrides:
+  standing:
+    feedback_prior:
+      R_hip_pitch: {pg_x: 0.5, gyro_y: 0.1}
+      L_hip_pitch: {pg_x: 0.5, gyro_y: 0.1}

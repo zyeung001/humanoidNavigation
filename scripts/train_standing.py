@@ -395,6 +395,8 @@ def main():
             # Update schedules for continued training
             model.learning_rate = lr_fn
             model.clip_range = clip_fn
+            if standing.get('target_kl') is not None:
+                model.target_kl = float(standing['target_kl'])
 
             current_timesteps = model.num_timesteps
             remaining_timesteps = total_timesteps - current_timesteps
@@ -434,6 +436,9 @@ def main():
             ent_coef=initial_ent,
             vf_coef=float(standing.get('vf_coef', 0.5)),
             max_grad_norm=float(standing.get('max_grad_norm', 0.5)),
+            # flex_plant-1025-0011 ran approx_kl 0.2-0.8 with half the samples clipped: updates far
+            # past the trust region. target_kl stops an update's epochs early once it is crossed.
+            target_kl=(None if standing.get('target_kl') is None else float(standing['target_kl'])),
             policy_kwargs=policy_kwargs,
             seed=seed,
             verbose=int(standing.get('verbose', 1)),
