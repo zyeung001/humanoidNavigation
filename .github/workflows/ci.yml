@@ -38,5 +38,5 @@ jobs:
           cache: pip
       # CPU-only torch: the default wheel pulls ~2 GB of CUDA libraries the tests never use.
       - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
-      - run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt pytest
       - run: python -m pytest -q
