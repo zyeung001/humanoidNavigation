@@ -1,0 +1,19 @@
+# The robot is let go however it happens to be let go: leaning, still moving, not quite on the
+# pose, and (on the real robot) with deploy's command smoothing starting from zero. Training
+# only ever started from the same straight, still reset, so none of that was in its
+# distribution.
+experiment:
+  name: stand_wide_starts
+  base: config/real_humanoid_stand.yaml
+  description: Half of the training episodes start somewhere other than the reset pose.
+  hypothesis: Raises the start family (lean_6deg, lean_8deg, wobble, pose_off, deploy_start)
+    without costing the push or kick scores.
+  tags: [standing, finetune, robustness, starts]
+  resume:
+    model: models/final_real_standing_stand.zip
+    vecnorm: models/vecnorm_real_standing_stand.pkl
+    timesteps: 215000000
+overrides:
+  standing:
+    training_scenarios:
+      mix: {as_configured: 0.5, wide_start: 0.3, deploy_start: 0.2}

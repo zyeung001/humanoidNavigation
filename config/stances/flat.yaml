@@ -1,0 +1,27 @@
+# Stance 'flat' (10/18): the 9/3 pose's fore-aft angles (waist pitch, mean hip pitch, mean knee),
+# everything else symmetric -- no twist, hip roll 0, so both soles sit flat, feet 16.4 cm apart.
+# The 9/3 pose (real_humanoid_stand.yaml) is narrow (shins ~3 mm apart), twisted and on its sole
+# edges. On the robot: stands untouched; both foot sensors loaded (first time). Sim held-out
+# (seed 777 x 24, hold, no feedback): 69.4 on 12 cm feet, 90.8 on 16 cm feet.
+# Deploy-only: residual_baseline + residual_clamp, for deploy_standing.py --residual-config and
+# pose_sweep.py --baseline. Sim radians, actuator order.
+standing:
+  residual_baseline:
+  - 0.0
+  - 0.0
+  - 0.0067
+  - -0.02565
+  - 0.0
+  - 0.0
+  - 0.0067
+  - -0.02565
+  - 0.0
+  - 0.1231
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  residual_clamp: 0.2

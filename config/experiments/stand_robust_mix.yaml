@@ -1,0 +1,22 @@
+# Everything at once, and ADAPTIVE: after each robustness eval the mix shifts toward the
+# families the policy is failing (weight = base * (0.25 + that family's failure rate)). This
+# is "find where it breaks, then train on that", automated. Judge it against stand_baseline,
+# and against stand_wide_starts / stand_pushes to see whether mixing helps or dilutes.
+experiment:
+  name: stand_robust_mix
+  base: config/real_humanoid_stand.yaml
+  description: Wide starts, pushes, kicks, sensor faults and slow servos, re-weighted toward
+    whatever the suite says is failing.
+  hypothesis: Best robustness score of the fine-tunes. Watch the quiet lean and jitter numbers
+    for what it costs.
+  tags: [standing, finetune, robustness, adaptive]
+  resume:
+    model: models/final_real_standing_stand.zip
+    vecnorm: models/vecnorm_real_standing_stand.pkl
+    timesteps: 215000000
+overrides:
+  standing:
+    training_scenarios:
+      mix: {as_configured: 0.25, wide_start: 0.15, deploy_start: 0.05, torso_pushes: 0.2,
+            big_kicks: 0.1, sensor_faults: 0.1, slow_plant: 0.05, everything: 0.1}
+      adaptive: 0.25

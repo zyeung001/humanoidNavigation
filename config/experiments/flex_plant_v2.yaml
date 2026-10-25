@@ -1,0 +1,38 @@
+# flex_plant with the two PPO faults run flex_plant-1025-0011's own logs show, and the twitch fix.
+#
+# flex_plant-1025-0011 (60M) never beat the law it trained over: held-out best -1.7 +- 0.6, final
+# -3.2 +- 0.6, and 3-15x jerkier. Its metrics.jsonl says why:
+#   1. UPDATES FAR PAST THE TRUST REGION: approx_kl 0.2-0.8, clip_fraction 0.4-0.55 all run (healthy
+#      ~0.01-0.03 / ~0.1-0.2); the eval score wandered 45.7-49.1. The main change here.
+#   2. Exploration noise at its floor (ppo/std 0.135 = exp(-2.0), std_at_floor 1.0 from 45M) looked
+#      like a cause but is NOT: the law + N(0, 0.135) per joint per step scores +0.5 +- 0.5 vs the law
+#      on this plant (scratchpad noise_cost.py, 10/25) -- the command EMA and servo lag filter it.
+#      The noise is still allowed lower (the policy kept pressing on the floor); it costs nothing.
+# So: lr 1e-4 -> 3e-5, 3 epochs, target_kl 0.02; noise starts at 0.05 rad and may fall to 0.018;
+# no entropy bonus (it only pushed the std back up against the floor).
+#
+# The law gets the gyro deadband that removed most of the robot's quiet twitch in replay (knee command
+# std 1.39 -> 0.43 deg on the robot's own logged gyro, 83% of the push response kept).
+#
+#   python scripts/train_standing.py --config config/experiments/flex_plant_v2.yaml --wandb online
+# Judge it against the law alone (held-out, paired), not against flex_plant: the law is what the
+# robot runs, and a network that does not beat it should not replace it.
+experiment:
+  name: flex_plant_v2
+  base: config/experiments/flex_plant.yaml
+  description: flex_plant with KL-limited updates, exploration noise allowed below 0.135 rad, and the deadbanded law.
+  hypothesis: With updates kept inside the trust region, PPO can improve on the knee law.
+  tags: [standing, scratch, flex, ppo-fix]
+overrides:
+  standing:
+    total_timesteps: 30000000
+    feedback_prior_deadband: {gyro_y: 0.05}
+    log_std_min: -4.0
+    log_std_max: -2.5
+    policy_kwargs: {log_std_init: -3.0}
+    learning_rate: 0.0001
+    final_learning_rate: 0.00003
+    n_epochs: 3
+    target_kl: 0.02
+    ent_coef: 0.0
+    final_ent_coef: 0.0

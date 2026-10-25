@@ -1,0 +1,271 @@
+measured_utc: '2026-09-03T21:25:01.571306+00:00'
+group: lower
+samples: 15
+repeat: 3
+units_per_rad: 195.0
+servo_center: 512
+joints:
+- idx: 0
+  dof: R_hip_roll
+  servo_id: 4
+  straight_units: 499
+  rounds:
+  - 499
+  - 499
+  - 501
+  pose_spread: 2
+  center_in_use: 512
+  offset_units: -13
+  offset_deg: -3.82
+  offset_sim_rad: -0.0667
+  map_limit_now:
+  - 411
+  - 613
+  map_limit_shifted:
+  - 398
+  - 600
+  eeprom_limit:
+  - 412
+  - 614
+  clips_map: false
+  clips_eeprom: false
+- idx: 1
+  dof: R_hip_yaw
+  servo_id: 5
+  straight_units: 503
+  rounds:
+  - 501
+  - 503
+  - 503
+  pose_spread: 2
+  center_in_use: 512
+  offset_units: -9
+  offset_deg: -2.64
+  offset_sim_rad: -0.0462
+  map_limit_now:
+  - 411
+  - 700
+  map_limit_shifted:
+  - 402
+  - 691
+  eeprom_limit:
+  - 411
+  - 705
+  clips_map: false
+  clips_eeprom: false
+- idx: 2
+  dof: R_hip_pitch
+  servo_id: 6
+  straight_units: 513
+  rounds:
+  - 509
+  - 514
+  - 513
+  pose_spread: 5
+  center_in_use: 512
+  offset_units: 1
+  offset_deg: 0.29
+  offset_sim_rad: -0.0051
+  map_limit_now:
+  - 411
+  - 613
+  map_limit_shifted:
+  - 412
+  - 614
+  eeprom_limit:
+  - 414
+  - 616
+  clips_map: false
+  clips_eeprom: false
+- idx: 3
+  dof: R_knee
+  servo_id: 7
+  straight_units: 500
+  rounds:
+  - 510
+  - 490
+  - 500
+  pose_spread: 20
+  center_in_use: 512
+  offset_units: -12
+  offset_deg: -3.53
+  offset_sim_rad: 0.0615
+  map_limit_now:
+  - 206
+  - 512
+  map_limit_shifted:
+  - 194
+  - 500
+  eeprom_limit:
+  - 206
+  - 512
+  clips_map: false
+  clips_eeprom: false
+- idx: 4
+  dof: L_hip_roll
+  servo_id: 8
+  straight_units: 533
+  rounds:
+  - 531
+  - 536
+  - 533
+  pose_spread: 5
+  center_in_use: 512
+  offset_units: 21
+  offset_deg: 6.17
+  offset_sim_rad: -0.1077
+  map_limit_now:
+  - 411
+  - 613
+  map_limit_shifted:
+  - 432
+  - 634
+  eeprom_limit:
+  - 412
+  - 614
+  clips_map: false
+  clips_eeprom: false
+- idx: 5
+  dof: L_hip_yaw
+  servo_id: 9
+  straight_units: 485
+  rounds:
+  - 485
+  - 485
+  - 486
+  pose_spread: 1
+  center_in_use: 512
+  offset_units: -27
+  offset_deg: -7.93
+  offset_sim_rad: -0.1385
+  map_limit_now:
+  - 411
+  - 735
+  map_limit_shifted:
+  - 384
+  - 708
+  eeprom_limit:
+  - 411
+  - 740
+  clips_map: false
+  clips_eeprom: false
+- idx: 6
+  dof: L_hip_pitch
+  servo_id: 10
+  straight_units: 495
+  rounds:
+  - 506
+  - 486
+  - 495
+  pose_spread: 20
+  center_in_use: 512
+  offset_units: -17
+  offset_deg: -5.0
+  offset_sim_rad: -0.0872
+  map_limit_now:
+  - 411
+  - 613
+  map_limit_shifted:
+  - 394
+  - 596
+  eeprom_limit:
+  - 413
+  - 615
+  clips_map: false
+  clips_eeprom: false
+- idx: 7
+  dof: L_knee
+  servo_id: 11
+  straight_units: 531
+  rounds:
+  - 531
+  - 520
+  - 534
+  pose_spread: 14
+  center_in_use: 512
+  offset_units: 19
+  offset_deg: 5.58
+  offset_sim_rad: 0.0974
+  map_limit_now:
+  - 512
+  - 818
+  map_limit_shifted:
+  - 531
+  - 837
+  eeprom_limit:
+  - 516
+  - 822
+  clips_map: false
+  clips_eeprom: false
+- idx: 8
+  dof: waist_roll
+  servo_id: 3
+  straight_units: 494
+  rounds:
+  - 488
+  - 494
+  - 495
+  pose_spread: 7
+  center_in_use: 485
+  offset_units: 9
+  offset_deg: 2.64
+  offset_sim_rad: -0.0462
+  map_limit_now:
+  - 411
+  - 613
+  map_limit_shifted:
+  - 420
+  - 622
+  eeprom_limit:
+  - 414
+  - 616
+  clips_map: false
+  clips_eeprom: false
+- idx: 9
+  dof: waist_pitch
+  servo_id: 2
+  straight_units: 488
+  rounds:
+  - 493
+  - 482
+  - 488
+  pose_spread: 11
+  center_in_use: 512
+  offset_units: -24
+  offset_deg: -7.05
+  offset_sim_rad: -0.1231
+  map_limit_now:
+  - 411
+  - 613
+  map_limit_shifted:
+  - 387
+  - 589
+  eeprom_limit:
+  - 412
+  - 614
+  clips_map: false
+  clips_eeprom: false
+- idx: 10
+  dof: waist_yaw
+  servo_id: 1
+  straight_units: 528
+  rounds:
+  - 524
+  - 528
+  - 528
+  pose_spread: 4
+  center_in_use: 512
+  offset_units: 16
+  offset_deg: 4.7
+  offset_sim_rad: -0.0821
+  map_limit_now:
+  - 411
+  - 613
+  map_limit_shifted:
+  - 427
+  - 629
+  eeprom_limit:
+  - 411
+  - 613
+  clips_map: false
+  clips_eeprom: false

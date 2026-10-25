@@ -1,0 +1,24 @@
+# Slow posture correction for the 'knee2' stance on the 160 mm feet, read by
+# deploy_standing.py --posture and by src/robustness/policies.PosturePolicy in sim.
+# Both run scripts/deploy/posture_control.py: the filtered pelvis lean bends the knees to move the
+# weight back over the feet (knee + = weight toward the heel).
+#
+# 10/25 retune after the first robot run: the 10/24 settings (gain 1, self_tilt -1.34, up to +15 deg,
+# no rate limit) slammed the knees to their limit within a second of a push, kept them bent while the
+# robot fell backward, and swung it between the limits for a minute. These ignore pushes (the feet
+# handle those) and only correct slow leans, gently.
+# Sim, plated robot, floor tilting at 1 deg/s: statue 11.3 deg facing downhill / 10.8 uphill; these
+# 14.6 / 12.0 (the 10/24 settings reached 17.7 / 12.5 by moving the knees up to 12 deg).
+posture:
+  gain: 1.0              # knee deg per deg of filtered lean beyond the deadband
+  tau_s: 1.0             # low-pass time constant
+  transient_deg: 2.0     # each sample may pull the filter at most this far: pushes barely register
+  deadband_deg: 1.0      # leans the feet hold anyway get no correction (no wandering while still)
+  max_rate_deg_s: 3.0    # the knees move smoothly
+  zero_deg: null         # measured after start: still for window_s, settle_s after the loop starts
+  settle_s: 1.0
+  window_s: 1.5
+  max_spread_deg: 1.5
+  min_deg: -2.0          # knee2 sits ~3.4 deg above the knee servo limit
+  max_deg: 6.0           # ~29 mm of weight shift toward the heel
+  self_tilt: 0.0         # -1.34 in sim (feet flat); on the robot it turned into positive feedback
