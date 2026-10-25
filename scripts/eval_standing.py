@@ -31,6 +31,7 @@ is appended to models/standing/robustness.csv. Rank them with scripts/compare_mo
 """
 import argparse
 import csv
+import hashlib
 import sys
 from pathlib import Path
 
@@ -39,6 +40,7 @@ import numpy as np
 PROJ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJ))
 
+from src.environments import feedback_prior  # noqa: E402
 from src.robustness import policies, suite  # noqa: E402
 from src.robustness.scenarios import suite_scenarios  # noqa: E402
 from src.training.experiment import load_experiment  # noqa: E402
@@ -122,13 +124,29 @@ def main():
     if not args.config:
         p.error("--config is required (it defines the robot, the baseline and the clamp)")
     cfg = load_experiment(args.config).task_cfg("standing")
+    names = feedback_prior.joint_names(cfg.get("joint_map", "config/joint_servo_map.yaml"))
+    prior = feedback_prior.gain_matrix(cfg.get("feedback_prior"), names)
 
-    if args.hold_pose == "straight":
-        pol = policies.HoldPosePolicy(np.zeros(len(cfg["residual_baseline"])), label="hold-straight")
-    elif args.hold_pose:
-        pol = policies.HoldPosePolicy(cfg["residual_baseline"], label="hold-baseline")
+    if args.hold_pose:
+        pose = np.zeros(len(cfg["residual_baseline"])) if args.hold_pose == "straight" \
+            else cfg["residual_baseline"]
+        label = f"hold-{args.hold_pose}"
+        if prior is not None:
+            # Holding a pose over a feedback prior IS the prior's controller: a different
+            # result from the plain pose, so it must not be filed under the same name.
+            label += "+prior-" + hashlib.sha256(prior.tobytes()).hexdigest()[:6]
+        pol = policies.HoldPosePolicy(pose, label=label)
     elif args.npz:
         pol = policies.NpzPolicy(args.npz, label=args.label)
+        # The bundle carries the prior the robot will apply; score it with exactly that.
+        if pol.prior_gain is not None and prior is None:
+            cfg["feedback_prior"] = pol.prior_gain.tolist()
+            print(f"feedback prior from the npz: {feedback_prior.describe(pol.prior_gain, names)}")
+        elif not np.array_equal(pol.prior_gain if pol.prior_gain is not None else 0,
+                                prior if prior is not None else 0):
+            p.error(f"{args.config} and {args.npz} disagree on the feedback prior "
+                    f"(config: {feedback_prior.describe(prior, names)}; "
+                    f"npz: {feedback_prior.describe(pol.prior_gain, names)})")
     else:
         if not args.vecnorm:
             p.error("--model needs --vecnorm: the observation statistics are part of the policy")

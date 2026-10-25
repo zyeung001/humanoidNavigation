@@ -30,6 +30,33 @@ def _checksum(idv, length, instr, params):
     return (~(idv + length + instr + sum(params))) & 0xFF
 
 
+def release_on_hangup():
+    """Make a dropped SSH session (SIGHUP) or a kill (SIGTERM) stop the run the way Ctrl-C does.
+
+    Python's default for both is to exit on the spot, skipping every `finally`, so the servos
+    kept holding the last pose at full torque. On 10/18 the laptop driving a run shut off and
+    the robot was then handled while still stiff. This raises KeyboardInterrupt instead, so the
+    caller's own ramp-and-release path runs. The terminal is gone after a hangup, so output is
+    sent to /dev/null first: a print that raises would skip the torque-off. Later signals are
+    ignored so a second one cannot interrupt the cleanup.
+    """
+    import os
+    import signal
+    import sys
+
+    sigs = [s for s in (getattr(signal, "SIGHUP", None), getattr(signal, "SIGTERM", None)) if s is not None]
+
+    def _stop(signum, frame):
+        for s in sigs:
+            signal.signal(s, signal.SIG_IGN)
+        if signum == getattr(signal, "SIGHUP", None):
+            sys.stdout = sys.stderr = open(os.devnull, "w")
+        raise KeyboardInterrupt
+
+    for s in sigs:
+        signal.signal(s, _stop)
+
+
 class ServoBus:
     """Raw-serial Feetech SCS bus. Positions are servo units (0..1023)."""
 

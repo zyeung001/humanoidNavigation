@@ -242,12 +242,20 @@ def _recoveries(rates: np.ndarray, starts: List[int], end: int, dt: float) -> Li
     return out
 
 
+def _prior_input(base):
+    """The signals the env's prior acts on this step (after its deadband, if any)."""
+    from src.environments.feedback_prior import apply_deadband  # noqa: PLC0415
+    return apply_deadband(base._prior_signals, getattr(base, "prior_deadband", None))
+
+
 def run_episode(policy, wenv: ScenarioWrapper, scenario: Scenario, seed: int, steps: int,
                 stratum=None) -> EpisodeResult:
     base = wenv.base
     data = base.env.unwrapped.data
     np.random.seed(seed)      # StandingEnv draws its noise and randomisation from the global RNG
     obs, _ = wenv.reset(seed=seed, options={"scenario": scenario, "stratum": stratum})
+    if hasattr(policy, "reset"):      # stateful controllers (PosturePolicy) start every episode fresh
+        policy.reset()
     box = None
     clamp = np.asarray(base.residual_clamp, dtype=np.float64)
     if np.any(clamp > 0):
@@ -258,13 +266,16 @@ def run_episode(policy, wenv: ScenarioWrapper, scenario: Scenario, seed: int, st
     fell, t = False, 0
     for t in range(steps):
         a = np.asarray(policy.act(obs), dtype=np.float32)
+        out = a
+        if base.prior_gain is not None:      # the quality metrics describe the whole command
+            a = a + base.prior_gain @ _prior_input(base)
         if prev is not None:
             d_act.append(float(np.mean(np.square(a - prev))))
         prev = a
         if box is not None:
             e = np.maximum(box[0] - a, 0.0) + np.maximum(a - box[1], 0.0)
             exc.append(float(np.sum(e * e)))
-        obs, _, terminated, truncated, _ = wenv.step(a)
+        obs, _, terminated, truncated, _ = wenv.step(out)
         leans.append(_lean_deg(data.qpos))
         rates[t + 1] = float(np.linalg.norm(data.qvel[3:6]))
         if terminated:

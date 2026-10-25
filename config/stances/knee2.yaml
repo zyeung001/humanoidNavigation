@@ -1,0 +1,26 @@
+# Stance 'knee2' (10/18): 'flat' with both knees bent 2 deg more (+ knee = weight toward the heel,
+# ~4.8 mm/deg in sim). Sim tilt limits from a settled stance: forward 8.8 / backward 8.3 deg
+# (flat 7.3 / 9.7, the 9/3 pose 3.9 / 13.4 -- which matched the robot). On the robot it took
+# backward shoves of ~20 deg and came back; hand pushes could not separate it from 'flat', and
+# the sim scores them the same (-0.2 +- 2.3 held-out). Default stance until the sole plates.
+# Deploy-only: residual_baseline + residual_clamp. Sim radians, actuator order.
+standing:
+  residual_baseline:
+  - 0.0
+  - 0.0
+  - 0.0067
+  - 0.00926
+  - 0.0
+  - 0.0
+  - 0.0067
+  - 0.00926
+  - 0.0
+  - 0.1231
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  residual_clamp: 0.2

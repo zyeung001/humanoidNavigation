@@ -233,8 +233,9 @@ def main():
         print("Ctrl-C ramps back and drops torque.\n")
 
     from frame_log import FsrSampler  # noqa: PLC0415
-    from hardware import ServoBus  # noqa: PLC0415
+    from hardware import ServoBus, release_on_hangup  # noqa: PLC0415
 
+    release_on_hangup()
     bus = ServoBus().connect()
     fsr = FsrSampler(channels=[int(c) for c in args.fsr_channels.split(",")])
     # The IMU earns its place twice here: it aborts before a topple, and it measures the
@@ -354,11 +355,13 @@ def main():
                     time.sleep(1 / 40)
         except Exception:
             pass
-        fsr.close()
-        bus.set_torque(m.servo_ids, False)
-        bus.close()
-        if imu is not None:
-            imu.close()
+        try:
+            fsr.close()
+        finally:
+            bus.set_torque(m.servo_ids, False)
+            bus.close()
+            if imu is not None:
+                imu.close()
 
     if args.probe is not None:
         probe_report(probe_hist, args)

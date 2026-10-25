@@ -203,6 +203,12 @@ def main():
                         "policy action to baseline +/- clamp BEFORE the tau-EMA, and ramps to "
                         "the BASELINE pose (the settled attractor) instead of straight. Use with "
                         "a model TRAINED in residual mode.")
+    p.add_argument("--posture", default=None, metavar="YAML",
+                   help="slow posture correction (scripts/deploy/posture_control.py): bends the knees to "
+                        "keep the weight over the feet when the body leans slowly (a tilted floor, a load, "
+                        "the slow forward creep). YAML with a 'posture:' block, e.g. "
+                        "config/stances/posture.yaml. It measures its own zero after the loop starts: "
+                        "leave the robot untouched for ~3 s after letting go.")
     p.add_argument("--trim", default=None,
                    help="ON-ROBOT static calibration (residual mode only): comma-separated "
                         "joint=degrees offsets added to the residual baseline (shifts the ramp "
@@ -249,12 +255,22 @@ def main():
         print(msg)
 
     # ---- load policy (numpy bundle OR torch/SB3) ----
+    prior_term = None   # frame -> command offset, for a policy trained over a feedback prior
     if args.policy_npz:
         from numpy_policy import NumpyPolicy  # noqa: E402
         npol = NumpyPolicy.load(args.policy_npz)
         assert npol.obs_dim == OBS_DIM, f"npz obs_dim {npol.obs_dim} != {OBS_DIM}"
         infer = npol.predict  # raw obs -> action; normalization baked in
         print(f"Policy: NumPy bundle {args.policy_npz} (no torch/SB3, obs_dim={npol.obs_dim})")
+        if npol.prior_gain is not None:
+            prior_term = npol.prior_term
+            rows, cols = np.nonzero(npol.prior_gain)
+            sig = ("pg_x", "pg_y", "pg_z", "gyro_x", "gyro_y", "gyro_z")
+            print("FEEDBACK PRIOR (from the npz): " + ", ".join(
+                f"{m.joints[i].dof} {npol.prior_gain[i, j]:+g}*{sig[j]}" for i, j in zip(rows, cols)))
+            if npol.prior_deadband is not None:
+                print("  signal deadband: " + ", ".join(
+                    f"{s} {v:g}" for s, v in zip(sig, npol.prior_deadband) if v))
     else:
         from stable_baselines3 import PPO  # noqa: E402
         model = PPO.load(args.model, device="cpu")
@@ -271,6 +287,10 @@ def main():
         import yaml  # noqa: E402
         with open(args.residual_config) as f:
             rc = yaml.safe_load(f)["standing"]
+        if rc.get("feedback_prior") is not None and prior_term is None:
+            print(f"{args.residual_config} trains over a feedback_prior, but this policy carries "
+                  "none. Export it with export_policy.py --config <its run config> -- aborting.")
+            return
         # scalar OR per-joint vector -- must mirror standing_env.py exactly or deploy clamps
         # to a different box than training did.
         clamp = np.asarray(rc["residual_clamp"], dtype=np.float32)
@@ -305,10 +325,27 @@ def main():
     n_dev = 0
     EDGE = 0.005   # rad of slack when calling a joint "at the edge"
 
+    posture = None
+    if args.posture:
+        import yaml  # noqa: E402
+        from posture_control import PostureController  # noqa: E402
+        with open(args.posture) as f:
+            pcfg = yaml.safe_load(f)["posture"]
+        posture = PostureController.from_config(pcfg, dt=dt, n_joints=NJ)
+        zero_txt = "measured at start" if posture.fixed_zero is None else f"{posture.fixed_zero:+.2f} deg"
+        rate_txt = "" if posture.max_rate_deg_s is None else f" at <= {posture.max_rate_deg_s:g} deg/s"
+        print(f"POSTURE: knees += {posture.gain:g} x filtered lean beyond {posture.deadband_deg:g} deg (tau "
+              f"{posture.tau_s:g} s, zero {zero_txt}, self_tilt {posture.self_tilt:g}), limited to "
+              f"{posture.min_deg:+g}..{posture.max_deg:+g} deg{rate_txt}, from {args.posture}")
+
     def predict_units(proj_grav, ang_vel, jpos):
         frame = builder.frame(proj_grav, ang_vel, jpos)
         obs = builder.obs(frame)
         raw_action = np.asarray(infer(obs), dtype=np.float32).ravel()
+        if prior_term is not None:      # StandingEnv.step adds it here too, before any clip
+            raw_action = raw_action + prior_term(frame)
+        if posture is not None:         # sim: PosturePolicy's command, which the env clips the same way
+            raw_action = raw_action + posture.offsets(proj_grav)
         # Match StandingEnv._process_action: SB3 clips the action to the space BEFORE the
         # env smooths it, so clip raw -> (residual clamp) -> EMA-smooth -> clip again.
         raw_action = np.clip(raw_action, m.range_lo, m.range_hi)
@@ -334,7 +371,8 @@ def main():
         return
 
     # ---- hardware ----
-    from hardware import ServoBus, IMU  # noqa: E402
+    from hardware import ServoBus, IMU, release_on_hangup  # noqa: E402
+    release_on_hangup()
     axis_remap = None
     if os.path.exists(args.imu_calib):
         import yaml  # noqa: E402
@@ -469,6 +507,9 @@ def main():
             builder.obs(builder.frame(pg, av, jpos))
             time.sleep(dt)
 
+        if args.hold_pose and posture is not None:
+            print("[posture] ignored with --hold-pose (an open-loop hold has no feedback)")
+            posture = None
         if args.hold_pose:
             # Compute the policy's nominal pose deterministically (synthetic upright + home obs,
             # like --dry-run). Feed it long enough for the tau-EMA to settle to the raw target.
@@ -510,6 +551,12 @@ def main():
 
         print(f"Closed loop running (Ctrl-C to stop). jvel_alpha={args.jvel_alpha}, "
               f"max_step_units={args.max_step_units}, tau={args.tau}")
+        if posture is not None:
+            posture.reset()
+            if posture.fixed_zero is None:
+                print("[posture] measuring its zero: let go now and leave the robot untouched for ~3 s",
+                      flush=True)
+        posture_announced = False
         prev_units = home_units.copy().astype(float)
         prev_applied = builder.last_action.copy()
         tilt_bad = 0
@@ -560,6 +607,14 @@ def main():
                 units = np.clip(units, m.lim_lo, m.lim_hi).round().astype(int)
             bus.write_all(m.servo_ids, units, speed=args.speed)
             prev_units = units.astype(float)
+            if posture is not None and posture.engaged:
+                if not posture_announced:
+                    print(f"[posture] zero {posture.zero_deg:+.2f} deg (resting pitch) -> correcting now",
+                          flush=True)
+                    posture_announced = True
+                elif step % 80 == 0:
+                    print(f"[posture] lean {posture.filtered_lean - posture.zero_deg:+5.2f} deg   "
+                          f"knees {posture.correction:+5.2f} deg", flush=True)
 
             if logger is not None:
                 fv, fage = fsr.read() if fsr is not None else ([float("nan")] * 2, float("nan"))
@@ -613,26 +668,29 @@ def main():
         except Exception:
             pass
     finally:
-        if fsr is not None:
-            fsr.close()
-        if streamer is not None:
-            print(f"Streamed {streamer.sent} frames ({streamer.errors} send errors)")
-            streamer.close()
-        if logger is not None:
-            written, dropped = logger.close()
-            print(f"\nFrame log: {written} rows -> {logger.path}"
-                  + (f"   WARNING: {dropped} rows DROPPED (writer fell behind)" if dropped else ""))
-        if n_dev > 0:
-            print(f"\n--- residual saturation summary ({n_dev} frames, clamp {clamp}) ---")
-            print(f"{'joint':<18} {'mean dev':>9} {'at +edge':>9} {'at -edge':>9}")
-            for i in np.argsort(-(sat_hi + sat_lo)):
-                if sat_hi[i] + sat_lo[i] == 0 and abs(dev_sum[i] / n_dev) < 0.02:
-                    continue
-                print(f"{dofs[i]:<18} {dev_sum[i]/n_dev:+9.3f} "
-                      f"{100.0*sat_hi[i]/n_dev:8.0f}% {100.0*sat_lo[i]/n_dev:8.0f}%")
-        bus.set_torque(m.servo_ids, False)
-        bus.close()
-        imu.close()
+        # Torque comes off even if the logging or the summary below raises.
+        try:
+            if fsr is not None:
+                fsr.close()
+            if streamer is not None:
+                print(f"Streamed {streamer.sent} frames ({streamer.errors} send errors)")
+                streamer.close()
+            if logger is not None:
+                written, dropped = logger.close()
+                print(f"\nFrame log: {written} rows -> {logger.path}"
+                      + (f"   WARNING: {dropped} rows DROPPED (writer fell behind)" if dropped else ""))
+            if n_dev > 0:
+                print(f"\n--- residual saturation summary ({n_dev} frames, clamp {clamp}) ---")
+                print(f"{'joint':<18} {'mean dev':>9} {'at +edge':>9} {'at -edge':>9}")
+                for i in np.argsort(-(sat_hi + sat_lo)):
+                    if sat_hi[i] + sat_lo[i] == 0 and abs(dev_sum[i] / n_dev) < 0.02:
+                        continue
+                    print(f"{dofs[i]:<18} {dev_sum[i]/n_dev:+9.3f} "
+                          f"{100.0*sat_hi[i]/n_dev:8.0f}% {100.0*sat_lo[i]/n_dev:8.0f}%")
+        finally:
+            bus.set_torque(m.servo_ids, False)
+            bus.close()
+            imu.close()
 
 
 if __name__ == "__main__":

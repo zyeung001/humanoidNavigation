@@ -103,6 +103,9 @@ class NpzPolicy:
         self.fingerprint = file_fingerprint(npz_path)
         self.obs_dim = int(self._p.obs_dim)
         self.recipe = ("npz", str(npz_path), self.label)
+        # Gains of the feedback prior it was trained over (applied by the env, not by act()),
+        # or None. eval_standing.py puts them in the env config so the npz runs as on the robot.
+        self.prior_gain = self._p.prior_gain
 
     def act(self, obs: np.ndarray) -> np.ndarray:
         return self._p.predict(obs)
@@ -124,6 +127,39 @@ class HoldPosePolicy:
         return self.baseline.copy()
 
 
+def _posture_module():
+    path = PROJ / "scripts" / "deploy" / "posture_control.py"
+    spec = importlib.util.spec_from_file_location("posture_control", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class PosturePolicy:
+    """A fixed stance plus the slow posture correction the robot runs
+    (scripts/deploy/posture_control.py, the same file). Stateful: reset() every episode."""
+
+    FRAME = 57          # newest frame = the last 57 obs values; projected gravity comes first
+
+    def __init__(self, stance, posture_cfg: dict, dt: float = 0.025, label: str = "posture"):
+        self.stance = np.asarray(stance, dtype=np.float32).copy()
+        self.cfg = dict(posture_cfg)
+        self.dt = float(dt)
+        self._c = _posture_module().PostureController.from_config(self.cfg, dt=self.dt,
+                                                                   n_joints=len(self.stance))
+        self.label = label
+        self.fingerprint = label
+        self.obs_dim = None
+        self.recipe = ("posture", self.stance.tolist(), self.cfg, self.dt, label)
+
+    def reset(self) -> None:
+        self._c.reset()
+
+    def act(self, obs: np.ndarray) -> np.ndarray:
+        pg = np.asarray(obs, dtype=np.float32)[-self.FRAME:][:3]
+        return self.stance + self._c.offsets(pg)
+
+
 def rebuild(recipe):
     """The inverse of `.recipe`: construct the same policy in this process."""
     kind, *args = recipe
@@ -133,4 +169,6 @@ def rebuild(recipe):
         return NpzPolicy(args[0], label=args[1])
     if kind == "hold":
         return HoldPosePolicy(args[0], label=args[1])
+    if kind == "posture":
+        return PosturePolicy(args[0], args[1], dt=args[2], label=args[3])
     raise ValueError(f"unknown policy recipe {kind!r}")

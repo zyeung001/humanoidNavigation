@@ -11,6 +11,14 @@ is everything the deploy loop needs. The policy is a plain MLP with no output sq
 Run on the DEV machine (needs torch+SB3), then scp the .npz to the Pi.
 
   python scripts/deploy/export_policy.py        # -> models/real_standing_policy.npz
+
+A model trained over a feedback prior (src/environments/feedback_prior.py) needs its gains on
+the robot too: they are read from --config (default: the run's config.yaml, for a model inside
+runs/<name>/) and written into the bundle as `prior_gain`, which deploy_standing.py applies.
+
+  # the prior ALONE (a network that outputs exactly zero): the controller to test on the robot
+  python scripts/deploy/export_policy.py --prior-only \\
+      --config config/experiments/scratch_prior.yaml --out models/real_standing_prior_only.npz
 """
 
 from __future__ import annotations
@@ -32,7 +40,29 @@ def main():
     p.add_argument("--model", default=str(ROOT / "models" / "final_real_standing_model.zip"))
     p.add_argument("--vecnorm", default=str(ROOT / "models" / "vecnorm_real_standing.pkl"))
     p.add_argument("--out", default=str(ROOT / "models" / "real_standing_policy.npz"))
+    p.add_argument("--config", help="training config or experiment file; its feedback_prior goes "
+                                    "into the bundle (default: the run's config.yaml if the model "
+                                    "is inside runs/<name>/)")
+    p.add_argument("--prior-only", action="store_true",
+                   help="no model: a bundle whose network outputs zero, so the robot runs the "
+                        "straight pose + the --config feedback prior and nothing else")
+    p.add_argument("--pose-from-config", action="store_true",
+                   help="with --prior-only: output the --config's residual_baseline (e.g. the knee2 "
+                        "stance) instead of the straight pose, so the law acts around the trained stance")
     args = p.parse_args()
+
+    if args.config is None and not args.prior_only:
+        run_cfg = Path(args.model).resolve().parent.parent / "config.yaml"
+        args.config = str(run_cfg) if run_cfg.exists() else None
+    prior = prior_gain(args.config)
+    deadband = prior_deadband(args.config) if prior is not None else None
+    if args.prior_only:
+        if prior is None:
+            p.error("--prior-only needs a --config with a feedback_prior")
+        write_prior_only(args.out, prior, args.config,
+                         pose=config_pose(args.config) if args.pose_from_config else None,
+                         deadband=deadband)
+        return
 
     import torch  # noqa: F401  (only needed here on the dev machine)
     from stable_baselines3 import PPO
@@ -83,9 +113,65 @@ def main():
     print(f"parity max|numpy - sb3 mean| = {max_err:.2e}  (obs_dim={obs_dim}, act_dim={act_dim})")
     assert max_err < 1e-4, f"parity check FAILED ({max_err:.2e}) — do not deploy this npz"
 
+    if prior is not None:
+        arrays["prior_gain"] = prior
+        print(f"feedback prior from {args.config}: {np.count_nonzero(prior)} gains")
+        if deadband is not None:
+            arrays["prior_deadband"] = deadband
+            print(f"  with signal deadband {deadband.tolist()}")
+    elif args.config:
+        print(f"no feedback prior in {args.config}")
+    else:
+        print("no --config and no run config next to the model: exported WITHOUT a feedback prior")
     np.savez(args.out, **arrays)
     sz = Path(args.out).stat().st_size / 1e6
     print(f"OK: wrote {args.out} ({sz:.2f} MB). Parity verified. torch/SB3 not needed to run it.")
+
+
+def prior_gain(config):
+    """The (17, 6) feedback-prior gains a config trains with, or None."""
+    if not config:
+        return None
+    import sys  # noqa: PLC0415
+    sys.path.insert(0, str(ROOT))
+    from src.environments import feedback_prior  # noqa: PLC0415
+    from src.training.experiment import load_experiment  # noqa: PLC0415
+    cfg = load_experiment(config).task_cfg("standing")
+    names = feedback_prior.joint_names(str(ROOT / cfg.get("joint_map", "config/joint_servo_map.yaml")))
+    return feedback_prior.gain_matrix(cfg.get("feedback_prior"), names)
+
+
+def prior_deadband(config):
+    """The (6,) signal deadband a config's prior uses (feedback_prior_deadband), or None."""
+    import sys  # noqa: PLC0415
+    sys.path.insert(0, str(ROOT))
+    from src.environments import feedback_prior  # noqa: PLC0415
+    from src.training.experiment import load_experiment  # noqa: PLC0415
+    cfg = load_experiment(config).task_cfg("standing")
+    return feedback_prior.deadband_vector(cfg.get("feedback_prior_deadband"))
+
+
+def config_pose(config):
+    """The residual_baseline (sim rad, actuator order) a config trains around."""
+    import sys  # noqa: PLC0415
+    sys.path.insert(0, str(ROOT))
+    from src.training.experiment import load_experiment  # noqa: PLC0415
+    return np.asarray(load_experiment(config).task_cfg("standing")["residual_baseline"], np.float32)
+
+
+def write_prior_only(out, prior, config, obs_dim=228, pose=None, deadband=None):
+    """A bundle the deploy loop runs like any policy: a constant output (the straight pose, or
+    `pose`) + the prior (and its signal deadband, if the config has one)."""
+    act_dim = prior.shape[0]
+    out_b = np.zeros(act_dim, np.float32) if pose is None else np.asarray(pose, np.float32)
+    extra = {} if deadband is None else {"prior_deadband": np.asarray(deadband, np.float32)}
+    np.savez(out, n_hidden=np.array(0, dtype=np.int64),
+             out_w=np.zeros((act_dim, obs_dim), np.float32), out_b=out_b,
+             obs_mean=np.zeros(obs_dim, np.float32), obs_var=np.ones(obs_dim, np.float32),
+             clip_obs=np.array(50.0, np.float32), epsilon=np.array(1e-8, np.float32),
+             prior_gain=prior.astype(np.float32), **extra)
+    what = "the straight pose" if pose is None else "the config's stance"
+    print(f"OK: wrote {out}: {what} + the feedback prior from {config}, no network.")
 
 
 if __name__ == "__main__":
