@@ -104,11 +104,27 @@ def test_the_sim_policy_is_the_stance_plus_the_robot_controller_and_rebuilds_in_
     np.testing.assert_allclose(twin.act(obs), pol.act(obs), atol=0)
 
 
-def test_deploy_loads_the_shipped_posture_config():
+def _hold_npz(path, stance, obs_dim=228):
+    """A hold bundle (what models/real_standing_hold_knee2.npz is): no network, outputs `stance`.
+    Built here because models/*.npz is gitignored, so CI never has the shipped one."""
+    stance = np.asarray(stance, np.float32)
+    np.savez(path, n_hidden=np.array(0, dtype=np.int64),
+             out_w=np.zeros((len(stance), obs_dim), np.float32), out_b=stance,
+             obs_mean=np.zeros(obs_dim, np.float32), obs_var=np.ones(obs_dim, np.float32),
+             clip_obs=np.array(50.0, np.float32), epsilon=np.array(1e-8, np.float32))
+    return path
+
+
+def test_deploy_loads_the_shipped_posture_config(tmp_path):
     import subprocess
     import sys
+
+    import yaml
+    with open("config/stances/knee2.yaml") as f:
+        stance = yaml.safe_load(f)["standing"]["residual_baseline"]
+    npz = _hold_npz(tmp_path / "hold_knee2.npz", stance)
     out = subprocess.run([sys.executable, "scripts/deploy/deploy_standing.py", "--dry-run",
-                          "--policy-npz", "models/real_standing_hold_knee2.npz",
+                          "--policy-npz", str(npz),
                           "--residual-config", "config/stances/knee2.yaml",
                           "--posture", "config/stances/posture.yaml"],
                          capture_output=True, text=True, timeout=120)
