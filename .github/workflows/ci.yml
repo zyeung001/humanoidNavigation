@@ -1,10 +1,17 @@
 name: CI
 
+# Runs on every pull request into main, and on main after a merge.
+# A PR is ready to merge only when both jobs are green.
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+
+# A new push to a PR cancels that PR's run still in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint:
@@ -16,3 +23,20 @@ jobs:
           python-version: "3.11"
       - run: pip install ruff
       - run: ruff check .
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      MPLBACKEND: Agg        # maze renderer tests draw with matplotlib; no display on the runner
+      WANDB_MODE: disabled   # tests must never reach W&B
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      # CPU-only torch: the default wheel pulls ~2 GB of CUDA libraries the tests never use.
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q

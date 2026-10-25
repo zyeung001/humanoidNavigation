@@ -2,6 +2,36 @@
 
 Reinforcement learning for humanoid locomotion and navigation using PPO (Stable Baselines3) and MuJoCo physics simulation. Three-stage pipeline: standing balance → walking → maze navigation.
 
+## How we work: every change goes through a pull request
+
+`main` only changes by merging a PR. Nobody commits or pushes to `main` directly.
+
+1. **Start from fresh `main`, on a new branch named for the one thing it does:**
+   `git switch main && git pull && git switch -c posture-deadband`
+2. **Commit as you go** (a commit per logical step, message = what changed and why) and
+   **push at least at the end of every work session**: `git push -u origin <branch>`.
+   Work that exists only on this laptop is not backed up and nobody can review it.
+3. **Open a PR into `main`** as soon as the branch has something to show
+   (`gh pr create --base main`). Keep pushing to the same branch; the PR updates itself.
+4. **CI must be green** (`.github/workflows/ci.yml`: `ruff check .` + `python -m pytest`).
+   Run both locally before pushing.
+5. **Merge** (merge commit, not squash) once CI passes and the user agrees the PR is done,
+   then delete the branch. The next piece of work starts again at step 1.
+
+One topic per PR: a reward change, a deploy fix and a new eval script are three PRs.
+Hardware runs, evals and training results belong in the PR whose code produced them.
+
+**For agents: the user is learning GitHub, so keep them on this workflow.** Before acting,
+and briefly (one line, then help), point it out when a request or the repo state deviates
+from it, and offer the PR way:
+- asked to commit or push to `main`, or about to start work while `main` is checked out
+- uncommitted or unpushed work left from an earlier session (check `git status` first)
+- new work starting on a branch that belongs to a different topic, or a PR growing a second topic
+- merging with CI red or not yet run, or a branch left behind after its PR merged
+
+Do not commit, push, open or merge PRs unless asked, but when asked to "save" or
+"ship" work, the answer is a branch + PR, not a commit on `main`.
+
 ## Architecture
 
 ```
