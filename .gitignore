@@ -239,6 +239,10 @@ models/**/*.npz
 models/*.npz
 
 
+# The robot's address for scripts/robot_run.py (copy config/robot.yaml.example). Per laptop,
+# and an IP/username does not belong in git.
+config/robot.yaml
+
 # Frame logs from the real robot (scripts/deploy/frame_log.py) -- data, not source.
 # The .meta.json sidecar records the git SHA and file md5s, so a log always
 # identifies the code that produced it without being tracked itself.
