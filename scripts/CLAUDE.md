@@ -118,7 +118,8 @@ has the operator's keypress markers (`scripts/deploy/events.py`: push_forward/ba
 fell, caught, kick, mark, note, each with `t_wall`/`t_rel` and the nearest logged `step`) and a
 `run_note` line with their after-run "what did you see?" (also `events.operator_note` in the
 meta). Start from the events: they say where in the frames to look. No events file = no key
-was pressed or there was no terminal (`events.reason` in the meta says which).
+was pressed or there was no terminal (`events.reason` in the meta says which). No `run_note`
+after a kill or SSH hangup is expected: the question is not asked then (nobody may be there).
 A tilt cut leaves the cut frame and ~1 s of the fall (torque off, `u_cmd` NaN); a Ctrl-C/hangup
 leaves the ramp home. `servo_telemetry.telemetry_fallback: true` in the meta = a servo ignored
 the 8-byte read at startup and the run logged position only.

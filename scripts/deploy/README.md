@@ -113,14 +113,22 @@ first frame -> the first, after the last -> the last). After the run, with torqu
 off, it asks for each `n` note and a one-line "what did you see?" (Enter skips), stored as a
 `run_note` line (`key` "", the run's last step) and as `events.operator_note` in the meta.
 The meta's `events` block also says whether keys were on and, if not, why.
+It does NOT ask after a SIGTERM or SIGHUP stop (a `kill` from another session, a timeout, the
+laptop tool, a dropped SSH session), nor while a failed torque-off leaves the servos possibly
+stiff: nobody may be at that terminal, and a second `kill` is ignored, so a question there would
+hold the process forever. An unanswered question gives up after 120 s. The markers are written
+either way.
 
 - **Needs a terminal:** run it as `ssh -t pi@<ip> 'cd ~/humanoidnavigation && python3 ...'` or from
   an interactive SSH shell. Piped, `nohup`, ssh without `-t`, Windows or a background job (`&`):
   one `[events] off: <why>` line and the run is unchanged.
 - **The terminal is always given back:** cbreak mode, not raw, so Ctrl-C stops the run as
-  before; Ctrl-Z is disabled while keys are read (suspending the loop would freeze the robot at
-  torque). On a normal end, a tilt cut, Ctrl-C, SIGTERM, SIGHUP or a crash the mode is restored
-  right AFTER torque-off. If a terminal is ever left without echo, type `reset` + Enter.
+  before; Ctrl-Z and `Ctrl-\` are disabled while keys are read (suspending the loop would
+  freeze the robot at torque; SIGQUIT would kill it with no torque-off and no terminal restore).
+  Arrow, Home/End and other keys that send escape sequences are dropped whole, so they never
+  record a marker (Down is `ESC [ B`, which would otherwise read as `b` push_back). On a normal
+  end, a tilt cut, Ctrl-C, SIGTERM, SIGHUP or a crash the mode is restored right AFTER
+  torque-off. If a terminal is ever left without echo, type `reset` + Enter.
 - **Costs the loop nothing:** keys are read on their own thread, and the step is matched on
   the frame logger's writer thread. Each key is appended to the file when pressed, so a run
   that dies keeps its markers.
@@ -180,31 +188,6 @@ be checked on the robot; do them once after syncing, before trusting a schema-2 
 8. **SSH hangup:** start a run, kill the laptop's SSH session, fetch the logs. `console.txt` has
    `Stopping: ramping to home` and the `Frame log: N rows` line; the CSV has the ~40 ramp rows; the
    meta has `rows_written`/`ended_unix`; the servos are released.
-
-### Event markers (events.py)
-9. **Keys during a run:** `ssh -t` in, `--hold-pose` as in 6, robot supported. The legend
-   prints; press `m`, `f`, `x`, `c`, `n`, and one key that means nothing (`q`): each echoes at
-   once (`q` prints a hint), none shows as a typed letter, and the hold keeps 40 Hz
-   (`loop_ms` p99 unchanged). End it with Ctrl-C: torque comes off, the terminal echoes
-   normally again, and it asks for the `n` note, then "What did you see?". Answer both.
-   `.events.jsonl` has 6 lines (5 keys + `run_note`); each `step` is the CSV row whose `t_wall`
-   is nearest the line's `t_wall`; the meta's `events.count` is 6.
-10. **Ctrl-Z is ignored, Ctrl-C is not:** during a run Ctrl-Z does nothing (the run keeps
-   going); Ctrl-C still stops it.
-11. **Restored on a kill:** start a run, `kill <pid>` (SIGTERM) from a second SSH session:
-   torque off, then the question appears in the first terminal and what you type there is
-   echoed (after it, `stty -a` shows `icanon echo`). Repeat with a tilt cut (`--hold-pose`,
-   let it tip into the cut).
-12. **Hangup:** start a run, close the laptop's SSH session: servos released (as in 8),
-   `.events.jsonl` has the keys pressed before the drop, and the run did not wait at the prompt
-   (`ended_unix` within seconds of the drop; meta `events.operator_note` null). Log back in:
-   the new shell is normal.
-13. **No terminal:** `ssh pi@<ip> 'cd ~/humanoidnavigation && python3 scripts/deploy/deploy_standing.py --hold-pose ...'`
-   (no `-t`) prints `[events] off: stdin is not a terminal ...`, runs, and never prompts.
-   Same with `... &` in a shell: `[events] off: the run is in the background ...`, and the
-   job is NOT stopped (`jobs` shows Running).
-14. **pose_sweep:** a short `--probe 0` with keys `x`/`c` as it goes over and is caught; the
-   question comes after the `--- PROBE` summary.
 9. **FSR, default wiring:** `--log-fsr` alone: meta `fsr.channels` = L_heel/L_toe on 0x48 AIN0/1;
    `fsr_v0`/`fsr_v1` behave as before (press heel, then toe).
 10. **FSR, two boards (after rewiring):** `i2cdetect -y 1` shows 48, 49, 68;
@@ -216,3 +199,40 @@ be checked on the robot; do them once after syncing, before trusting a schema-2 
     `--probe 0`. The CSV has rows through ramp, dwell and ramp back; `sweep_points` and
     `sensor_errors` (expect 0) are in the meta; `console.txt` holds the RESULT block; the printed
     CoP and slope look as before. The extra reads per sample slow dwell sampling to ~16 Hz.
+
+### Event markers (events.py)
+Same rules: tested on the laptop with a fake terminal; these need the real one.
+
+12. **Sync:** `events.py` goes with `deploy_standing.py` and `pose_sweep.py` (md5 check as in 1).
+    `python3 -c "import sys; sys.path.insert(0,'scripts/deploy'); import events; print(events.EVENT_FIELDS)"`
+    prints the 6 fields.
+13. **Keys during a run:** `ssh -t` in, `--hold-pose` as in 6, robot supported. The legend
+    prints; press `m`, `f`, `x`, `c`, `n`, and one key that means nothing (`q`): each echoes at
+    once (`q` prints a hint), none shows as a typed letter, and the hold keeps 40 Hz
+    (`loop_ms`/`busy_ms` p99 unchanged vs `--no-events`). Press the four arrow keys and End:
+    nothing is echoed or recorded. End it with Ctrl-C: torque comes off, the terminal echoes
+    normally again, and it asks for the `n` note, then "What did you see?". Answer both.
+    `.events.jsonl` has 6 lines (5 keys + `run_note`); each `step` is the CSV row whose `t_wall`
+    is nearest the line's `t_wall`; the meta's `events.count` is 6 and `events.operator_note` set.
+14. **Ctrl-Z and `Ctrl-\` are ignored, Ctrl-C is not:** during a run neither does anything (the
+    run keeps going); Ctrl-C still stops it.
+15. **A kill does not wait for an answer:** start a run, `kill <pid>` (SIGTERM) from a second SSH
+    session: torque off, the first terminal echoes normally again (`stty -a` shows
+    `icanon echo`), and the run exits by itself WITHOUT asking "What did you see?"; meta
+    `ended_unix` within seconds of the kill, `events.operator_note` null, keys pressed before it
+    in `.events.jsonl`. Then let a `--hold-pose` run tip into the tilt cut: that one does ask.
+16. **Hangup:** start a run, press a couple of keys, close the laptop's SSH session: servos
+    released (as in 8), `.events.jsonl` has the keys pressed before the drop, and the run did not
+    wait at the prompt (`ended_unix` within seconds of the drop; meta `events.operator_note`
+    null). Log back in: the new shell is normal (if a terminal is ever left without echo,
+    `reset`).
+17. **No terminal:** `ssh pi@<ip> 'cd ~/humanoidnavigation && python3 scripts/deploy/deploy_standing.py --hold-pose ...'`
+    (no `-t`) prints `[events] off: stdin is not a terminal ...`, runs, and never prompts.
+    Same with `... &` in a shell: `[events] off: the run is in the background ...`, and the
+    job is NOT stopped (`jobs` shows Running).
+18. **Nobody answers:** end a run with Ctrl-C and leave the question unanswered: after 120 s it
+    prints `[events] note prompt skipped (no answer in 120 s)` and exits; `.events.jsonl` and the
+    meta's `events` block are written.
+19. **pose_sweep:** a short `--probe 0` with keys `x`/`c` as it goes over and is caught, then
+    Ctrl-C; the question comes after the `--- PROBE` summary, and `.events.jsonl` has
+    `fell`/`caught` at the right steps.
