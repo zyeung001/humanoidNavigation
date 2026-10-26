@@ -27,6 +27,10 @@ from test_frame_log import DOFS, _npz, _read, _run, _stance, robot  # noqa: E402
 REAL_RELEASE_ON_HANGUP = hardware.release_on_hangup
 
 
+# Several tests stub time.sleep to a no-op; waits that must really yield use this.
+_REAL_SLEEP = time.sleep
+
+
 # ---- fakes ---------------------------------------------------------------------------------
 
 class FakeKeys:
@@ -37,6 +41,7 @@ class FakeKeys:
         self.q = queue.Queue()
         self.entered = 0
         self.restored = 0
+        self.recorded = 0      # events the recorder actually kept (see the keys fixture)
         self.log = log
         self.restore_error = restore_error
         self.on_restore = None
@@ -369,6 +374,14 @@ def keys(monkeypatch, robot):  # noqa: F811
     """A fake terminal the deploy scripts will open, its restore logged next to torque-off."""
     k = FakeKeys(log=robot["events"])
     monkeypatch.setattr(events.TtyKeys, "open", classmethod(lambda cls, stdin=None: (k, None)))
+    real_key = events.EventRecorder.key
+
+    def key(self, ch, t_wall=None):
+        ev = real_key(self, ch, t_wall)
+        if ev is not None:
+            k.recorded += 1
+        return ev
+    monkeypatch.setattr(events.EventRecorder, "key", key)
     return k
 
 
@@ -394,8 +407,14 @@ def _press_at_accel_reads(robot, keys, schedule, raise_at=None):  # noqa: F811
         out = real(addr, reg, n)
         if addr == 0x68 and reg == hardware.IMU.ACCEL_XOUT_H:
             if i2c.accel_reads in schedule:
+                want = keys.recorded + 1
                 keys.press(schedule[i2c.accel_reads])
-                time.sleep(0.01)          # let the reader thread take it before the next frame
+                # Wait until the reader thread has RECORDED it, not just taken it off the queue:
+                # a key taken once the run is stopping is dropped by design. A plain sleep here
+                # was a no-op in the tests that stub time.sleep, so CI raced the stop.
+                t_end = time.time() + 2.0
+                while keys.recorded < want and time.time() < t_end:
+                    _REAL_SLEEP(0.001)
             if raise_at is not None and i2c.accel_reads == raise_at[0]:
                 raise_at[1]()
         return out
