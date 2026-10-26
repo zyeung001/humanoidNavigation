@@ -40,6 +40,31 @@ reads results. The old `models/standing/scoreboard.csv` (9/19 harness) is histor
 are not comparable with the new score. `gate_standing_kick.py` is superseded (binary, every
 model passed it).
 
+### `robot_run.py` — one command per hardware run (laptop side)
+
+```bash
+cp config/robot.yaml.example config/robot.yaml      # once: host/user/repo of the Pi (gitignored)
+python scripts/robot_run.py run -- --policy-npz models/real_standing_knee2_kneelaw_db.npz \
+    --residual-config config/stances/knee2.yaml --posture config/stances/posture.yaml
+python scripts/robot_run.py run --script pose_sweep.py -- --joints waist_pitch
+python scripts/robot_run.py sync  -- <same deploy args>   # only sync (prints the md5 table)
+python scripts/robot_run.py attach | stop | fetch           # after an SSH drop / to end it / logs only
+python scripts/robot_run.py <any of the above> --dry-run    # print the exact ssh/scp, touch nothing
+```
+
+- `sync`: one ssh `md5sum` of every `scripts/deploy/*.py` + the files the run's arguments name +
+  the default servo map / IMU calibration; scp only what differs; md5 again; mismatch = error.
+  `config/imu_calib.yaml` and `config/joint_servo_map.yaml` are written by the Pi's calibration
+  tools, so when they differ the Pi copy is KEPT (warning) unless `--push-calibration`.
+  Each `.npz` is checked with the `numpy_policy.py` being synced and its `requires` printed.
+- `run`: sync, then the deploy script runs inside `tmux` on the Pi and you are attached with
+  `ssh -t`; `--log` is added to `deploy_standing.py` if absent. **An SSH drop no longer releases
+  the torque** (it did since 10/18 via `release_on_hangup`): the run continues until `attach` +
+  Ctrl-C, `stop`, or the tilt cut. `--no-tmux` restores the old behaviour.
+- `fetch` (automatic after the tmux session ends): every file in the Pi's `logs/` not already in
+  `logs/pi/` with the same size, then `scripts/debug/diagnose_run.py` on each new `.csv` (saved as
+  `<stem>.diagnose.txt`) and `scripts/debug/run_report.py` if present.
+
 ### `train_walking.py`
 
 Train the walking controller, typically via transfer from a standing model.

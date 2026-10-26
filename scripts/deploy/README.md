@@ -29,6 +29,21 @@ python scripts/deploy/deploy_standing.py --policy-npz models/real_standing_polic
 Output is byte-identical to the SB3 backend. Without `--policy-npz`, the loop falls back to
 loading the `.zip` + `.pkl` (needs torch+SB3). The `.npz` is gitignored — `scp` it like the `.zip`/`.pkl`.
 
+## Bundle format: `requires` (fail loud, never drop a feature)
+`numpy_policy.py` and the `.npz` reach the Pi separately, so they drift. Every bundle written by
+`export_policy.py` carries `format_version` (2) and `requires`: the runtime features its optional
+keys need (`feedback_prior` = `prior_gain`, `prior_deadband` = `prior_deadband`). `NumpyPolicy.load`
+raises `BundleError` -- naming the feature or key and telling you to sync `numpy_policy.py` -- when
+the bundle requires a feature not in `SUPPORTED_FEATURES`, contains a key this version does not
+understand (bundles from before `requires`), or is a newer format. Old bundles whose keys are all
+understood load as before. A new optional key = a `FEATURE_KEYS` entry + its behaviour, together.
+
+## Running from the laptop: `scripts/robot_run.py`
+`python scripts/robot_run.py run -- <deploy_standing.py args>` syncs this directory + the files the
+args name (md5-verified), runs inside `tmux` on the Pi, and copies the logs back to `logs/pi/` and
+diagnoses them when the session ends. See `scripts/CLAUDE.md`. Inside tmux an SSH drop does NOT
+release the servos: `python scripts/robot_run.py stop` sends the Ctrl-C from any terminal.
+
 ## Order of operations
 1. **Validate wiring (any machine):** `python scripts/deploy/deploy_standing.py --dry-run`
    — loads model+vecnorm+map, builds the 228-dim obs, prints the first action + servo units. No hardware.

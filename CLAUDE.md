@@ -102,6 +102,9 @@ python scripts/train_standing.py --config config/experiments/stand_pushes.yaml -
 python scripts/eval_standing.py --run runs/<name>
 python scripts/compare_models.py
 
+# Robot run from the laptop: sync (md5) -> run in tmux on the Pi -> fetch logs -> diagnose
+python scripts/robot_run.py run -- --policy-npz models/<bundle>.npz --residual-config config/stances/knee2.yaml
+
 # Tests
 python -m pytest
 ```
