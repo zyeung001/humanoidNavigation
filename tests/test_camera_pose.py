@@ -201,6 +201,30 @@ def test_missing_and_world_less_frames_are_flagged_not_dropped():
     assert res.world is None and res.link_rows[0]["world_ref"] == 0
 
 
+def _shin_candidates(*spins_and_errs):
+    """IPPE-style candidates for tag 7 on an upright shin: the true pose turned by spin deg
+    about the lens axis (spin 0 = the truth), each with its reprojection error."""
+    T_cam_tag = T_CAM_WORLD @ link_in_world((0.0, 0.0, 0.15), (0, 0, 0)) @ CFG.tags[7].T_link_tag
+    return [camlib.PoseCandidate(camlib.rot_z(math.radians(s)) @ T_cam_tag[:3, :3], T_cam_tag[:3, 3], e)
+            for s, e in spins_and_errs]
+
+
+def test_without_a_floor_tag_image_up_breaks_the_tilt_ambiguity(monkeypatch):
+    """No floor tag -> no world up. The lower-error branch is then a coin flip for a near-
+    frontal tag (0.02-0.05 px apart in renders), and continuity keeps whichever won. The
+    phone is upright on a tripod, so image-up picks the upright link instead; and when a
+    track that started wrong jumps, the same prior pulls it back."""
+    first = video_pose.Detection(0, 0.0, 7, np.zeros((4, 2)), _shin_candidates((40, 0.20), (0, 0.22)), 1.0)
+    monkeypatch.setattr(video_pose, "detect", lambda *a: ([(0, 0.0)], [first], (W, H), {}))
+    video_pose.process(None, CFG, K, DIST)
+    assert first.choice == 1 and first.ambiguous            # the upright one, not the lower error
+
+    stuck = video_pose.Detection(0, 0.0, 7, np.zeros((4, 2)), _shin_candidates((70, 0.20)), 1.0)
+    nxt = video_pose.Detection(1, 1 / 60, 7, np.zeros((4, 2)), _shin_candidates((40, 0.20), (0, 0.22)), 1.0)
+    video_pose.resolve([stuck, nxt], CFG, prior_up=video_pose.CAMERA_UP)
+    assert nxt.jump and nxt.choice == 1                     # continuity alone would keep spin 40
+
+
 def test_cli_on_an_image_folder_writes_tags_links_and_summary(tmp_path):
     T_thigh = link_in_world((0.0, 0.0, 0.30), (0.0, -5.0, 0.0))
     T_shin = T_thigh @ camlib.make_T(camlib.rot_y(math.radians(12.0)), (0, 0, -0.16))

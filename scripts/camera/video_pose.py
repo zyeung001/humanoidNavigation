@@ -58,6 +58,9 @@ JUMP_DEG_S = 600.0      # a link turning faster than this between detections is 
 BLUR_FRAC = 0.4         # sharpness below this fraction of the tag's median -> blurred
 WORLD_WARN_DEG = 1.0    # floor-pose spread (p95) past these -> the camera probably moved
 WORLD_WARN_MM = 10.0
+# World up in the CAMERA frame when the floor tag is never seen: the phone stands upright on
+# a tripod, so image-up (camera -y) is within a tilt of true up -- far better than nothing.
+CAMERA_UP = np.array([0.0, -1.0, 0.0])
 
 TAG_COLUMNS = ["frame", "t_video", "tag_id", "link", "missing", "blurred", "ambiguous", "jump",
                "px_cx", "px_cy", "px_size", "sharpness", "reproj_px", "alt_reproj_px",
@@ -189,6 +192,12 @@ def resolve(dets, cfg, prior_up=None):
             if prev_R is not None and d.t > prev.t:
                 rate = math.degrees(camlib.rotation_angle(prev_R, d.cands[d.choice].R)) / (d.t - prev.t)
                 d.jump = rate > JUMP_DEG_S
+                if d.jump and d.ambiguous and up is not None:
+                    # Continuity just failed: either the link really spun, or the track has
+                    # been on the flipped branch and this frame's candidates are both far
+                    # from it. Let the upright prior re-pick, so one bad start does not lock
+                    # the whole track onto the wrong tilt (jump stays flagged either way).
+                    d.choice, _ = camlib.choose_pose(d.cands, prior_up=up, R_link_tag=R_lt)
             prev = d
         sharp = np.array([d.sharp for d in ds], dtype=float)
         med = np.nanmedian(sharp) if np.isfinite(sharp).any() else float("nan")
@@ -331,7 +340,10 @@ def process(frames, cfg, K, dist):
     """The whole pipeline on any (frame, t, image) iterable -- the CLI and the tests share it."""
     frame_list, dets, size, unknown = detect(frames, cfg, K, dist)
     world = estimate_world(dets, cfg)
-    prior_up = world.T_cam_world[:3, 2] if world is not None else None
+    # Without a floor tag the first-frame IPPE choice would fall back to the lower error,
+    # which for a near-frontal 32 mm tag differs by ~0.02-0.05 px: a coin flip that
+    # continuity then keeps. Image-up is a good enough "up" to break it.
+    prior_up = world.T_cam_world[:3, 2] if world is not None else CAMERA_UP
     body = [d for d in dets if d.tag != cfg.world_tag]
     resolve(body, cfg, prior_up=prior_up)
     tag_rows, link_rows = build_tables(frame_list, dets, cfg, world)
