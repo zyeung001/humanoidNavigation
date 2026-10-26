@@ -90,11 +90,17 @@ class MetricsSink:
         path = Path(path)
         self._fh.write(json.dumps({"timesteps": int(step), "wall_time": time.time(), key: str(path)}) + "\n")
 
-        def send(run):
+        if self.wandb is None:
+            return
+        try:
             import wandb  # noqa: PLC0415
-            run.log({key: wandb.Video(str(path), caption=caption, format=path.suffix.lstrip("."))},
-                    step=int(step))
-        self._wandb_call("video", send)
+            self.wandb.log({key: wandb.Video(str(path), caption=caption,
+                                             format=path.suffix.lstrip("."))}, step=int(step))
+        except Exception as e:  # noqa: BLE001
+            # Unlike _wandb_call, W&B stays on: a video it cannot take (format, size) says
+            # nothing about the service, and close() must still finish() the run.
+            print(f"  WARNING: W&B video upload failed ({type(e).__name__}: {e}); the file is "
+                  f"{path}")
 
     def summary(self, values: Dict[str, object]) -> None:
         def write(run):

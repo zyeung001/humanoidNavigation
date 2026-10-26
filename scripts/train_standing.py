@@ -84,6 +84,12 @@ def _validation_video(run, standing: dict, sink, step: int, vv: dict):
         sink.log({'validation/falls': res.falls, 'validation/beats_held': res.beats_held,
                   'validation/beats_graded': res.beats_graded, 'validation/wall_s': res.wall_s}, step)
         return res
+    except KeyboardInterrupt:
+        # Ctrl+C while filming: the weights are saved; still close the logs and W&B below.
+        print(f"validation video interrupted; make it later with "
+              f"python scripts/validation_video.py --run {run.root}")
+        sink.log({'validation/video_failed': 1.0}, step)
+        return None
     except Exception as e:  # noqa: BLE001 -- the run is already saved; a video must not fail it
         print(f"WARNING: validation video failed ({type(e).__name__}: {e}); make it with "
               f"python scripts/validation_video.py --run {run.root}")
