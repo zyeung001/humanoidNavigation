@@ -30,6 +30,13 @@ slope are solid and whose exact value is not.
   python3 scripts/deploy/pose_sweep.py --joints waist_pitch --range -6 6 --step 2
   python3 scripts/deploy/pose_sweep.py --joints R_hip_pitch,L_hip_pitch --range -6 6 --step 3
   python3 scripts/deploy/pose_sweep.py --dry-run
+
+RECORDING. The live phase writes the same frame log as deploy_standing (frame_log.py, schema
+2): logs/<time>_sweep.csv (or _probe.csv) + .meta.json + .console.txt, a row per sensor read
+-- ramps, settles, dwells, the probe, and the ramp back. The printed summary is an average;
+the log is what shows HOW a pose failed (which joint gave, which foot unloaded first, when).
+--no-log turns it off. q_cmd here is the commanded units converted back to radians (no policy
+runs), and jvel_f / q_prior / posture_* are NaN.
 """
 from __future__ import annotations
 
@@ -172,9 +179,29 @@ def main():
                         "robot balances in is a multi-joint offset, not a trim off straight, "
                         "so no --trim can express it. Point this at the same config the "
                         "training run uses.")
+    p.add_argument("--fsr-layout", default=None, metavar="YAML",
+                   help="FSR channel list with each sensor's foot and position (frame_log."
+                        "load_fsr_layout). The CoP printed here uses the FIRST TWO channels as "
+                        "heel, toe; every channel is logged.")
+    p.add_argument("--log", default="", metavar="PATH",
+                   help="frame log path (default: auto-named into logs/)")
+    p.add_argument("--no-log", action="store_true", help="do not record the live phase")
+    p.add_argument("--no-servo-telemetry", action="store_true",
+                   help="read servo position only, not speed/load/voltage/temperature "
+                        "(same as deploy_standing)")
     p.add_argument("--map", default=str(DEFAULT_MAP))
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
+
+    # Console recording starts before anything prints, so the plan, the clip report and the
+    # result all land in <stem>.console.txt beside the frames they summarise.
+    log_path = None
+    if not args.no_log and not args.dry_run:
+        from frame_log import ConsoleTee, default_log_path, sidecar_path  # noqa: PLC0415
+        log_path = (Path(args.log) if args.log
+                    else default_log_path("probe" if args.probe is not None else "sweep"))
+        ConsoleTee(sidecar_path(log_path, "console.txt"))   # held by atexit until exit
+        print(f"Recording this run -> {log_path}  (+ .meta.json, .console.txt; --no-log to skip)")
 
     m = SimRealMap(args.map)
     dofs = [j.dof for j in m.joints]
@@ -232,12 +259,18 @@ def main():
         print("cut stops the sweep before it goes over, which is what the catch is for.")
         print("Ctrl-C ramps back and drops torque.\n")
 
-    from frame_log import FsrSampler  # noqa: PLC0415
+    from frame_log import FsrSampler, resolve_fsr  # noqa: PLC0415
     from hardware import ServoBus, release_on_hangup  # noqa: PLC0415
 
+    fsr_chans, fsr_layout = resolve_fsr(args.fsr_channels, args.fsr_layout)
+    if len(fsr_chans) < 2:
+        raise SystemExit("the CoP here needs two FSR channels (heel, toe) first in the list")
     release_on_hangup()
-    bus = ServoBus().connect()
-    fsr = FsrSampler(channels=[int(c) for c in args.fsr_channels.split(",")])
+    # Telemetry only when something records it: --no-log keeps the exact old 2-byte read.
+    bus = ServoBus(telemetry=log_path is not None and not args.no_servo_telemetry).connect()
+    if bus.telemetry:
+        bus.check_telemetry(m.servo_ids)      # torque is still off; falls back loudly if needed
+    fsr = FsrSampler(channels=fsr_chans)
     # The IMU earns its place twice here: it aborts before a topple, and it measures the
     # LEAN at each trim. Lean and centre of pressure are independent instruments aimed at
     # the same question, so if they disagree about which way the pose should move, that
@@ -254,6 +287,92 @@ def main():
             remap = np.asarray(yaml.safe_load(open(args.imu_calib))["axis_remap"],
                                dtype=np.float32)
         imu = IMU(axis_remap=remap).connect()
+
+    logger = None
+    if log_path is not None:
+        from frame_log import FrameLogger, files_meta  # noqa: PLC0415
+        from hardware import TELEMETRY_DECODING  # noqa: PLC0415
+        logger = FrameLogger(log_path, dofs, n_fsr=len(fsr_chans), meta={
+            "script": "pose_sweep.py",
+            "mode": "probe" if args.probe is not None else "sweep",
+            "args": vars(args),
+            "joints": names, "trims_deg": [tr for tr, _ in plans],
+            "plan_units": {f"{tr:+g}": [int(v) for v in u] for tr, u in plans},
+            "clipped": clipped,
+            "baseline": None if baseline is None else [float(v) for v in baseline],
+            "servo_ids": [int(s) for s in m.servo_ids],
+            "units_per_rad": float(m.units_per_rad),
+            "axis_remap": None if imu is None else imu.axis_remap.tolist(),
+            "gyro_bias": None if imu is None else [float(v) for v in imu.gyro_bias],
+            "gyro_note": "pose_sweep does not calibrate the gyro: av_* carry the raw offset",
+            "q_cmd_note": "q_cmd = commanded units converted to sim rad (no policy runs)",
+            **files_meta({"map": args.map, "baseline": args.baseline,
+                          "imu_calib": None if args.no_imu else args.imu_calib,
+                          "fsr_layout": args.fsr_layout}),
+            "servo_telemetry": {"enabled": bus.telemetry,
+                                "requested": not args.no_servo_telemetry,
+                                "telemetry_fallback": bus.telemetry_fallback is not None,
+                                "fallback": bus.telemetry_fallback,
+                                "decoding": TELEMETRY_DECODING},
+            "fsr": fsr_layout,
+        })
+        print(f"Logging frames -> {log_path}")
+
+    nan_j = np.full(m.n, np.nan, dtype=np.float32)
+    nan3 = (float("nan"),) * 3
+    rec = {"step": 0, "rej": 0, "t_prev": None, "sensor_errors": 0}
+
+    def record(u_cmd, pg=None):
+        """Log one frame: servos, IMU, feet. A no-op with --no-log, so an unrecorded sweep
+        runs exactly as it always did. Reuses `pg` when the caller already read the IMU.
+
+        It CANNOT RAISE. Every read in here exists only for the log, and the IMU deliberately
+        does not retry mid-run (hardware.IMU.connect) on an I2C bus that has failed before
+        (10/18). One OSError escaping from here used to end the sweep AND cut the ramp back
+        short at its first step, dropping torque at the trim pose. A failed read is NaN in the
+        row and counted in the meta's sensor_errors; the sweep goes on as if logging were off.
+        """
+        if logger is None:
+            return
+        try:
+            t0 = time.time()
+            loop_ms = float("nan") if rec["t_prev"] is None else (t0 - rec["t_prev"]) * 1000.0
+            rec["t_prev"] = t0
+            u_meas, tel = nan_j, None
+            try:
+                u_meas = bus.read_all(m.servo_ids)
+                tel = bus.last_telemetry
+            except Exception:
+                rec["sensor_errors"] += 1
+            if not np.all(np.isfinite(u_meas)):
+                rec["rej"] += 1
+            pg_row = av = acc = nan3
+            if imu is not None:
+                try:
+                    pg_row = imu.projected_gravity() if pg is None else pg
+                    acc = imu.last_accel_g
+                    av = imu.angular_velocity()
+                except Exception:
+                    rec["sensor_errors"] += 1
+            v, age = fsr.read()
+            u_cmd = np.asarray(u_cmd, dtype=float)
+            logger.log(t_wall=t0, step=rec["step"], loop_ms=loop_ms,
+                       busy_ms=(time.time() - t0) * 1000.0, pg=pg_row, av=av,
+                       upright_cos=-float(pg_row[2]), rej_total=rec["rej"],
+                       u_meas=u_meas, u_cmd=u_cmd, q_cmd=m.units_to_rad(u_cmd), jvel_f=nan_j,
+                       fsr=v, fsr_age_ms=age, acc=acc, telemetry=tel)
+            rec["step"] += 1
+        except Exception:
+            rec["sensor_errors"] += 1
+
+    def hold_for(seconds, u_cmd):
+        """Sleep through a settle, recording at ~40 Hz instead of leaving a gap in the log."""
+        t_end = time.time() + seconds
+        while time.time() < t_end:
+            t0 = time.time()
+            record(u_cmd)
+            time.sleep(max(0.0, min(1 / 40 - (time.time() - t0), t_end - time.time())))
+
     start = None
     rows = []
     probe_hist = []
@@ -265,10 +384,11 @@ def main():
         for tr, target in plans:
             steps = max(1, int(args.ramp * 40))
             for k in range(1, steps + 1):
-                bus.write_all(m.servo_ids,
-                              (cur + (target - cur) * k / steps).round().astype(int),
-                              speed=args.speed)
-                time.sleep(1 / 40)
+                t0 = time.time()
+                u_now = (cur + (target - cur) * k / steps).round().astype(int)
+                bus.write_all(m.servo_ids, u_now, speed=args.speed)
+                record(u_now)
+                time.sleep(max(0.0, 1 / 40 - (time.time() - t0)))
             cur = target.astype(float)
             if args.probe is not None:
                 # Hold and stream until Ctrl-C. No tilt cut here on purpose: the whole point
@@ -289,6 +409,7 @@ def main():
                         # and L_hip_yaw by 7.9 deg, which shifts weight sideways, and a
                         # robot toppling sideways read as one standing perfectly straight.
                         roll = float(np.degrees(np.arctan2(pg[1], -pg[2])))
+                    record(target, pg=None if imu is None else pg)
                     now = time.time()
                     probe_hist.append(
                         (now, ln, float("nan") if c is None else c - args.cop_offset, roll))
@@ -307,7 +428,7 @@ def main():
                           f"CoP {ctxt} mm {off} load {1000*tot:5.2f} mS  upright {held:4.1f}s  ",
                           end="", flush=True)
                     time.sleep(0.1)
-            time.sleep(args.dwell * 0.4)          # settle before sampling, not while moving
+            hold_for(args.dwell * 0.4, target)    # settle before sampling, not while moving
             samples, loads, deads = [], [], []
             t0 = time.time()
             while time.time() - t0 < args.dwell * 0.6:
@@ -319,6 +440,7 @@ def main():
                     loads.append(tot)
                 else:
                     deads.append(dead)
+                record(target)
                 time.sleep(0.05)
             lean = float("nan")
             if imu is not None:
@@ -350,18 +472,43 @@ def main():
                 cur = bus.read_all(m.servo_ids)
                 cur = np.where(np.isfinite(cur), cur, start)
                 for k in range(1, 81):
+                    t0 = time.time()
                     u = np.clip(cur + (start - cur) * k / 80, m.lim_lo, m.lim_hi)
                     bus.write_all(m.servo_ids, u.round().astype(int), speed=args.speed)
-                    time.sleep(1 / 40)
+                    record(u.round())                 # cannot raise: see record()
+                    time.sleep(max(0.0, 1 / 40 - (time.time() - t0)))
         except Exception:
             pass
+        # Torque comes off BEFORE the logging cleanup: closing the FSR sampler and the writer
+        # can take seconds (thread joins, a slow SD card), and the robot must not stay stiff.
+        torque_off = False
+        try:
+            bus.set_torque(m.servo_ids, False)
+            torque_off = True
+        except Exception as e:
+            print(f"[SAFETY] torque-off FAILED ({e!r}); retrying after the log is closed")
         try:
             fsr.close()
+            if logger is not None:
+                # The per-trim summary rides along in the meta, so the numbers printed below
+                # and the frames they came from stay one record.
+                written, dropped = logger.close(
+                    fsr_errors=fsr.errors, sensor_errors=rec["sensor_errors"],
+                    sweep_points=[{"trim": tr, "cop_mm": c, "spread_mm": sd, "lean_deg": ln,
+                                   "load_S": ld} for tr, c, sd, ln, ld in rows],
+                    probe_samples=len(probe_hist))
+                print(f"Frame log: {written} rows -> {logger.path}"
+                      + (f"   WARNING: {dropped} rows DROPPED" if dropped else "")
+                      + (f"   WARNING: {rec['sensor_errors']} failed sensor reads (NaN in the log)"
+                         if rec["sensor_errors"] else ""))
         finally:
-            bus.set_torque(m.servo_ids, False)
-            bus.close()
-            if imu is not None:
-                imu.close()
+            try:
+                if not torque_off:
+                    bus.set_torque(m.servo_ids, False)   # a second failure raises, loudly
+            finally:
+                bus.close()
+                if imu is not None:
+                    imu.close()
 
     if args.probe is not None:
         probe_report(probe_hist, args)
