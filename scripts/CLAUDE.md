@@ -175,3 +175,41 @@ the 8-byte read at startup and the run logged position only.
 | `diagnose_transfer.py` | Debug standing → walking transfer |
 | `standing_plot.py` | Plot standing training metrics |
 | `walking_plot.py` | Plot walking training metrics |
+| `diagnose_run.py` | Hardware frame log -> timeline of tips, leans, oscillation, pushes, rig health |
+| `log_pose.py` | Hardware frame log -> per-row body pose, COM, support margins, hidden flex (`<stem>.pose.csv` + `.pose_summary.json`) |
+| `run_report.py` | Hardware frame log -> one-page run report (`<stem>.report.md` numbers-only + `.report.html` with plots); `--replay` = open-loop sim overlay |
+
+### After a hardware run: `log_pose.py` / `run_report.py`
+
+```bash
+python scripts/debug/run_report.py logs/pi/<stamp>_standing.csv            # md + html + pose CSV/summary, next to the log
+python scripts/debug/run_report.py logs/pi/<stamp>_standing.csv --replay   # + sim driven open loop by the logged commands
+python scripts/debug/log_pose.py logs/pi/<stamp>_standing.csv              # pose CSV + summary only
+```
+
+Read `<stem>.report.md` first (numbers only, no images). It holds: fell or not and when,
+pitch/roll extremes, hidden flex, min COM margin and toward which edge, joint tracking, loop
+timing, FSR, servo telemetry (v2), events (`<stem>.events.jsonl`) and console warnings
+(`<stem>.console.txt`) when those sidecars exist, and `diagnose_run.py`'s timeline verbatim.
+
+How a row is posed (details in `log_pose.py`'s docstring):
+- Joints from `u_meas` via the servo map (`frame_log.pose_from_row`); reads outside 0..1023 or NaN
+  hold the previous value and are counted (10/25 01:28 had 13 joints read 14338 at t=42.3 s).
+- Pelvis attitude from the logged `pg`, yaw 0. `anchor` = the lowest sole centre (kept unless the
+  other sole is 2 mm lower, so two flat feet do not swap it every frame); it sits on the floor.
+  `stance` = the feet carrying weight (`R`/`L`/`both`, other sole within 10 mm). Each supporting sole
+  is a flat 160x80 (or 120x80) box -> signed margins to toe/heel/inner/outer and to the support
+  polygon (+ = inside; inner = toward the other foot, + y = the robot's left).
+- Model chosen by the log date: `humanoid_real_v2_compliant_soleplate.xml` from 2026-10-24 (16 cm
+  plates), `humanoid_real_v2_compliant.xml` before; `--model` overrides. Recorded in the summary.
+- **Hidden flex** = IMU attitude - the attitude the encoders imply with both soles flat (encoder
+  side EMA-filtered like the deploy `pg`). `pitch_missed_by_encoders` = share of the IMU pitch
+  excursion the joints do not explain (> 1 = the joints moved against the lean, e.g. the knee law).
+- `pg` is accelerometer-based, so attitude/flex/margins are inflated during pushes; trust rows with
+  `quiet = 1` (|av| < 0.2 rad/s) for static numbers.
+- `com_err` = COM had every servo reached `u_cmd` (feet flat, same flex) - measured COM.
+- The report's joint-tracking table is `q_cmd - q_meas` in SIM degrees (servo sign applied), so a
+  sag on both knees reads the same sign on R and L; raw-unit errors would flip sign on mirrored servos.
+- `pitch_excursion_ratio_imu_over_enc_1s` = IMU/encoder pitch std after a 1 s moving average (slow
+  motion only; 2.7 on 10/25 03:13), next to the raw ratio (2.05) and quiet-row flex stats.
+
