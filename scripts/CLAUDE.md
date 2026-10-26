@@ -114,6 +114,9 @@ them: the CSV has per-frame commands, encoder units, raw accel, servo load/volta
 (RAW registers; decoding in the meta), the feedback law's share (`q_prior.*`), the posture
 controller's internals and the FSR volts; the meta says exactly which files (md5) and args ran;
 the console has what the operator saw, timestamped to line up with `t_wall`.
+A tilt cut leaves the cut frame and ~1 s of the fall (torque off, `u_cmd` NaN); a Ctrl-C/hangup
+leaves the ramp home. `servo_telemetry.telemetry_fallback: true` in the meta = a servo ignored
+the 8-byte read at startup and the run logged position only.
 `scripts/debug/diagnose_run.py <csv>` summarises one. Details: `scripts/deploy/README.md`.
 
 ## Debug Scripts (`scripts/debug/`)

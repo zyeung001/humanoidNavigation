@@ -7,7 +7,7 @@ All files here run **on the Pi** except the `--dry-run` paths, which run anywher
 | File | Role |
 |------|------|
 | `sim_real_map.py` | Single source of truth for index↔servo↔sign↔limit + rad/units conversion. Loads `config/joint_servo_map.yaml`. |
-| `hardware.py` | **The hardware seam.** `ServoBus` (raw-serial SCS: position + speed/load/voltage/temperature in one read) + `IMU` (ICM-20948). Reconcile with your Pi driver HERE only. |
+| `hardware.py` | **The hardware seam.** `ServoBus` (raw-serial SCS: position, plus speed/load/voltage/temperature in the same read when `telemetry=True`) + `IMU` (ICM-20948). Reconcile with your Pi driver HERE only. |
 | `verify_signs.py` | Bench tool: confirm which servo each action index drives and its sign. Writes results back into the map. |
 | `deploy_standing.py` | The closed-loop inference loop. |
 | `export_policy.py` | **Dev box only:** dump the SB3 policy + vecnorm stats to a torch-free `.npz`. |
@@ -81,9 +81,19 @@ never records). Next to `logs/<YYYYmmdd_HHMMSS>_<tag>.csv`:
 Columns added in schema 2 (schema-1 names and meanings unchanged; readers look columns up by name):
 `acc_x/y/z` raw accel in g (remapped, not normalized) · `spd_raw/load_raw/volt_raw/temp_raw.<dof>`
 RAW servo registers from the same read as `u_meas` (decoding in the meta; `--no-servo-telemetry`
-falls back to the position-only read if `busy_ms` shows the loop can't hold 40 Hz) ·
+falls back to the position-only read if `busy_ms` shows the loop can't hold 40 Hz. Before torque
+comes on, every servo must answer the 8-byte read once (`ServoBus.check_telemetry`); if one does
+not, the run prints `[warn]`, reads position only, and the meta says `telemetry_fallback: true`.
+Telemetry is only read when the run is logged: `--no-log` and every other tool keep the 2-byte read) ·
 `q_prior.<dof>` the feedback law's contribution (rad, NaN without one) · `posture_lean/zero/corr`
 (deg, NaN with the posture controller off) · `fsr_v0..fsr_v{N-1}`, now LAST in the row.
+
+What a log covers: the ramp-in is not recorded; every control frame is; a tilt cut records the cut
+frame and then ~1 s of the fall with torque off (`u_cmd`/`q_cmd` NaN); a Ctrl-C or SSH hangup
+records the 1 s ramp to home (`u_cmd` = the ramp, `q_cmd` NaN). On exit, torque comes off
+BEFORE the log files are closed, so a slow SD card can never keep the robot stiff.
+`pose_sweep.py` records ramps, dwells and the ramp back; a failed IMU or servo read there is NaN
+in the row and counted in the meta's `sensor_errors`, never an abort.
 
 ## FSRs: several boards, 4 per foot
 Default is unchanged: `--log-fsr` samples `0,1` on the ADS1115 at 0x48 (left heel, left toe).
@@ -103,3 +113,49 @@ the template. Check each board answers with `i2cdetect -y 1` (expect 48, 49, 68)
 sensor with `fsr_monitor.py --addr 0x49 --channels 0,1,2,3`. Measure the sensor positions
 and fill in `x_mm`/`y_mm`; until then they are recorded as null, never guessed. The boards
 convert in parallel, so 8 channels cost 4 conversion waits per sweep on the FSR thread.
+
+## Pi verification checklist (schema 2)
+Everything above is tested on the laptop against fake servos, IMU and ADC boards. These can only
+be checked on the robot; do them once after syncing, before trusting a schema-2 log.
+
+1. **Sync + version.** scp `hardware.py`, `frame_log.py`, `deploy_standing.py`, `pose_sweep.py` and
+   `config/fsr_layout_4per_foot.yaml` with the usual md5 check, then
+   `python3 -c "import sys; sys.path.insert(0,'scripts/deploy'); import frame_log, hardware; print(frame_log.SCHEMA_VERSION)"`
+   must print 2.
+2. **The 8-byte read, torque OFF, robot supported:**
+   `python3 -c "import sys; sys.path.insert(0,'scripts/deploy'); from hardware import ServoBus; b=ServoBus(telemetry=True).connect(); [print(s, b.read_state(s), b.read_pos(s)) for s in range(1,18)]"`.
+   On every servo (arms 12-17 too): `read_state` is not None, its first value equals `read_pos`,
+   voltage ~60-84 (0.1 V units), temperature ~room. A None means that servo ignores the long
+   read; the deploy then falls back by itself (`[warn]` + `telemetry_fallback: true`), but note it.
+3. **Load/speed sign bits, torque ON, one leg joint:** push it one way, then the other, and print
+   `read_state`: `load_raw` 0..1000 one way and 1024..2024 (bit 10) the other. A quick hand move
+   should set speed bit 15 in one direction only, matching the `u_meas` trend. Record whether the
+   SDK decoding in `hardware.TELEMETRY_DECODING` held.
+4. **Timing:** `--hold-pose` and a normal closed loop, each once default and once with
+   `--no-servo-telemetry`, and once with `--no-log`, ~60 s each. Compare `busy_ms`/`loop_ms`
+   p50/p99 in the CSVs. Expected: telemetry ~+1 ms, `loop_ms` ~25. If the loop goes over 25 ms,
+   run with `--no-servo-telemetry` and report it.
+5. **Default-on logging:** run `deploy_standing.py` with NO `--log`. `logs/<time>_standing.csv`,
+   `.meta.json` and `.console.txt` all appear; meta has `schema_version` 2, `gyro_bias`, `args`,
+   `hostname` = the Pi, and `files` md5s (incl. `source:hardware.py`) matching the laptop copies.
+   Console lines start with a unix time close to the CSV's `t_wall`.
+6. **Hold-pose rows:** `--hold-pose --residual-config config/stances/knee2.yaml --policy-npz <hold npz>`.
+   One row per frame; `acc_z` ~+1.0 g upright, spikes when tapped; `temp_raw`/`volt_raw` filled.
+   Let it tip into the tilt cut: the last ~40 rows have `u_cmd` NaN and show the fall in `acc_*`.
+7. **Posture and law columns:** `--posture config/stances/posture.yaml` with an npz that has a prior.
+   `posture_zero` NaN for ~3 s, then constant; `posture_corr` matches the printed
+   `[posture] ... knees` lines; `q_prior.*` finite on the law's joints, 0 elsewhere.
+8. **SSH hangup:** start a run, kill the laptop's SSH session, fetch the logs. `console.txt` has
+   `Stopping: ramping to home` and the `Frame log: N rows` line; the CSV has the ~40 ramp rows; the
+   meta has `rows_written`/`ended_unix`; the servos are released.
+9. **FSR, default wiring:** `--log-fsr` alone: meta `fsr.channels` = L_heel/L_toe on 0x48 AIN0/1;
+   `fsr_v0`/`fsr_v1` behave as before (press heel, then toe).
+10. **FSR, two boards (after rewiring):** `i2cdetect -y 1` shows 48, 49, 68;
+    `fsr_monitor.py --addr 0x49 --channels 0,1,2,3` responds. Fill in `x_mm`/`y_mm`, then
+    `--fsr-layout config/fsr_layout_4per_foot.yaml` (implies `--log-fsr`): each `fsr_v0..7` responds
+    to its own sensor, `fsr_age_ms` stays under ~40, meta `fsr_errors` 0, and the IMU still reads
+    cleanly with the second board on the bus.
+11. **pose_sweep:** `pose_sweep.py --joints waist_pitch --range -2 2 --step 2`, and once with
+    `--probe 0`. The CSV has rows through ramp, dwell and ramp back; `sweep_points` and
+    `sensor_errors` (expect 0) are in the meta; `console.txt` holds the RESULT block; the printed
+    CoP and slope look as before. The extra reads per sample slow dwell sampling to ~16 Hz.
