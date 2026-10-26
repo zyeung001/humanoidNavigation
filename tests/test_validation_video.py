@@ -286,3 +286,71 @@ def test_a_short_validation_video_shows_the_robot_and_the_push(gl, tmp_path):
     r.close()
     assert seen["changed"] > 20
 
+
+# ---------------------------------------------------------------- the end-of-training hook
+
+def _hook(tmp_path, monkeypatch, gl=(True, ""), make=None):
+    import json
+
+    from src.robustness import policies
+    from src.training.experiment import RunDir
+    from src.training.run_logger import MetricsSink
+    spec = importlib.util.spec_from_file_location("train_standing", ROOT / "scripts" / "train_standing.py")
+    ts = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ts)
+    run = RunDir.create("vv", base=tmp_path)
+    (run.root / "config.yaml").write_text("{}")
+    run.final.mkdir()
+    (run.final / "model.zip").write_bytes(b"")
+    monkeypatch.setattr(video, "gl_available", lambda: gl)
+    monkeypatch.setattr(policies.SB3Policy, "load",
+                        classmethod(lambda cls, *a, label=None: HoldPosePolicy(CFG["residual_baseline"], label=label)))
+    if make is not None:
+        monkeypatch.setattr(video, "make_validation_video", make)
+    sink = MetricsSink(run.metrics)
+    out = ts._validation_video(run, CFG, sink, 1_000_000, {})
+    sink.close()
+    return out, run, [json.loads(line) for line in run.metrics.read_text().splitlines()]
+
+
+def test_a_failure_while_filming_only_warns(tmp_path, monkeypatch, capsys):
+    def broken(*a, **k):
+        raise RuntimeError("renderer lost its context")
+    out, run, rows = _hook(tmp_path, monkeypatch, make=broken)
+    assert out is None and rows[-1]["validation/video_failed"] == 1.0
+    said = capsys.readouterr().out
+    assert "WARNING: validation video failed (RuntimeError: renderer lost its context)" in said
+    assert f"scripts/validation_video.py --run {run.root}" in said
+
+
+def test_no_gl_skips_the_video_and_says_why(tmp_path, monkeypatch, capsys):
+    out, _, rows = _hook(tmp_path, monkeypatch, gl=(False, "EGL not found"))
+    assert out is None and rows[-1]["validation/video_skipped"] == 1.0
+    assert "validation video skipped: no GL context (EGL not found)" in capsys.readouterr().out
+
+
+def test_the_hook_films_final_when_there_is_no_best_and_logs_the_file(tmp_path, monkeypatch):
+    got = {}
+
+    def fake(policy, env_cfg, out_stem, label, **kw):
+        got.update(stem=Path(out_stem), label=label, kw=kw)
+        p = Path(out_stem).with_suffix(".mp4")
+        p.write_bytes(b"x")
+        return video.VideoResult(p, p.with_suffix(".json"), 600, 30.0, 2, 6, 8, 35.0)
+    out, run, rows = _hook(tmp_path, monkeypatch, make=fake)
+    assert got["stem"] == run.root / "validation" and got["label"] == "vv . final (unscored)"
+    assert got["kw"] == {"width": 960, "height": 540, "fps": 20.0}
+    assert rows[0]["validation/video"] == str(run.root / "validation.mp4")
+    assert rows[1]["validation/falls"] == 2 and rows[1]["validation/beats_held"] == 6
+
+
+def test_checkpoint_labels_and_choice(tmp_path):
+    import json
+    (tmp_path / "final").mkdir()
+    assert video.pick_checkpoint(tmp_path) == tmp_path / "final"
+    (tmp_path / "best").mkdir()
+    (tmp_path / "best" / "model.zip").write_bytes(b"")
+    (tmp_path / "best" / "eval.json").write_text(json.dumps({"step": 45_000_000, "score": 74.81}))
+    assert video.pick_checkpoint(tmp_path) == tmp_path / "best"
+    assert video.pick_checkpoint(tmp_path, "final") == tmp_path / "final"
+    assert video.checkpoint_label(tmp_path / "best") == "best@45.00M (score 74.8)"

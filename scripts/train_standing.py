@@ -56,6 +56,41 @@ from src.training.run_logger import MetricsSink, TrainingLogger, start_wandb
 from src.training.schedules import lr_schedule, clip_schedule
 
 
+def _validation_video(run, standing: dict, sink, step: int, vv: dict):
+    """The end-of-run validation video: the best checkpoint (else final/) played on the fixed
+    showcase timeline (src/robustness/showcase.py: pushes of 3-6 N from four sides, a pelvis
+    push, a kick, a push under a gyro fault), filmed to runs/<name>/validation.mp4 with the
+    push arrows, a top-down support map and a HUD, and logged to W&B as validation/video.
+
+    One video, once, after the final save: ~1-2 min of CPU. Nothing here may cost the run --
+    every failure is a warning, and a GL driver that would crash is caught by a subprocess
+    probe first. Returns the VideoResult, or None."""
+    from src.robustness import policies  # noqa: PLC0415
+    from src.robustness import video  # noqa: PLC0415
+    try:
+        ck = video.pick_checkpoint(run.root, vv.get('checkpoint', 'best'))
+        label = f"{run.name} . {video.checkpoint_label(ck)}"
+        ok, why = video.gl_available()
+        if not ok:
+            print(f"validation video skipped: no GL context ({why})")
+            sink.log({'validation/video_skipped': 1.0}, step)
+            return None
+        print(f"\n[validation] filming {label} on the showcase timeline...", flush=True)
+        pol = policies.SB3Policy.load(ck / 'model.zip', ck / 'vecnorm.pkl', label=label)
+        res = video.make_validation_video(pol, standing, run.root / 'validation', label,
+                                          width=int(vv.get('width', 960)), height=int(vv.get('height', 540)),
+                                          fps=float(vv.get('fps', 20)))
+        sink.log_video('validation/video', res.path, step, caption=label)
+        sink.log({'validation/falls': res.falls, 'validation/beats_held': res.beats_held,
+                  'validation/beats_graded': res.beats_graded, 'validation/wall_s': res.wall_s}, step)
+        return res
+    except Exception as e:  # noqa: BLE001 -- the run is already saved; a video must not fail it
+        print(f"WARNING: validation video failed ({type(e).__name__}: {e}); make it with "
+              f"python scripts/validation_video.py --run {run.root}")
+        sink.log({'validation/video_failed': 1.0}, step)
+        return None
+
+
 def scenario_mix(cfg: dict):
     """(mix, scenarios) from the config's training_scenarios block, or (None, None)."""
     ts = cfg.get('training_scenarios') or {}
@@ -227,6 +262,8 @@ def main():
     parser.add_argument('--dry-run', action='store_true',
                         help='build everything and score the starting model, then stop before '
                              'training: checks an experiment file in a minute, not an hour')
+    parser.add_argument('--no-video', action='store_true',
+                        help='skip the end-of-run validation video (standing.validation_video)')
     parser.add_argument('--resume-run', type=str, default=None,
                         help='continue a run that stopped (crash, Ctrl+C, power) in its own '
                              'directory and W&B run, from its furthest-trained saved weights')
@@ -548,6 +585,12 @@ def main():
         print(f"✓ VecNormalize saved: {vecnorm_path}")
     except Exception as e:
         print(f"✗ VecNormalize save failed: {e}")
+    # One video of the best policy on the fixed showcase timeline. Only on normal completion:
+    # an interrupt or a crash returned or raised above. Off by default for real_turning, which
+    # has no robustness eval either; validation_video.enabled turns it on.
+    vv = standing.get('validation_video') or {}
+    if not args.dry_run and not args.no_video and vv.get('enabled', standing.get('env_kind') != 'real_turning'):
+        _validation_video(run, standing, sink, int(model.num_timesteps), vv)
     sink.close()
     print(f"Best robustness checkpoint: {run.best}  (score it on its own with "
           f"scripts/eval_standing.py --run {run.root})")

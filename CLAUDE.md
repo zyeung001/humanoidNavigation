@@ -101,6 +101,7 @@ python scripts/run_maze_nav.py --maze-type corridor --model models/walking/best/
 python scripts/train_standing.py --config config/experiments/stand_pushes.yaml --wandb online
 python scripts/eval_standing.py --run runs/<name>
 python scripts/compare_models.py
+python scripts/validation_video.py --run runs/<name>    # the end-of-run video (training makes it too)
 
 # Tests
 python -m pytest
