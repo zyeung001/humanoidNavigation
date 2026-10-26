@@ -105,6 +105,17 @@ Videos saved to `data/videos/{task}_eval.mp4`.
 
 Legacy video recording script. Prefer `evaluate.py --record` instead.
 
+## Robot runs (`scripts/deploy/`, run on the Pi)
+
+`deploy_standing.py` and `pose_sweep.py` RECORD every hardware run by default
+(`scripts/deploy/frame_log.py`, schema 2; `--no-log` to skip): `logs/<time>_<tag>.csv` +
+`.meta.json` + `.console.txt` (+ `.events.jsonl`, reserved). To diagnose a run, read all of
+them: the CSV has per-frame commands, encoder units, raw accel, servo load/voltage/temperature
+(RAW registers; decoding in the meta), the feedback law's share (`q_prior.*`), the posture
+controller's internals and the FSR volts; the meta says exactly which files (md5) and args ran;
+the console has what the operator saw, timestamped to line up with `t_wall`.
+`scripts/debug/diagnose_run.py <csv>` summarises one. Details: `scripts/deploy/README.md`.
+
 ## Debug Scripts (`scripts/debug/`)
 
 | Script | Purpose |
