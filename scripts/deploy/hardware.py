@@ -7,9 +7,9 @@ Wired to the robot's actual drivers (reverse-engineered from the working bench s
 ~/move_servo.py, ~/read_positions.py, ~/stop_all.py, ~/read_imu.py):
   - Servos: raw Feetech-SCS half-duplex serial over pyserial (/dev/ttyAMA0 @ 1 Mbaud).
             NOT scservo_sdk. Packet = FF FF id len instr params... checksum.
-            read_all() reads position, speed, load, voltage and temperature in ONE 8-byte read
-            per servo (0x38-0x3F) and keeps the raw telemetry in last_telemetry for the frame
-            log; ServoBus(telemetry=False) is the old position-only read.
+            ServoBus(telemetry=True) makes read_all() read position, speed, load, voltage and
+            temperature in ONE 8-byte read per servo (0x38-0x3F) and keep the raw telemetry in
+            last_telemetry for the frame log. The default is the old 2-byte position read.
   - IMU:    ICM-20948 over I2C (smbus) bus 1 @ 0x68, accel 0x2D / gyro 0x33. The raw accel
             behind each projected_gravity() is kept in last_accel_g (no second I2C read).
 
@@ -115,15 +115,19 @@ def _reply_data(resp, servo_id: int, nbytes: int):
 class ServoBus:
     """Raw-serial Feetech SCS bus. Positions are servo units (0..1023).
 
-    telemetry=True (the default) makes read_all() fetch speed, load, voltage and temperature
-    in the SAME read as the position, and leave them in `last_telemetry` for the frame log.
-    False falls back to the old 2-byte position read (deploy --no-servo-telemetry), for the
-    case where the longer replies turn out to cost the 40 Hz loop more than expected.
+    telemetry=True makes read_all() fetch speed, load, voltage and temperature in the SAME read
+    as the position, and leave them in `last_telemetry` for the frame log. It is OFF by default:
+    only the scripts that log it (deploy_standing, pose_sweep) turn it on, so every other tool
+    -- deploy_arm_reach's control loop, replay_turn's --read-all-every timing experiment --
+    keeps the exact read it had, and a timing taken with it stays comparable to the old ones.
+    Callers that turn it on should run check_telemetry() before torque comes on.
     """
 
-    def __init__(self, port: str = DEFAULT_PORT, baud: int = DEFAULT_BAUD, telemetry: bool = True):
+    def __init__(self, port: str = DEFAULT_PORT, baud: int = DEFAULT_BAUD, telemetry: bool = False):
         self.port, self.baud = port, baud
         self.telemetry = bool(telemetry)
+        # Set by check_telemetry() when the 8-byte read had to be abandoned: {"servo", "reason"}.
+        self.telemetry_fallback = None
         self._ser = None
         # (4, n) raw spd/load/volt/temp from the last read_all(), rows in TELEMETRY_FIELDS
         # order; NaN where a read failed or telemetry is off. None before the first read.
@@ -176,6 +180,38 @@ class ServoBus:
             if d is not None:
                 return ((d[0] << 8) | d[1], (d[2] << 8) | d[3], (d[4] << 8) | d[5], d[6], d[7])
         return None
+
+    def check_telemetry(self, servo_ids) -> bool:
+        """Prove the 8-byte read works on every servo BEFORE torque comes on; fall back if not.
+
+        WHY. The longer read has never run on this robot. If some servo -- a clone, an SCS0009
+        arm, a firmware that caps the read length -- does not answer it, every read_state() on
+        that servo burns 3 x 50 ms of timeouts and returns None. read_all() would then take
+        ~2.5 s and return NaN positions: the ramp to home starts from its own target (a snap at
+        full speed) and the closed loop runs at ~0.4 Hz with torque on. So each servo gets one
+        read_state() here. A servo that fails it but answers the plain 2-byte read_pos() is the
+        fault this guards against: telemetry goes OFF for the whole bus, loudly, and the run
+        continues exactly as it did before telemetry existed. A servo that answers neither is
+        simply not answering, which is not a telemetry problem, and is left to the run's own
+        checks. Returns whether telemetry is still on.
+        """
+        if not self.telemetry:
+            return False
+        for sid in servo_ids:
+            sid = int(sid)
+            if self.read_state(sid) is not None or self.read_pos(sid) is None:
+                continue
+            self.telemetry = False
+            self.telemetry_fallback = {
+                "servo": sid,
+                "reason": "no valid reply to the 8-byte read from 0x38, but the 2-byte position "
+                          "read works: reading position only for this run"}
+            print(f"[warn] servo {sid} does not answer the 8-byte telemetry read (its position "
+                  f"read works). Servo telemetry is OFF for this run: load/speed/voltage/"
+                  f"temperature columns will be NaN. Pass --no-servo-telemetry to skip this check.",
+                  flush=True)
+            return False
+        return True
 
     def write_pos(self, servo_id: int, units: int, speed: int = 0):
         u = int(units) & 0xFFFF
