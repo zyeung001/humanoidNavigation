@@ -37,6 +37,12 @@ RECORDING. The live phase writes the same frame log as deploy_standing (frame_lo
 the log is what shows HOW a pose failed (which joint gave, which foot unloaded first, when).
 --no-log turns it off. q_cmd here is the commanded units converted back to radians (no policy
 runs), and jvel_f / q_prior / posture_* are NaN.
+
+EVENTS. As in deploy_standing, single keys on the SSH terminal (events.py: x fell, c caught,
+m mark, n note, f/b/l/r push, k kick) are stamped into .events.jsonl against the logged steps,
+and after the result it asks "what did you see?". In a probe, press x the moment it goes over
+and c when you catch it: the summary averages only upright samples, and the markers say which
+stretch of the frames that was. --no-events / --no-prompt turn them off.
 """
 from __future__ import annotations
 
@@ -186,6 +192,11 @@ def main():
     p.add_argument("--log", default="", metavar="PATH",
                    help="frame log path (default: auto-named into logs/)")
     p.add_argument("--no-log", action="store_true", help="do not record the live phase")
+    p.add_argument("--no-events", action="store_true",
+                   help="do not read operator keys (x fell, c caught, m mark, n note, ...; "
+                        "see events.py) into <log>.events.jsonl")
+    p.add_argument("--no-prompt", action="store_true",
+                   help="do not ask for the after-run 'what did you see?' note")
     p.add_argument("--no-servo-telemetry", action="store_true",
                    help="read servo position only, not speed/load/voltage/temperature "
                         "(same as deploy_standing)")
@@ -308,7 +319,9 @@ def main():
             "q_cmd_note": "q_cmd = commanded units converted to sim rad (no policy runs)",
             **files_meta({"map": args.map, "baseline": args.baseline,
                           "imu_calib": None if args.no_imu else args.imu_calib,
-                          "fsr_layout": args.fsr_layout}),
+                          "fsr_layout": args.fsr_layout,
+                          # not in frame_log.DEPLOY_SOURCES (it predates events.py)
+                          "source:events.py": Path(__file__).resolve().parent / "events.py"}),
             "servo_telemetry": {"enabled": bus.telemetry,
                                 "requested": not args.no_servo_telemetry,
                                 "telemetry_fallback": bus.telemetry_fallback is not None,
@@ -317,6 +330,17 @@ def main():
             "fsr": fsr_layout,
         })
         print(f"Logging frames -> {log_path}")
+
+    # Operator event markers: a sidecar of the frame log, stepped on its writer thread (see
+    # events.py). Started inside the try below, so the `finally` always restores the terminal.
+    events = None
+    if logger is not None and not args.no_events:
+        from events import EventRecorder  # noqa: PLC0415
+        from frame_log import sidecar_path  # noqa: PLC0415
+        events = EventRecorder(sidecar_path(log_path, "events.jsonl"), t0=logger.t0)
+        logger.add_sink(events.on_row)
+    elif log_path is None and not args.no_events:
+        print("[events] off: --no-log (the markers are a sidecar of the frame log)")
 
     nan_j = np.full(m.n, np.nan, dtype=np.float32)
     nan3 = (float("nan"),) * 3
@@ -377,6 +401,9 @@ def main():
     rows = []
     probe_hist = []
     try:
+        if events is not None:
+            events.start()
+            logger.update_meta(events=events.summary())   # a run that dies still says so
         bus.set_torque(m.servo_ids, True)
         start = bus.read_all(m.servo_ids)
         start = np.where(np.isfinite(start), start, m.centers.astype(float))
@@ -488,6 +515,8 @@ def main():
         except Exception as e:
             print(f"[SAFETY] torque-off FAILED ({e!r}); retrying after the log is closed")
         try:
+            if events is not None:
+                events.close()       # terminal back to normal; never raises
             fsr.close()
             if logger is not None:
                 # The per-trim summary rides along in the meta, so the numbers printed below
@@ -509,11 +538,20 @@ def main():
                 bus.close()
                 if imu is not None:
                     imu.close()
+                if events is not None:
+                    events.save()    # the markers are on disk even if the report fails
 
     if args.probe is not None:
         probe_report(probe_hist, args)
     else:
         report(rows, names, args)
+    if events is not None:
+        # After the result is on screen, so "what did you see?" can answer it.
+        summary = events.finish(prompt=not args.no_prompt)
+        try:
+            logger.update_meta(events=summary)
+        except OSError:
+            pass
     return 0
 
 
