@@ -30,7 +30,7 @@ Never put a tag across a joint or on a servo horn. It must move with one part on
 
 | Tag | Part | Where it goes |
 |-----|------|---------------|
-| 0 | floor | Flat on the floor, between the camera and the robot, about 40 cm from the camera. The arrow on its page points the way the robot faces. Tape it down at all four corners so it stays flat. |
+| 0 | floor | Flat on the floor right in front of the robot's toes, in line with the foot nearest the camera: its centre about 12 cm ahead of the toes, so it is about as far from the camera as the robot and the near foot does not hide it. The arrow on its page points the way the robot faces. Tape it down at all four corners so it stays flat. |
 | 1, 2 | pelvis | A **fin**: a stiff card about 70 x 50 mm, glued to the BACK of the pelvis, centred between the legs, sticking straight back (the card stands vertical and runs front-to-back). Tag 1 goes on the side of the card facing the robot's right, tag 2 on the side facing its left. The hip servos cover the sides of the pelvis, which is why it needs a fin. |
 | 3, 4 | torso | A **flag**: a stiff card about 70 x 70 mm, glued along the middle of the TOP of the torso and standing straight up (vertical, running front-to-back). Tag 3 faces right, tag 4 faces left. The arms cover the sides of the torso, which is why it needs a flag. |
 | 5 / 6 | right / left thigh | Outer side of the thigh, half way up, clear of both servo horns. |
@@ -73,8 +73,20 @@ since it is reused for every video filmed in that mode.
 ## 4. Set up for a run
 
 - **Tripod.** The camera must not move during the video, so do not touch it once it is recording.
-- **Side view**, about **1 m** from the robot (0.8-1.0 m), with the lens at **hip height** (about 45 cm),
-  tilted a little down so that the floor tag, both feet and the top of the torso flag are all in the picture.
+- **Side view, far enough back that everything fits.** From the floor to the top of the torso
+  flag is about 0.85 m, and a phone's main lens filming sideways (landscape) only sees about
+  38-40 degrees from the top of the picture to the bottom. Up close, the floor tag falls out of
+  the picture. So:
+  - **4K, landscape (best):** camera about **1.4 m** from the robot (1.3-1.5 m), lens about
+    **40 cm** above the floor, pointing level at the hips. The small 32 mm tags are then about
+    60 px wide in the picture, plenty for good angles.
+  - **Only 1080p:** turn the phone **upright (portrait)** and film from about **1.0 m**, lens about
+    40 cm high. In 1080p landscape from 1.4 m the small tags would be only about 32 px wide,
+    too small to measure angles well. Calibrate in portrait too (step 3): a calibration made
+    with the phone sideways does not fit an upright video, and the software refuses it.
+- **Check the picture before you start.** The floor tag, both feet and the top of the torso flag
+  must all be inside the frame, with a little margin. If the floor tag is cut off, the software
+  cannot tell which way is up, and the body angles cannot be compared with the IMU.
 - **Light:** bright and even. Daylight or several lamps, with no strong shadows across the tags
   and no reflections on them. Bright light also lets the phone use a fast shutter, which means less blur.
 - Use the **same phone settings as the calibration**: resolution, 60+ fps, 1x lens, stabilisation off.
@@ -90,11 +102,14 @@ software lines them up.
 3. Once the robot is standing, **tap the pelvis firmly once**. Use a quick, sharp knock with a
    finger, in view of the camera, and pull your hand straight away. Then wait 2 seconds.
 4. Do the experiment (pushes, standing, whatever the run is for).
-5. At the end, with the robot still standing if it can, **tap the pelvis again** and wait 2 seconds.
-   The second tap measures how far the two clocks drift apart.
+5. At the end, while the robot is still standing, **tap the pelvis again** and wait 2 seconds.
+   The second tap measures how far the two clocks drift apart. If the experiment is a push
+   meant to knock it over, do this end tap *before* that push.
 6. Stop the robot run, then stop filming.
 
-If the robot falls before the end, tap it where it lies before you stop.
+If the robot falls before you get to the end tap, that is fine: the fall itself is the end
+event, because both the camera and the robot's log saw it. Do not tap it after it has
+fallen. The robot stops logging the moment it falls, so the log never sees that tap.
 
 ## 6. Process it (on the laptop)
 
@@ -110,11 +125,18 @@ frames, with an error below about 0.5 px. A tag seen in 0% of frames is hidden, 
 reflecting light, or missing its white border. "CAMERA MOVED?" means the tripod moved
 during the video.
 
-Check that `sync.py` found the **start** and **end** events at the times you tapped.
+Check that `sync.py` found the **start** and **end** events at the times you tapped (or the
+fall, for the end). If it prints **SYNC NOT VERIFIED**, the two clocks could not be checked
+against each other: look at the event times it printed and compare them with when you
+tapped before using the result. It still writes the files, but `run.sync.json` says
+`"verified": false`.
 
 `run.aligned.csv` has one row per log row (same `t_wall`) with the camera's link angles
 (`cam.*`), the same joint angles from the encoders (`enc.*`) and the IMU's pelvis angle
-(`imu.*`) side by side. Give that file, the log and the two JSON files to Claude.
+(`imu.pg.*` is what the robot's controller saw, smoothed on the robot; `imu.acc.*` is the
+raw accelerometer) side by side. If the floor tag was never seen, the body-part angles
+(`cam.pelvis.pitch` and so on) are left blank, because they would be measured from the
+camera's tilt instead of from the floor; the joint angles are still filled in. Give that file, the log and the two JSON files to Claude.
 
 ## Troubleshooting
 
@@ -126,3 +148,6 @@ Check that `sync.py` found the **start** and **end** events at the times you tap
 | Positions are off by a few % | The print was scaled. Check the 100 mm bar. |
 | Calibration RMS > 1 px | Stabilisation was on, autofocus moved, the board was curled, or the frames were blurred. |
 | No events found in sync | The tap was too soft or out of view. A push or a fall also works as an event if it is in both recordings. |
+| SYNC NOT VERIFIED, one event | Only one tap matched. Check its time against when you tapped. Next time, tap at the end too (before any push that may knock it over). |
+| "a stronger motion match ... against the protocol" | The video and the log only line up if filming started after the robot run. If that is what happened, rerun with the `--offset-guess` it prints. Otherwise ignore it: something moved in the video that the robot did not feel, like handling it before the run. |
+| Body angles blank in `aligned.csv` | The floor tag was out of the picture or unreadable (`world_ref` = 0). Move the camera back (step 4). |

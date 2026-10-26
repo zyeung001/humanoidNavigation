@@ -42,8 +42,13 @@
 #   thigh   0003_4/0003_10 capsule r 21.4 mm, 150 mm tall -> 43 mm wide side face.
 #   shin    0003_2/0003_5 capsule r 21.4 mm, 221 mm tall -> 43 mm wide side face.
 #   foot    box 160 (x) x 80 (y) x 5 mm sole -> the side face is 5 mm. Use an L-TAB.
-# A 32 mm tag is 40 mm with its white border: it fits the 43 mm legs. At 1 m it spans
-# ~45 px in 1080p and ~90 px in 4K (5.5 / 11 px per cell), enough for a sub-degree pose.
+# A 32 mm tag is 40 mm with its white border: it fits the 43 mm legs.
+# FILMING DISTANCE is set by the vertical field of view, not the tags: floor to flag top is
+# ~0.85 m and a phone's main lens sees only ~38-40 deg top to bottom in 16:9 landscape, so
+# at 1 m the floor tag falls out of the picture (no world frame -> angles in the camera
+# frame). Landscape 4K from ~1.4 m: a 32 mm tag spans ~60 px (~8 px per cell), enough for
+# a sub-degree pose. 1080p landscape from 1.4 m is only ~32 px: film 1080p in PORTRAIT from
+# ~1.0 m instead (~45 px), calibrated in portrait.
 #
 # FIN / FLAG / L-TAB: a flat, stiff card (3 mm foam board, or 2 mm printed PETG), never
 # paper alone -- a tag that flexes measures its own wobble, not the link's.
@@ -63,7 +68,7 @@ world_tag: 0
 
 tags:
   0:  {link: world,   size_mm: 150, face: top,
-       where: "flat on the floor between the camera and the robot, ~40 cm in front of the camera, arrow pointing the way the robot faces"}
+       where: "flat on the floor ~12 cm ahead of the toes, in line with the near foot (same distance from the camera as the robot), arrow pointing the way the robot faces"}
   1:  {link: pelvis,  size_mm: 32, face: right, offset_mm: [0, -1.5, 0],
        where: "pelvis FIN (on the pelvis back face, sticking straight back), right side"}
   2:  {link: pelvis,  size_mm: 32, face: left,  offset_mm: [0, 1.5, 0],
