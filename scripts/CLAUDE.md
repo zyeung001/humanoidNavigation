@@ -165,6 +165,41 @@ leaves the ramp home. `servo_telemetry.telemetry_fallback: true` in the meta = a
 the 8-byte read at startup and the run logged position only.
 `scripts/debug/diagnose_run.py <csv>` summarises one. Details: `scripts/deploy/README.md`.
 
+## Camera ground truth (`scripts/camera/`)
+
+Dev box only (OpenCV); the Pi never needs it. Printed AprilTags (36h11) on each link + one
+phone on a tripod = an independent measurement of what the body physically did: where it
+bent (10/25: ~75% of pelvis pitch was invisible to the encoders), whether a foot rolled,
+lifted or slid, and which way a fall twisted. Tag ids, links, sizes and mounts:
+`config/camera/tags.yaml`. **Filming guide for the user: `scripts/camera/README.md`.**
+
+```bash
+python scripts/camera/make_targets.py                        # data/camera/camera_targets_{A4,Letter}.pdf
+python scripts/camera/calibrate_camera.py board.mp4 --name pixel7_4k60   # -> config/camera/pixel7_4k60.yaml
+python scripts/camera/video_pose.py run.mp4 --camera config/camera/pixel7_4k60.yaml
+python scripts/camera/sync.py run.tags.csv logs/pi/<run>.csv  # -> run.aligned.csv keyed on log t_wall
+```
+
+| File | What it does |
+|------|--------------|
+| `camlib.py` | Shared: tags.yaml loader, face mounts, Z-Y-X roll/pitch/yaw (pitch > 0 = forward, = sign of pg_x), IPPE_SQUARE pose + continuity choice, edge-fit corner refinement |
+| `make_targets.py` | Vector PDF, tags at exact size, 100 mm scale bar per page, ChArUco 5x7 board page |
+| `calibrate_camera.py` | Board video/photos -> intrinsics; picks sharp, diverse views (farthest-point); warns RMS > 1 px |
+| `video_pose.py` | `<stem>.tags.csv` (per frame per tag: camera-frame tag pose, world-frame link pose, missing/blurred/ambiguous/jump flags), `<stem>.links.csv` (per link world pose; per joint pair relative angles in the chain's own axis order), `<stem>.pose.json` |
+| `sync.py` | Tap at start/end: tag motion (or frame difference) vs \|acc\| and gyro (v2: whichever matches better; v1: gyro). Coarse = correlation of event-onset trains (counts coinciding events, so a video-only handling event cannot win), restricted to lags that keep the log inside the video; then onsets; drift from 2 taps. `verified` only when start and end agree, else SYNC NOT VERIFIED + exit 2. Writes `<stem>.aligned.csv` (cam.\*, cam.world_ref, enc.\*, imu.pg.\* = filtered pg, imu.acc.\* = raw accel, per log row; cam.<link>.\* blank where world_ref = 0) + `<stem>.sync.json` (verified, offset, drift, log filter alphas, cam-vs-encoder/IMU offsets) |
+
+Read the numbers this way: WORLD = the floor tag (z up), link frames = sim base frame at q = 0.
+A pair angle (e.g. `R_knee.pitch`) is the encoder joint angle plus a constant mounting
+offset; `sync.json` reports that offset (median) and the scatter around it -- the scatter
+is real flex/play the encoders miss. `R_ankle`/`L_ankle` have no servo: anything there is
+compliance. Positions are the tag centre, so use their changes (foot lift = foot z rise).
+Filming geometry is set by the vertical field of view: floor tag + feet + flag top fit at
+~1.4 m in landscape (4K) or ~1.0 m in portrait (1080p); at 1 m landscape the floor tag drops
+out and world_ref = 0. Without a floor tag video_pose uses image-up as the upright prior.
+Accuracy on synthetic renders: ~1 mm / ~0.3 deg per 32 mm tag at 0.8 m in 1080p (cv2's own
+SUBPIX corners were 2% / 1.8 deg off on tags that small, hence the edge refinement); sync
++-12 ms (half a 40 Hz log sample).
+
 ## Debug Scripts (`scripts/debug/`)
 
 | Script | Purpose |

@@ -10,6 +10,8 @@
 | `variants/03_yaw.yaml` | Stage 3 override: add yaw control to a walker |
 | `variants/04_omni_sustained.yaml` | Stage 4 override: omnidirectional + sustained turning |
 | `variants/archive/` | Research history — see its README, do not use for new training |
+| `camera/tags.yaml` | Camera ground truth: AprilTag id -> link, size, mount face; joint pairs vs encoders (`scripts/camera/`) |
+| `camera/<phone>.yaml` | Phone intrinsics from `scripts/camera/calibrate_camera.py`, one per phone + video mode |
 
 Stages 1 (standing) and 2 (walking) use `training_config.yaml` directly with no override.
 

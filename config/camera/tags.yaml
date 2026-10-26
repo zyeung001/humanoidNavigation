@@ -1,0 +1,133 @@
+# tags.yaml -- which printed AprilTag is stuck where, for the camera ground truth.
+#
+# Read by scripts/camera/make_targets.py (what to print), video_pose.py (what each
+# detection means) and sync.py (which camera angle to compare with which encoder).
+# Filming guide: scripts/camera/README.md.
+#
+# WHY A CAMERA. One pelvis IMU plus encoders cannot say WHERE the body bends (on 10/25
+# ~75% of pelvis pitch was missed by the encoders), whether a foot rolls, lifts or slides,
+# or which way a fall twists. Tags on each link, seen by one phone, are the independent
+# ground truth for all three.
+#
+# FRAMES. Every link frame is the sim base frame at q = 0 (all joints straight):
+#   x = forward, y = robot's LEFT, z = up.
+# Every body in models/humanoid_real_v2*.xml has an identity orientation, so at q = 0 all
+# link frames coincide in orientation, and a link's roll/pitch/yaw in WORLD reads exactly
+# like the pelvis attitude in the frame log (pitch > 0 = leaning forward, same sign as
+# pg_x). WORLD = the floor tag's frame, z up.
+#
+# TAG FRAME (OpenCV aruco convention, as printed): x = right, y = up (toward the top of the
+# page, away from the printed label), z = out of the printed face toward the viewer.
+#
+# MOUNT. `face` says which way the printed face looks, in link axes, with the tag upright
+# (label toward the floor):
+#   right -> faces the robot's right (-y)     left  -> faces the robot's left (+y)
+#   front -> faces forward (+x)              back  -> faces backward (-x)
+#   top   -> faces up (+z), printed top toward the robot's LEFT, printed right edge toward
+#            the robot's FRONT (the floor tag page has an arrow for this)
+# `spin_deg` rotates the tag about its own normal if it had to go on sideways (+ = CCW as
+# seen looking at the printed face). `offset_mm` is the tag centre in the link frame; it
+# only moves the reported link position, never an angle. Links with one tag leave it at
+# zero (the link position IS the tag centre). Links with a tag on each side use +/- half
+# the card thickness so both tags report the same point.
+#
+# SIZES are the BLACK square edge (what OpenCV calls the marker length); the printed tag
+# also has a white border one cell (= size/8) wide that must stay white when mounted.
+# They come from the link envelopes in models/humanoid_real_v2_compliant_soleplate.xml
+# (collision geoms at q = 0):
+#   pelvis  base_link capsule r 26.6 mm along y: a 53 mm bar whose side ends carry the
+#           hip-roll servos -> no free side face. Use a FIN (below).
+#   torso   0003_8 box 75 (x) x 318 (y) x 208 (z) mm; the arms (r 17.7 mm) hang down
+#           its side faces -> a tag there is covered. Use a FLAG on the top face (below).
+#   thigh   0003_4/0003_10 capsule r 21.4 mm, 150 mm tall -> 43 mm wide side face.
+#   shin    0003_2/0003_5 capsule r 21.4 mm, 221 mm tall -> 43 mm wide side face.
+#   foot    box 160 (x) x 80 (y) x 5 mm sole -> the side face is 5 mm. Use an L-TAB.
+# A 32 mm tag is 40 mm with its white border: it fits the 43 mm legs.
+# FILMING DISTANCE is set by the vertical field of view, not the tags: floor to flag top is
+# ~0.85 m and a phone's main lens sees only ~38-40 deg top to bottom in 16:9 landscape, so
+# at 1 m the floor tag falls out of the picture (no world frame -> angles in the camera
+# frame). Landscape 4K from ~1.4 m: a 32 mm tag spans ~60 px (~8 px per cell), enough for
+# a sub-degree pose. 1080p landscape from 1.4 m is only ~32 px: film 1080p in PORTRAIT from
+# ~1.0 m instead (~45 px), calibrated in portrait.
+#
+# FIN / FLAG / L-TAB: a flat, stiff card (3 mm foam board, or 2 mm printed PETG), never
+# paper alone -- a tag that flexes measures its own wobble, not the link's.
+#   pelvis FIN  ~70 x 50 mm, glued to the pelvis BACK face, centred between the legs,
+#               card in the sagittal (x-z) plane sticking straight back so it clears the
+#               thighs in a side view. Tag 1 on its right side, tag 2 on its left side.
+#   torso FLAG  ~70 x 70 mm, glued edge-on along the centre of the torso TOP face, card in
+#               the sagittal plane, standing straight up. Tag 3 right side, tag 4 left side.
+#   foot L-TAB  ~45 mm tall, glued to the TOP of the foot at its outer edge, toe end,
+#               card vertical and facing straight out to the side.
+# Film from the robot's right and you see tags 0,1,3,5,7,9; from the left, 0,2,4,6,8,10.
+# The far leg's tags are hidden behind the near leg: film the leg you want to measure.
+
+dictionary: DICT_APRILTAG_36h11
+
+world_tag: 0
+
+tags:
+  0:  {link: world,   size_mm: 150, face: top,
+       where: "flat on the floor ~12 cm ahead of the toes, in line with the near foot (same distance from the camera as the robot), arrow pointing the way the robot faces"}
+  1:  {link: pelvis,  size_mm: 32, face: right, offset_mm: [0, -1.5, 0],
+       where: "pelvis FIN (on the pelvis back face, sticking straight back), right side"}
+  2:  {link: pelvis,  size_mm: 32, face: left,  offset_mm: [0, 1.5, 0],
+       where: "pelvis FIN, left side (back to back with tag 1)"}
+  3:  {link: torso,   size_mm: 50, face: right, offset_mm: [0, -1.5, 0],
+       where: "torso FLAG (standing up from the torso top face), right side"}
+  4:  {link: torso,   size_mm: 50, face: left,  offset_mm: [0, 1.5, 0],
+       where: "torso FLAG, left side (back to back with tag 3)"}
+  5:  {link: R_thigh, size_mm: 32, face: right,
+       where: "outer (right) side face of the right thigh, mid-height, clear of both servo horns"}
+  6:  {link: L_thigh, size_mm: 32, face: left,
+       where: "outer (left) side face of the left thigh, mid-height, clear of both servo horns"}
+  7:  {link: R_shin,  size_mm: 32, face: right,
+       where: "outer (right) side face of the right shin, mid-height"}
+  8:  {link: L_shin,  size_mm: 32, face: left,
+       where: "outer (left) side face of the left shin, mid-height"}
+  9:  {link: R_foot,  size_mm: 30, face: right,
+       where: "right foot L-TAB (outer edge of the foot, toe end), facing right"}
+  10: {link: L_foot,  size_mm: 30, face: left,
+       where: "left foot L-TAB (outer edge of the foot, toe end), facing left"}
+
+# Relative angles between two tagged links, to set beside the encoders. Each angle is the
+# child's rotation in the parent's frame, decomposed in `order` = the joint chain's own
+# axis order (intrinsic), so with perfectly mounted tags each angle IS one joint:
+#   hip chain   pelvis -roll(x)-> -yaw(z)-> -pitch(y)-> thigh -knee(y)-> shin+foot
+#   waist chain pelvis -roll(x)-> -pitch(y)-> -yaw(z)-> torso
+# `encoder` = the same angle from the servo encoders: sum of sign * q_meas[dof] (sim rad,
+# 0 = straight). The sign is the sign of that joint's MJCF axis along x/y/z (e.g. R knee
+# "Revolute 21" axis (0, +0.9999, -0.013) -> +1; R hip pitch "Revolute 23" axis
+# (0, -0.9999, 0.013) -> -1). A tag's mounting error is a constant offset, so compare the
+# CHANGES, or take the offset from a still stretch; sync.py reports both.
+# There is no ankle servo: the foot is rigid on the shin in the MJCF, so any shin-vs-foot
+# angle is compliance (or slop) the model does not have -- the ankleflex variant's guess.
+pairs:
+  waist:   {parent: pelvis,  child: torso,  order: xyz,
+            encoder: {roll: [[waist_roll, -1]], pitch: [[waist_pitch, -1]], yaw: [[waist_yaw, 1]]}}
+  R_hip:   {parent: pelvis,  child: R_thigh, order: xzy,
+            encoder: {roll: [[R_hip_roll, 1]], yaw: [[R_hip_yaw, -1]], pitch: [[R_hip_pitch, -1]]}}
+  L_hip:   {parent: pelvis,  child: L_thigh, order: xzy,
+            encoder: {roll: [[L_hip_roll, -1]], yaw: [[L_hip_yaw, -1]], pitch: [[L_hip_pitch, -1]]}}
+  R_knee:  {parent: R_thigh, child: R_shin,  order: zyx,
+            encoder: {pitch: [[R_knee, 1]]}}
+  L_knee:  {parent: L_thigh, child: L_shin,  order: zyx,
+            encoder: {pitch: [[L_knee, 1]]}}
+  # Thigh hidden? pelvis -> shin is hip pitch + knee in one number.
+  R_leg:   {parent: pelvis,  child: R_shin,  order: xzy,
+            encoder: {roll: [[R_hip_roll, 1]], pitch: [[R_hip_pitch, -1], [R_knee, 1]]}}
+  L_leg:   {parent: pelvis,  child: L_shin,  order: xzy,
+            encoder: {roll: [[L_hip_roll, -1]], pitch: [[L_hip_pitch, -1], [L_knee, 1]]}}
+  R_ankle: {parent: R_shin,  child: R_foot,  order: zyx}
+  L_ankle: {parent: L_shin,  child: L_foot,  order: zyx}
+
+# Camera calibration board (make_targets.py prints it, calibrate_camera.py reads it).
+# A different dictionary from the body tags, so a board in the background of a robot
+# video can never be mistaken for a link. 7 rows (odd) sidesteps OpenCV's legacy/new
+# ChArUco layout split for even row counts. square 30 / marker 21 mm = 7 cells of 3 mm.
+calibration_board:
+  dictionary: DICT_5X5_100
+  squares_x: 5
+  squares_y: 7
+  square_mm: 30
+  marker_mm: 21
