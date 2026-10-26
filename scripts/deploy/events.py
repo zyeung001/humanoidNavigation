@@ -17,8 +17,12 @@ KEYS (a one-line legend is printed when the run starts; each event is echoed as 
   n note           stamps the time now; the text is asked for after the run, when the
                    robot is safe and both hands are free
 Ctrl-C still stops the run: the terminal is put in cbreak mode, NOT raw, so the signal keys
-keep working -- except Ctrl-Z, which is disabled while keys are read. Suspending a 40 Hz
-balance loop freezes the robot at full torque on its last command.
+keep working -- except Ctrl-Z and Ctrl-backslash, which are disabled while keys are read.
+Suspending a 40 Hz balance loop freezes the robot at full torque on its last command;
+Ctrl-backslash (SIGQUIT) kills the process outright, skipping every `finally`: no torque-off,
+and the terminal is left in cbreak.
+Arrow, Home/End and other navigation keys send escape sequences (ESC [ B is Down); the whole
+sequence is dropped, so an operator's habit of reaching for the arrows never records a push.
 
 OUTPUT: <stem>.events.jsonl next to the frame log, one JSON object per line with exactly
   {"t_wall", "t_rel", "step", "key", "label", "note"}
@@ -30,9 +34,13 @@ OUTPUT: <stem>.events.jsonl next to the frame log, one JSON object per line with
   label   what the key means (KEYS below); "run_note" for the after-run note
   note    free text: the 'n' notes and the after-run "what did you see?" answer, else ""
 After the run (torque already off) the operator is asked for each 'n' note and for a one-line
-"what did you see?", whose line has the run's last step. Each event is also appended to the
-file the moment it is pressed, so a run that dies still leaves its markers; the file is
-rewritten at the end with the exact steps and the notes.
+"what did you see?", whose line has the run's last step. It is NOT asked when the run was
+stopped by SIGTERM or SIGHUP (a kill from another session, a timeout, the laptop tool, a
+dropped SSH session): nobody may be at that terminal, and a process waiting there would never
+exit. Each question also gives up after PROMPT_TIMEOUT_S, so an unattended terminal cannot
+hold the process either. Each event is also appended to the file the moment it is pressed,
+so a run that dies still leaves its markers; the file is rewritten at the end with the exact
+steps and the notes.
 
 NEVER IN THE WAY OF THE ROBOT:
   - The keys are read on their own thread. The control loop does nothing at all for them:
@@ -62,6 +70,8 @@ KEYS = {
 }
 EVENT_FIELDS = ("t_wall", "t_rel", "step", "key", "label", "note")   # the shared data contract
 RUN_NOTE_LABEL = "run_note"
+PROMPT_TIMEOUT_S = 120.0      # an unanswered after-run question gives up after this
+ESC_DRAIN_S = 0.03            # the rest of an escape sequence arrives within this (one SSH packet)
 LEGEND = ("[events] keys: f/b/l/r push fwd/back/left/right | x fell | c caught | "
           "k kick/impact | m mark | n note (text after the run) | Ctrl-C stops as usual")
 
@@ -71,7 +81,7 @@ class TtyKeys:
 
     cbreak, not raw: keys arrive one at a time without Enter and are not echoed, but output
     processing and the signal keys are left alone -- Ctrl-C must still stop the run. Ctrl-Z
-    is the exception (see the module docstring)."""
+    and Ctrl-backslash are the exceptions (see the module docstring)."""
 
     def __init__(self, fd, termios_mod, select_mod, read=os.read):
         self.fd = fd
@@ -111,20 +121,45 @@ class TtyKeys:
         mode[3] &= ~(t.ICANON | t.ECHO)          # lflag: key by key, not echoed; ISIG kept
         mode[6][t.VMIN] = 1
         mode[6][t.VTIME] = 0
-        if hasattr(t, "VSUSP"):
-            mode[6][t.VSUSP] = b"\x00"           # _POSIX_VDISABLE: Ctrl-Z does nothing
+        for name in ("VSUSP", "VQUIT"):          # _POSIX_VDISABLE: Ctrl-Z, Ctrl-backslash off
+            if hasattr(t, name):
+                mode[6][getattr(t, name)] = b"\x00"
         t.tcsetattr(self.fd, t.TCSANOW, mode)
 
-    def read_key(self, timeout):
-        """One character, None if nothing arrived within timeout, "" if the terminal is gone."""
+    def read_key(self, timeout, stop=None):
+        """One character; None if nothing (or only an escape sequence) arrived within timeout or
+        `stop` (a threading.Event) is set; "" if the terminal is gone.
+
+        `stop` is checked between select() and read(): once the recorder is closing, the
+        terminal may already be back in line mode and the next byte belongs to the operator's
+        answer to the after-run question, not to us."""
         try:
             ready, _, _ = self._select.select([self.fd], [], [], timeout)
-            if not ready:
+            if not ready or (stop is not None and stop.is_set()):
                 return None
             data = self._read(self.fd, 1)
+            if data == b"\x1b":
+                # An arrow/Home/End key: ESC then its tail (ESC [ B, ESC O F, ESC [ 1 ; 5 C ...).
+                # Taken a byte at a time, the tail would be read as keys (B = push_back, C =
+                # caught, F = push_forward). Drop everything that follows within ESC_DRAIN_S.
+                while True:
+                    ready, _, _ = self._select.select([self.fd], [], [], ESC_DRAIN_S)
+                    if not ready or (stop is not None and stop.is_set()):
+                        return None
+                    if not self._read(self.fd, 1):
+                        return ""
         except (OSError, ValueError):
             return ""
         return data.decode("latin-1") if data else ""
+
+    def line_ready(self, timeout):
+        """True once a whole line is waiting (the terminal is back in line mode), False after
+        timeout. True if it cannot tell: the caller then just reads, as input() always did."""
+        try:
+            ready, _, _ = self._select.select([self.fd], [], [], timeout)
+        except (OSError, ValueError):
+            return True
+        return bool(ready)
 
     def restore(self):
         """Put the terminal back as it was. Raises if it cannot (the caller swallows that)."""
@@ -152,8 +187,8 @@ class EventRecorder:
         finally: torque off; events.close() # terminal restored
         ...      events.finish()            # after-run notes, file written; -> meta summary
 
-    keys: a key source with enter() / read_key(timeout) / restore() -- the terminal when None
-    (TtyKeys.open), a fake in the tests.
+    keys: a key source with enter() / read_key(timeout, stop) / restore(), optionally
+    line_ready(timeout) -- the terminal when None (TtyKeys.open), a fake in the tests.
     """
 
     def __init__(self, path, t0=None, keys=None, stdin=None):
@@ -204,7 +239,7 @@ class EventRecorder:
     def _run(self):
         while not self._stop.is_set():
             try:
-                ch = self._keys.read_key(0.1)
+                ch = self._keys.read_key(0.1, self._stop)
             except Exception:
                 ch = ""
             if ch is None:
@@ -281,23 +316,36 @@ class EventRecorder:
 
     def close(self):
         """Stop reading keys and restore the terminal. Call it AFTER torque-off. Never raises,
-        returns within ~0.1 s."""
+        returns within ~0.1 s (0.5 s at most).
+
+        The reader is stopped BEFORE the terminal goes back to line mode: a reader still in
+        select() after the restore would wake on the operator's Enter and take the first
+        character of their answer (read_key checks `stop` for the same reason)."""
         if self._closed:
             return
         self._closed = True
         self._stop.set()
-        self._restore()
         if self._thread is not None:
             self._thread.join(timeout=0.5)
+        self._restore()                    # whatever the join gave: the terminal comes back
+
+    def _ask_terminal(self, prompt):
+        """input(), but giving up after PROMPT_TIMEOUT_S (TimeoutError) when the key source can
+        tell whether a line is waiting."""
+        print(prompt, end="", flush=True)
+        ready = getattr(self._keys, "line_ready", None)
+        if ready is not None and not ready(PROMPT_TIMEOUT_S):
+            raise TimeoutError(f"no answer in {PROMPT_TIMEOUT_S:.0f} s")
+        return input()
 
     def finish(self, prompt=True, input_fn=None):
-        """close(), ask for the notes (unless prompt is False, keys were off, or the terminal is
-        gone), write the file, and return the summary for the meta. Call it after torque-off
+        """close(), ask for the notes (unless prompt is False, keys were off, the terminal is gone
+        or a signal stopped the run), write the file, and return the summary for the meta. Call it after torque-off
         AND after the frame log is closed: every frame is then matched, every row is on disk,
         and an operator who never answers costs nothing but the prompt."""
         self.close()
-        if prompt and self.enabled and not self._gone:
-            ask = input if input_fn is None else input_fn
+        if prompt and self.enabled and not self._gone and not stopped_by_signal():
+            ask = self._ask_terminal if input_fn is None else input_fn
             try:
                 for ev in self.events:
                     if ev["key"] == "n" and not ev["note"]:
@@ -310,6 +358,8 @@ class EventRecorder:
                     self.events.append({"t_wall": t, "t_rel": t - self.t0,
                                         "step": None if self._prev is None else self._prev[0],
                                         "key": "", "label": RUN_NOTE_LABEL, "note": text})
+            except TimeoutError as e:
+                print(f"\n[events] note prompt skipped ({e})", flush=True)
             except (EOFError, KeyboardInterrupt, OSError, RuntimeError):
                 print("\n[events] note prompt skipped", flush=True)
         self.save()
@@ -348,6 +398,21 @@ class EventRecorder:
                 "operator_note": self.operator_note, "keys": dict(KEYS),
                 "fields": list(EVENT_FIELDS),
                 "step": "step of the logged frame nearest the keypress; run_note = the last frame"}
+
+
+def stopped_by_signal():
+    """True once hardware.release_on_hangup() has turned a SIGTERM or SIGHUP into this run's stop.
+
+    Its handler sets both signals to SIG_IGN before raising KeyboardInterrupt (so a second one
+    cannot interrupt the cleanup), and that state is how the stop is told apart from Ctrl-C,
+    which arrives as the same KeyboardInterrupt. SIGTERM is checked because the handler ignores
+    it for either signal, and nothing else in a run sets it to SIG_IGN."""
+    import signal  # noqa: PLC0415
+    sig = getattr(signal, "SIGTERM", None)
+    try:
+        return sig is not None and signal.getsignal(sig) is signal.SIG_IGN
+    except (ValueError, OSError):
+        return False
 
 
 def _line(ev):

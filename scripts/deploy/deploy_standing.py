@@ -25,8 +25,8 @@ plus .meta.json (config, md5 of every file that shaped the run, gyro bias, host)
 
 While it runs, single keys on the SSH terminal mark what the operator did or saw (events.py:
 f/b/l/r push, x fell, c caught, k kick, m mark, n note) into .events.jsonl, and after the run
-(torque off) it asks "what did you see?". --no-events turns the keys off, --no-prompt the
-question.
+(torque off) it asks "what did you see?" -- not after a kill or hangup, and never for more than
+2 min. --no-events turns the keys off, --no-prompt the question.
 """
 
 from __future__ import annotations
@@ -908,13 +908,16 @@ def main():
             try:
                 if not torque_off:
                     bus.set_torque(m.servo_ids, False)   # a second failure raises, loudly
+                    torque_off = True
             finally:
                 bus.close()
                 imu.close()
                 # Last, after a torque-off retry and with every row on disk: an operator who
-                # walks away from the prompt then holds up nothing.
+                # walks away from the prompt then holds up nothing. Only asked once torque is
+                # KNOWN off: after a failed retry the servos may still be stiff, and that
+                # traceback must not wait behind "what did you see?" (the events are saved).
                 if events is not None:
-                    summary = events.finish(prompt=not args.no_prompt)
+                    summary = events.finish(prompt=not args.no_prompt and torque_off)
                     if logger is not None:
                         try:
                             logger.update_meta(events=summary)
