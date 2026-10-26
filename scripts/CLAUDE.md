@@ -40,6 +40,46 @@ reads results. The old `models/standing/scoreboard.csv` (9/19 harness) is histor
 are not comparable with the new score. `gate_standing_kick.py` is superseded (binary, every
 model passed it).
 
+### `robot_run.py` — one command per hardware run (laptop side)
+
+```bash
+cp config/robot.yaml.example config/robot.yaml      # once: host/user/repo of the Pi (gitignored)
+python scripts/robot_run.py run -- --policy-npz models/real_standing_knee2_kneelaw_db.npz \
+    --residual-config config/stances/knee2.yaml --posture config/stances/posture.yaml
+python scripts/robot_run.py run --script pose_sweep.py -- --joints waist_pitch
+python scripts/robot_run.py sync  -- <same deploy args>   # only sync (prints the md5 table)
+python scripts/robot_run.py attach | stop | fetch           # after an SSH drop / to end it / logs only
+python scripts/robot_run.py <any of the above> --dry-run    # print the exact ssh/scp, touch nothing
+```
+
+- `sync`: one ssh `md5sum` of every `scripts/deploy/*.py` + the files the run's arguments name +
+  the default servo map / IMU calibration; scp only what differs; md5 again; mismatch = error.
+  Text files (.py .yaml .yml .json .txt .sh .md) are hashed and sent as CRLF->LF, i.e. as the git
+  blob: this laptop has `core.autocrlf=true`, so a raw md5 of its CRLF checkout never matches the
+  Pi's git (LF) copy -- on 10/25 that made the Pi's `imu_calib.yaml` look different when it was
+  the repo's calibration (bf19d884 = the git blob). A Pi file differing only in line endings is
+  re-copied as LF, silently. `config/imu_calib.yaml` and `config/joint_servo_map.yaml` are
+  written by the Pi's calibration tools, so when their content differs the Pi copy is KEPT
+  (warning) unless `--push-calibration`.
+  Each `.npz` is checked with the `numpy_policy.py` being synced and its `requires` printed.
+  Abbreviated file flags (`--policy` = `--policy-npz` to the deploy scripts' argparse) are
+  resolved against the target script's flags and spelled out, so they are synced and checked
+  too; an ambiguous one that might be a file flag is refused.
+- `run`: sync, then the deploy script runs inside `tmux` on the Pi and you are attached with
+  `ssh -t`; `--log` is added to `deploy_standing.py` if absent (not if `--no-log` is given).
+  A KEPT calibration file stops `run` (its warning would vanish under tmux): re-run with
+  `--push-calibration` or `--keep-pi-calibration`; the latter copies the Pi's servo map to
+  `logs/pi/pi_maps/` and diagnoses with it. **An SSH drop no longer releases
+  the torque** (it did since 10/18 via `release_on_hangup`): the run continues until `attach` +
+  Ctrl-C, `stop`, or the tilt cut. `--no-tmux` restores the old behaviour. If the Pi cannot be
+  reached after the attach ends, the run is assumed live and nothing is fetched.
+- `fetch` (automatic after the tmux session ends): every file in the Pi's `logs/` that is new or
+  LARGER than the copy in `logs/pi/`. A SMALLER one is a different run under a reused name (no
+  RTC on the Pi; fake-hwclock steps back after an unclean power-off): its whole `<stem>.*` group
+  is saved as `<stem>-pi2.*`, never over the old run. Then `scripts/debug/diagnose_run.py` on
+  each new `.csv` (saved as `<stem>.diagnose.txt`) and `scripts/debug/run_report.py` if present,
+  run with `PYTHONIOENCODING=utf-8`.
+
 ### `train_walking.py`
 
 Train the walking controller, typically via transfer from a standing model.
@@ -105,6 +145,26 @@ Videos saved to `data/videos/{task}_eval.mp4`.
 
 Legacy video recording script. Prefer `evaluate.py --record` instead.
 
+## Robot runs (`scripts/deploy/`, run on the Pi)
+
+`deploy_standing.py` and `pose_sweep.py` RECORD every hardware run by default
+(`scripts/deploy/frame_log.py`, schema 2; `--no-log` to skip): `logs/<time>_<tag>.csv` +
+`.meta.json` + `.console.txt` + `.events.jsonl`. To diagnose a run, read all of
+them: the CSV has per-frame commands, encoder units, raw accel, servo load/voltage/temperature
+(RAW registers; decoding in the meta), the feedback law's share (`q_prior.*`), the posture
+controller's internals and the FSR volts; the meta says exactly which files (md5) and args ran;
+the console has what the operator saw, timestamped to line up with `t_wall`; the events file
+has the operator's keypress markers (`scripts/deploy/events.py`: push_forward/back/left/right,
+fell, caught, kick, mark, note, each with `t_wall`/`t_rel` and the nearest logged `step`) and a
+`run_note` line with their after-run "what did you see?" (also `events.operator_note` in the
+meta). Start from the events: they say where in the frames to look. No events file = no key
+was pressed or there was no terminal (`events.reason` in the meta says which). No `run_note`
+after a kill or SSH hangup is expected: the question is not asked then (nobody may be there).
+A tilt cut leaves the cut frame and ~1 s of the fall (torque off, `u_cmd` NaN); a Ctrl-C/hangup
+leaves the ramp home. `servo_telemetry.telemetry_fallback: true` in the meta = a servo ignored
+the 8-byte read at startup and the run logged position only.
+`scripts/debug/diagnose_run.py <csv>` summarises one. Details: `scripts/deploy/README.md`.
+
 ## Camera ground truth (`scripts/camera/`)
 
 Dev box only (OpenCV); the Pi never needs it. Printed AprilTags (36h11) on each link + one
@@ -150,3 +210,41 @@ SUBPIX corners were 2% / 1.8 deg off on tags that small, hence the edge refineme
 | `diagnose_transfer.py` | Debug standing → walking transfer |
 | `standing_plot.py` | Plot standing training metrics |
 | `walking_plot.py` | Plot walking training metrics |
+| `diagnose_run.py` | Hardware frame log -> timeline of tips, leans, oscillation, pushes, rig health |
+| `log_pose.py` | Hardware frame log -> per-row body pose, COM, support margins, hidden flex (`<stem>.pose.csv` + `.pose_summary.json`) |
+| `run_report.py` | Hardware frame log -> one-page run report (`<stem>.report.md` numbers-only + `.report.html` with plots); `--replay` = open-loop sim overlay |
+
+### After a hardware run: `log_pose.py` / `run_report.py`
+
+```bash
+python scripts/debug/run_report.py logs/pi/<stamp>_standing.csv            # md + html + pose CSV/summary, next to the log
+python scripts/debug/run_report.py logs/pi/<stamp>_standing.csv --replay   # + sim driven open loop by the logged commands
+python scripts/debug/log_pose.py logs/pi/<stamp>_standing.csv              # pose CSV + summary only
+```
+
+Read `<stem>.report.md` first (numbers only, no images). It holds: fell or not and when,
+pitch/roll extremes, hidden flex, min COM margin and toward which edge, joint tracking, loop
+timing, FSR, servo telemetry (v2), events (`<stem>.events.jsonl`) and console warnings
+(`<stem>.console.txt`) when those sidecars exist, and `diagnose_run.py`'s timeline verbatim.
+
+How a row is posed (details in `log_pose.py`'s docstring):
+- Joints from `u_meas` via the servo map (`frame_log.pose_from_row`); reads outside 0..1023 or NaN
+  hold the previous value and are counted (10/25 01:28 had 13 joints read 14338 at t=42.3 s).
+- Pelvis attitude from the logged `pg`, yaw 0. `anchor` = the lowest sole centre (kept unless the
+  other sole is 2 mm lower, so two flat feet do not swap it every frame); it sits on the floor.
+  `stance` = the feet carrying weight (`R`/`L`/`both`, other sole within 10 mm). Each supporting sole
+  is a flat 160x80 (or 120x80) box -> signed margins to toe/heel/inner/outer and to the support
+  polygon (+ = inside; inner = toward the other foot, + y = the robot's left).
+- Model chosen by the log date: `humanoid_real_v2_compliant_soleplate.xml` from 2026-10-24 (16 cm
+  plates), `humanoid_real_v2_compliant.xml` before; `--model` overrides. Recorded in the summary.
+- **Hidden flex** = IMU attitude - the attitude the encoders imply with both soles flat (encoder
+  side EMA-filtered like the deploy `pg`). `pitch_missed_by_encoders` = share of the IMU pitch
+  excursion the joints do not explain (> 1 = the joints moved against the lean, e.g. the knee law).
+- `pg` is accelerometer-based, so attitude/flex/margins are inflated during pushes; trust rows with
+  `quiet = 1` (|av| < 0.2 rad/s) for static numbers.
+- `com_err` = COM had every servo reached `u_cmd` (feet flat, same flex) - measured COM.
+- The report's joint-tracking table is `q_cmd - q_meas` in SIM degrees (servo sign applied), so a
+  sag on both knees reads the same sign on R and L; raw-unit errors would flip sign on mirrored servos.
+- `pitch_excursion_ratio_imu_over_enc_1s` = IMU/encoder pitch std after a 1 s moving average (slow
+  motion only; 2.7 on 10/25 03:13), next to the raw ratio (2.05) and quiet-row flex stats.
+

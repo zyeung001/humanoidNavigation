@@ -1,0 +1,12 @@
+# Where the robot is, for scripts/robot_run.py (sync / run / attach / stop / fetch).
+# Copy to config/robot.yaml and fill in. config/robot.yaml is gitignored: the robot's address
+# never lands in git, and each laptop keeps its own.
+#
+# Remote values go into a remote shell unquoted, so keep them to letters, digits and _ . ~ / + -
+host: raspberrypi.local        # hostname or IP of the Pi
+user: pi                       # the account that owns the repo on the Pi
+repo: /home/pi/humanoidnavigation   # the repo checkout on the Pi (absolute; logs land in <repo>/logs)
+python: python3                # interpreter on the Pi (a venv's python works: /home/pi/venv/bin/python)
+port: null                     # SSH port if not 22
+ssh_options: []                # extra args for ssh AND scp, e.g. [-i, C:/Users/me/.ssh/id_ed25519]
+tmux_session: robot            # the tmux session a run lives in on the Pi
