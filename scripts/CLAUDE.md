@@ -54,16 +54,31 @@ python scripts/robot_run.py <any of the above> --dry-run    # print the exact ss
 
 - `sync`: one ssh `md5sum` of every `scripts/deploy/*.py` + the files the run's arguments name +
   the default servo map / IMU calibration; scp only what differs; md5 again; mismatch = error.
-  `config/imu_calib.yaml` and `config/joint_servo_map.yaml` are written by the Pi's calibration
-  tools, so when they differ the Pi copy is KEPT (warning) unless `--push-calibration`.
+  Text files (.py .yaml .yml .json .txt .sh .md) are hashed and sent as CRLF->LF, i.e. as the git
+  blob: this laptop has `core.autocrlf=true`, so a raw md5 of its CRLF checkout never matches the
+  Pi's git (LF) copy -- on 10/25 that made the Pi's `imu_calib.yaml` look different when it was
+  the repo's calibration (bf19d884 = the git blob). A Pi file differing only in line endings is
+  re-copied as LF, silently. `config/imu_calib.yaml` and `config/joint_servo_map.yaml` are
+  written by the Pi's calibration tools, so when their content differs the Pi copy is KEPT
+  (warning) unless `--push-calibration`.
   Each `.npz` is checked with the `numpy_policy.py` being synced and its `requires` printed.
+  Abbreviated file flags (`--policy` = `--policy-npz` to the deploy scripts' argparse) are
+  resolved against the target script's flags and spelled out, so they are synced and checked
+  too; an ambiguous one that might be a file flag is refused.
 - `run`: sync, then the deploy script runs inside `tmux` on the Pi and you are attached with
-  `ssh -t`; `--log` is added to `deploy_standing.py` if absent. **An SSH drop no longer releases
+  `ssh -t`; `--log` is added to `deploy_standing.py` if absent (not if `--no-log` is given).
+  A KEPT calibration file stops `run` (its warning would vanish under tmux): re-run with
+  `--push-calibration` or `--keep-pi-calibration`; the latter copies the Pi's servo map to
+  `logs/pi/pi_maps/` and diagnoses with it. **An SSH drop no longer releases
   the torque** (it did since 10/18 via `release_on_hangup`): the run continues until `attach` +
-  Ctrl-C, `stop`, or the tilt cut. `--no-tmux` restores the old behaviour.
-- `fetch` (automatic after the tmux session ends): every file in the Pi's `logs/` not already in
-  `logs/pi/` with the same size, then `scripts/debug/diagnose_run.py` on each new `.csv` (saved as
-  `<stem>.diagnose.txt`) and `scripts/debug/run_report.py` if present.
+  Ctrl-C, `stop`, or the tilt cut. `--no-tmux` restores the old behaviour. If the Pi cannot be
+  reached after the attach ends, the run is assumed live and nothing is fetched.
+- `fetch` (automatic after the tmux session ends): every file in the Pi's `logs/` that is new or
+  LARGER than the copy in `logs/pi/`. A SMALLER one is a different run under a reused name (no
+  RTC on the Pi; fake-hwclock steps back after an unclean power-off): its whole `<stem>.*` group
+  is saved as `<stem>-pi2.*`, never over the old run. Then `scripts/debug/diagnose_run.py` on
+  each new `.csv` (saved as `<stem>.diagnose.txt`) and `scripts/debug/run_report.py` if present,
+  run with `PYTHONIOENCODING=utf-8`.
 
 ### `train_walking.py`
 

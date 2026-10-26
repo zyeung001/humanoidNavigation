@@ -18,14 +18,27 @@ what the robot physically did, so the copy back cannot be a step someone remembe
 Everything after `--` is passed to the deploy script unchanged, except that file arguments
 (--policy-npz, --residual-config, --posture, --map, --imu-calib, --baseline, --model, --vecnorm)
 are synced first and rewritten to repo-relative paths, which is what they are on the Pi too.
+The deploy scripts' argparse accepts abbreviations (`--policy` IS --policy-npz on the Pi), so an
+abbreviation is resolved against the target script's own flags the way argparse does and spelled
+out; one that could be a file flag but is ambiguous is refused. Otherwise `--policy x.npz` would
+skip the sync and the bundle check and the Pi would run whatever stale x.npz it already had.
 
 SYNC. One ssh call md5sums the deploy file set on the Pi (every scripts/deploy/*.py + the files
 the run reads + the default servo map and IMU calibration); only files that differ are copied,
-then md5sum'd again, and any mismatch is an error. Two files are written ON the Pi by its own
-calibration tools (imu_calib.yaml by calibrate_imu.py --apply, joint_servo_map.yaml by
-verify_signs.py / fix_*_limits.py / calibrate_centers.py): when those differ the Pi copy is KEPT
-and the table says so, because the laptop's copy may be the stale one (on 10/25 the Pi's
-imu_calib.yaml was not the repo's). --push-calibration overwrites them deliberately.
+then md5sum'd again, and any mismatch is an error. Text files (.py .yaml .yml .json .txt .sh
+.md) are compared and copied as their CRLF->LF content, i.e. byte-identical to the git blob:
+this laptop checks out with core.autocrlf=true, so its config/imu_calib.yaml is CRLF while the
+Pi's (from git, LF) is the very same calibration -- a raw-byte md5 called them different
+(7e6bd0d0 vs bf19d884 on 10/25), and every copy left the Pi's checkout dirty for `git pull`.
+Hashing the normalised text makes the Pi's md5s (and the frame log meta's file_md5) equal the
+git blob's. A Pi file that differs only in line endings is re-copied as LF, with no warning.
+Two files are written ON the Pi by its own calibration tools (imu_calib.yaml by calibrate_imu.py
+--apply, joint_servo_map.yaml by verify_signs.py / fix_*_limits.py / calibrate_centers.py): when
+their CONTENT differs the Pi copy is KEPT and the table says so, because the laptop's copy may be
+the stale one. --push-calibration overwrites them deliberately. `run` refuses to start on a kept
+copy unless --keep-pi-calibration says that is intended (the warning would otherwise vanish
+under the tmux screen), and then copies the Pi's servo map into logs/pi/ so diagnose_run.py
+reads the map the robot actually used.
 Bundles (.npz) are checked with the numpy_policy.py being synced before anything is copied, and
 their `requires` list is printed: a bundle that would be refused on the Pi fails here instead.
 
@@ -35,13 +48,19 @@ hangup fix (hardware.release_on_hangup: an SSH drop released the torque): after 
 KEEPS RUNNING until you `attach` and Ctrl-C, run `stop`, or the tilt cut fires. --no-tmux runs
 over plain `ssh -t` instead, where a drop releases the torque as before. When the script exits,
 the tmux pane waits for Enter so the last lines can be read; the session then ends and the logs
-are fetched. Detaching (Ctrl-b d) or a drop leaves it running: nothing is fetched until it ends.
+are fetched. Detaching (Ctrl-b d) or a drop leaves it running: nothing is fetched until it ends,
+and if the Pi cannot be asked (the link is down) the run is assumed to be still going.
 
-FETCH. Every file in the Pi's logs/ that is not already in logs/pi/ with the same size is copied
+FETCH. Every file in the Pi's logs/ that is not in logs/pi/, or is LARGER there, is copied
 (<stem>.csv, .meta.json, .console.txt, .events.jsonl and any other <stem>.* sidecar), so a log
-fetched while it was still being written is fetched again once it has grown. Each new .csv is
-then run through scripts/debug/diagnose_run.py (output also saved as <stem>.diagnose.txt) and
-scripts/debug/run_report.py when that exists; a missing post-processor is a warning.
+fetched while it was still being written is fetched again once it has grown. A Pi file SMALLER
+than the laptop's copy is a different run under a reused name -- the Pi has no RTC, and after an
+unclean power-off fake-hwclock restores an earlier time, so time.strftime can hand out a name
+again -- and that whole <stem>.* group is saved as <stem>-pi2.* (next free N) instead of
+overwriting the laptop's only copy of the old run. (Same name AND same size is not detected.)
+Each new .csv is then run through scripts/debug/diagnose_run.py (output also saved as
+<stem>.diagnose.txt) and scripts/debug/run_report.py when that exists; a missing post-processor
+is a warning. They run with PYTHONIOENCODING=utf-8 so a degree sign survives a Windows console.
 
 The address lives in config/robot.yaml (gitignored; copy config/robot.yaml.example). Needs
 OpenSSH ssh/scp on PATH (Windows 10+ ships them; Git Bash works too) and tmux on the Pi.
@@ -57,6 +76,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 from pathlib import Path, PurePosixPath
 
 import yaml
@@ -73,6 +93,8 @@ FILE_FLAGS = ("--policy-npz", "--residual-config", "--posture", "--map", "--imu-
 DEFAULT_FILES = {"--map": "config/joint_servo_map.yaml", "--imu-calib": "config/imu_calib.yaml"}
 # Written on the Pi by its calibration tools: never overwritten silently (see SYNC above).
 PI_CALIBRATED = frozenset(DEFAULT_FILES.values())
+# Compared and copied as CRLF->LF text (see SYNC above).
+TEXT_SUFFIXES = frozenset((".py", ".yaml", ".yml", ".json", ".txt", ".sh", ".md"))
 POST_PROCESSORS = ("scripts/debug/diagnose_run.py", "scripts/debug/run_report.py")
 LOCAL_LOGS = "logs/pi"
 SCP_BATCH = 40          # files per scp call: keeps a Windows command line far under its 32 KB cap
@@ -93,12 +115,19 @@ def show(argv) -> str:
     return subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
 
 
-def md5_file(path) -> str:
-    h = hashlib.md5()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+def md5_bytes(data: bytes) -> str:
+    return hashlib.md5(data).hexdigest()
+
+
+def is_text(rel) -> bool:
+    return PurePosixPath(Path(rel).as_posix()).suffix.lower() in TEXT_SUFFIXES
+
+
+def payload(path) -> bytes:
+    """The bytes the Pi should hold for a laptop file: text as CRLF->LF (what git stores; the
+    laptop's autocrlf checkout adds the CRs), anything else (.npz, .zip, .pkl) untouched."""
+    data = Path(path).read_bytes()
+    return data.replace(b"\r\n", b"\n") if is_text(path) else data
 
 
 # ---------------------------------------------------------------- config
@@ -133,9 +162,9 @@ def check_config(cfg: dict, where="robot config") -> dict:
 class Shell:
     """The only code that starts processes; tests replace it."""
 
-    def run(self, argv, capture=True, cwd=None):
+    def run(self, argv, capture=True, cwd=None, env=None):
         return subprocess.run(argv, capture_output=capture, text=True, encoding="utf-8",
-                              errors="replace", cwd=cwd)
+                              errors="replace", cwd=cwd, env=env)
 
     def interactive(self, argv, cwd=None):
         """Hand the terminal to ssh -t until it exits. Ctrl-C belongs to the robot run on the
@@ -176,12 +205,12 @@ class Robot:
         return f"{self.target}:{self.repo}/{rel}"
 
     # execution -----------------------------------------------------
-    def call(self, argv, check=True):
-        """Run one ssh/scp (cwd=ROOT). Dry run: print it and return None."""
+    def call(self, argv, check=True, cwd=None):
+        """Run one ssh/scp (cwd=ROOT unless given). Dry run: print it and return None."""
         if self.dry_run:
             self.echo("$ " + show(argv))
             return None
-        r = self.shell.run(argv, capture=True, cwd=str(ROOT))
+        r = self.shell.run(argv, capture=True, cwd=str(cwd or ROOT))
         if check and r.returncode != 0:
             raise Abort(f"`{show(argv)}` failed (exit {r.returncode}):\n{(r.stderr or r.stdout or '').strip()}")
         return r
@@ -194,10 +223,13 @@ class Robot:
 
     # remote operations ---------------------------------------------
     def md5s(self, files):
-        """{repo-relative path: md5} for the files that exist on the Pi, in ONE ssh call.
-        None in a dry run (nothing is known)."""
-        r = self.call(self.ssh_argv(f"cd {self.repo} || exit 3; md5sum -- {' '.join(files)} 2>/dev/null; "
-                                    "exit 0"), check=False)
+        """{repo-relative path: (md5, md5 with every CR removed)} for the files that exist on the
+        Pi, in ONE ssh call. The second hash tells "same text, CRLF line endings" (a copy scp'd
+        from an autocrlf checkout) from a real difference. None in a dry run (nothing is known)."""
+        r = self.call(self.ssh_argv(
+            f"cd {self.repo} || exit 3; for f in {' '.join(files)}; do [ -f \"$f\" ] && echo "
+            "\"$(md5sum < \"$f\" | cut -c1-32) $(tr -d '\\r' < \"$f\" | md5sum | cut -c1-32) $f\"; "
+            "done; exit 0"), check=False)
         if r is None:
             return None
         if r.returncode == 3:
@@ -206,29 +238,39 @@ class Robot:
             raise Abort(f"md5sum on the Pi failed (exit {r.returncode}): {(r.stderr or '').strip()}")
         out = {}
         for line in r.stdout.splitlines():
-            parts = line.split(None, 1)
-            if len(parts) == 2 and len(parts[0]) == 32:
-                out[parts[1].lstrip("*")] = parts[0]
+            parts = line.split(None, 2)
+            if len(parts) == 3 and len(parts[0]) == len(parts[1]) == 32:
+                out[parts[2]] = (parts[0], parts[1])
         return out
 
     def copy_up(self, files):
-        """scp repo-relative `files` to the same paths under the Pi's repo, creating directories."""
+        """scp repo-relative `files` to the same paths under the Pi's repo, creating directories.
+        What is sent is payload() (text as LF), staged in a temp dir that mirrors the repo paths;
+        scp runs with that dir as cwd, so argv still holds only short relative paths."""
         dirs = sorted({PurePosixPath(f).parent.as_posix() for f in files})
         new_dirs = [d for d in dirs if d != "."]
         if new_dirs:
             self.call(self.ssh_argv(f"cd {self.repo} && mkdir -p {' '.join(new_dirs)}"))
-        for d in dirs:
-            group = [f for f in files if PurePosixPath(f).parent.as_posix() == d]
-            dest = self.remote("" if d == "." else d + "/")
-            for i in range(0, len(group), SCP_BATCH):
-                self.call(self.scp_argv(group[i:i + SCP_BATCH], dest))
+        with tempfile.TemporaryDirectory(prefix="robot_run_") as stage:
+            if not self.dry_run:
+                for f in files:
+                    (Path(stage) / f).parent.mkdir(parents=True, exist_ok=True)
+                    (Path(stage) / f).write_bytes(payload(ROOT / f))
+            for d in dirs:
+                group = [f for f in files if PurePosixPath(f).parent.as_posix() == d]
+                dest = self.remote("" if d == "." else d + "/")
+                for i in range(0, len(group), SCP_BATCH):
+                    self.call(self.scp_argv(group[i:i + SCP_BATCH], dest), cwd=stage)
 
     def session_state(self):
-        """'running' / 'ended' for the tmux session; None in a dry run."""
+        """'running' / 'ended' for the tmux session, 'unknown' when ssh itself failed (exit 255
+        after a Wi-Fi drop: the run may well still be live); None in a dry run."""
         r = self.call(self.ssh_argv(f"tmux has-session -t ={self.session} 2>/dev/null && echo running "
                                     "|| echo ended"), check=False)
         if r is None:
             return None
+        if r.returncode != 0:
+            return "unknown"
         return "running" if "running" in r.stdout else "ended"
 
 
@@ -261,13 +303,38 @@ def repo_relative(value, remote_repo) -> str:
     return rel
 
 
-def run_files(run_args, remote_repo):
-    """(files the run reads, run_args with those files rewritten repo-relative)."""
+def script_flags(script) -> frozenset:
+    """The --long flags scripts/deploy/<script> declares (read from its source: the laptop has no
+    serial/I2C libraries to import it with). Empty if none are found."""
+    src = (ROOT / "scripts" / "deploy" / script).read_text(encoding="utf-8", errors="replace")
+    return frozenset(re.findall(r"""add_argument\(\s*["'](--[A-Za-z0-9][\w-]*)["']""", src))
+
+
+def resolve_flag(flag, known):
+    """`flag` as argparse on the Pi will read it: an exact flag stays, an abbreviation that is a
+    prefix of exactly one known flag becomes that flag (allow_abbrev is on in the deploy
+    scripts). An abbreviation that might be a FILE flag but is ambiguous is refused here: argparse
+    would refuse it too, but only after the sync that could not know which file to check."""
+    if not flag.startswith("--") or len(flag) <= 2 or flag in known or flag in FILE_FLAGS:
+        return flag
+    matches = sorted(k for k in known if k.startswith(flag))
+    if not any(m in FILE_FLAGS for m in matches):
+        return flag
+    if len(matches) > 1:
+        raise Abort(f"{flag} is ambiguous ({', '.join(matches)}): spell the flag out")
+    return matches[0]
+
+
+def run_files(run_args, remote_repo, known=None):
+    """(files the run reads, run_args with those files rewritten repo-relative and abbreviated file
+    flags spelled out). `known` = the target script's flags (script_flags); FILE_FLAGS if empty."""
+    known = frozenset(known or FILE_FLAGS)
     files, out, given = [], [], set()
     i = 0
     while i < len(run_args):
         arg = run_args[i]
         flag, eq, val = arg.partition("=")
+        flag = resolve_flag(flag, known)
         if flag in FILE_FLAGS and (eq or i + 1 < len(run_args)):
             if not eq:
                 i += 1
@@ -277,7 +344,7 @@ def run_files(run_args, remote_repo):
             given.add(flag)
             out += [f"{flag}={rel}"] if eq else [flag, rel]
         else:
-            out.append(arg)
+            out.append(f"{flag}{eq}{val}")
         i += 1
     for flag, rel in DEFAULT_FILES.items():
         if flag not in given and (ROOT / rel).is_file():
@@ -322,11 +389,12 @@ def sync(robot, files, push_calibration=False):
     """Make the Pi's copy of `files` match the laptop's. Returns {"copied", "kept", "same"}."""
     echo = robot.echo
     check_bundles(files, echo)
-    local = {f: md5_file(ROOT / f) for f in files}
+    data = {f: payload(ROOT / f) for f in files}
+    local = {f: md5_bytes(data[f]) for f in files}
     before = robot.md5s(files)
     rows, copy, kept, same = [], [], [], []
     for f in files:
-        pi = None if before is None else before.get(f)
+        pi, pi_text = (None, None) if before is None or f not in before else before[f]
         if before is None:
             action = "copy if it differs (dry run)"
             if f in PI_CALIBRATED and not push_calibration:
@@ -338,6 +406,9 @@ def sync(robot, files, push_calibration=False):
             same.append(f)
         elif pi is None:
             action = "copy (not on the Pi)"
+            copy.append(f)
+        elif is_text(f) and pi_text == md5_bytes(data[f].replace(b"\r", b"")):
+            action = "copy (same text; the Pi's copy has CRLF line endings)"
             copy.append(f)
         elif f in PI_CALIBRATED and not push_calibration:
             action = "DIFFERS: kept the Pi's copy (Pi-calibrated; --push-calibration overwrites)"
@@ -352,8 +423,8 @@ def sync(robot, files, push_calibration=False):
         robot.copy_up(copy)
         after = robot.md5s(copy)
         if after is not None:
-            bad = [f"  {f}: local {local[f]}, Pi {after.get(f, 'missing')}" for f in copy
-                   if after.get(f) != local[f]]
+            bad = [f"  {f}: local {local[f]}, Pi {after.get(f, ('missing',))[0]}" for f in copy
+                   if after.get(f, (None,))[0] != local[f]]
             if bad:
                 raise Abort("md5 mismatch on the Pi after copying -- do NOT run until this is fixed:\n"
                             + "\n".join(bad))
@@ -361,12 +432,36 @@ def sync(robot, files, push_calibration=False):
     else:
         echo("the Pi already has every file")
     for f in kept:
-        echo(f"WARNING: {f} differs on the Pi and was NOT copied; the run uses the Pi's version "
-             f"(its md5 is in the log's meta.json).")
-    return {"copied": copy, "kept": kept, "same": same}
+        echo(f"WARNING: {f} differs on the Pi and was NOT copied; a run uses the Pi's version "
+             f"(its md5 is in the log's meta.json). Decide which copy is right: commit the Pi's, or "
+             f"--push-calibration the laptop's.")
+    return {"copied": copy, "kept": kept, "same": same,
+            "pi_md5": {f: before[f][0] for f in kept}}
 
 
 # ---------------------------------------------------------------- run
+
+def keep_or_refuse(robot, synced, files, keep):
+    """`run` on a Pi-calibrated file the Pi kept: refuse unless --keep-pi-calibration, because the
+    WARNING printed by sync is covered by the tmux screen a moment later. When kept on purpose and
+    the file is the servo map the run reads, copy the Pi's map into logs/pi/pi_maps/ and return its
+    path, so diagnose_run.py reads the map the robot actually used, not the laptop's."""
+    if not synced["kept"]:
+        return None
+    if not keep:
+        raise Abort(f"{', '.join(synced['kept'])} differ(s) on the Pi (see the table above). Decide "
+                    "which copy is right, then re-run with --push-calibration (laptop's copy) or "
+                    "--keep-pi-calibration (Pi's copy).")
+    pi_map = DEFAULT_FILES["--map"]
+    if pi_map not in synced["kept"] or pi_map not in files:      # kept: only the IMU calibration
+        return None
+    rel = f"{LOCAL_LOGS}/pi_maps/{PurePosixPath(pi_map).stem}.{synced['pi_md5'][pi_map][:8]}.yaml"
+    if not robot.dry_run:
+        (ROOT / rel).parent.mkdir(parents=True, exist_ok=True)
+    robot.call(robot.scp_argv([robot.remote(pi_map)], rel))
+    robot.echo(f"the Pi's {pi_map} is in {rel}; diagnose_run.py will read it (--map)")
+    return rel
+
 
 def remote_command(robot, script, run_args) -> str:
     return " ".join([f"cd {robot.repo} &&", robot.cfg["python"], f"scripts/deploy/{script}",
@@ -392,19 +487,27 @@ def start_in_tmux(robot, script, run_args):
         raise Abort(f"could not start the run in tmux (exit {r.returncode}): {(r.stderr or '').strip()}")
 
 
-def attach_and_collect(robot, report=True):
-    """Attach to the tmux session; fetch + diagnose once the session has ended."""
+def attach_and_collect(robot, report=True, map_path=None):
+    """Attach to the tmux session; fetch + diagnose once the session has ended. Anything but a
+    definite 'ended' (incl. an ssh that failed because the link is still down) counts as running:
+    fetching then would diagnose a half-written log of a live run."""
     robot.interactive(robot.ssh_argv(f"tmux attach -t ={robot.session}", tty=True))
-    if robot.session_state() == "running":
-        robot.echo(f"\nThe run is still going in tmux session '{robot.session}' on the Pi (detached or "
-                   "the connection dropped). The robot is NOT released. `robot_run.py attach` to get "
-                   "back in, `robot_run.py stop` to end it; logs are fetched when it ends.")
+    state = robot.session_state()
+    if state not in ("ended", None):
+        why = ("detached or the connection dropped" if state == "running"
+               else "could not reach the Pi to check, so assume it is")
+        robot.echo(f"\nThe run is still going in tmux session '{robot.session}' on the Pi ({why}). "
+                   "The robot is NOT released. `robot_run.py attach` to get back in, `robot_run.py "
+                   "stop` to end it; logs are fetched when it ends.")
         return []
-    return fetch(robot, report=report)
+    return fetch(robot, report=report, map_path=map_path)
 
 
 def with_log(script, run_args, echo=print):
-    """deploy_standing.py without --log records nothing; a robot run must leave a log."""
+    """deploy_standing.py without --log records nothing; a robot run must leave a log. An explicit
+    --no-log (logging/schema-v2 makes logging the default and lets --no-log opt out) is respected."""
+    if "--no-log" in run_args:
+        return run_args
     if script == DEFAULT_SCRIPT and not any(a == "--log" or a.startswith("--log=") for a in run_args):
         echo("adding --log: every robot run is recorded (pass --log PATH to name it)")
         return run_args + ["--log"]
@@ -431,8 +534,35 @@ def remote_logs(robot):
     return out
 
 
-def fetch(robot, report=True):
-    """Copy every Pi log file not already in logs/pi/ (same name AND size). Returns the names."""
+def plan_fetch(listing, local_dir):
+    """([(Pi name, local name)] to copy, {stem: new stem}) -- see FETCH in the module docstring.
+    Files are grouped by stem (the name up to its first '.') so a run's sidecars move together."""
+    def size(name):
+        f = local_dir / name
+        return f.stat().st_size if f.is_file() else None
+
+    stems = {}
+    for n in sorted(listing):
+        stems.setdefault(n.split(".", 1)[0], []).append(n)
+    plan, renamed = [], {}
+    for stem, names in stems.items():
+        targets = {n: n for n in names}
+        if any((size(n) or 0) > listing[n] for n in names):        # a different run, same name
+            k = 2
+            while True:
+                targets = {n: f"{stem}-pi{k}{n[len(stem):]}" for n in names}
+                if all((size(t) or 0) <= listing[n] for n, t in targets.items()):
+                    break
+                k += 1
+        todo = [(n, t) for n, t in targets.items() if size(t) is None or size(t) < listing[n]]
+        if todo and targets[names[0]] != names[0]:
+            renamed[stem] = f"{stem}-pi{k}"            # warned about only while there is a copy to make
+        plan += todo
+    return plan, renamed
+
+
+def fetch(robot, report=True, map_path=None):
+    """Copy every Pi log file that is new or has grown into logs/pi/. Returns the local names."""
     echo = robot.echo
     local_dir = ROOT / LOCAL_LOGS
     listing = remote_logs(robot)
@@ -440,45 +570,60 @@ def fetch(robot, report=True):
         echo("(dry run: the Pi's logs are not listed; each new file would be copied with)")
         robot.call(robot.scp_argv([robot.remote("logs/<new file>")], LOCAL_LOGS))
         if report:
-            post_process(robot, ["<stem>.csv"])
+            post_process(robot, ["<stem>.csv"], map_path=map_path)
         return []
-    new = [n for n in sorted(listing)
-           if not (local_dir / n).is_file() or (local_dir / n).stat().st_size != listing[n]]
-    if not new:
+    plan, renamed = plan_fetch(listing, local_dir)
+    if not plan:
         echo(f"nothing new: all {len(listing)} file(s) in the Pi's logs/ are already in {LOCAL_LOGS}/")
         return []
     local_dir.mkdir(parents=True, exist_ok=True)
-    was = {n: (local_dir / n).stat().st_size for n in new if (local_dir / n).is_file()}
-    for i in range(0, len(new), SCP_BATCH):
-        robot.call(robot.scp_argv([robot.remote(f"logs/{n}") for n in new[i:i + SCP_BATCH]], LOCAL_LOGS))
+    for stem, new_stem in renamed.items():
+        echo(f"WARNING: the Pi's logs/{stem}.* are SMALLER than the copies already in {LOCAL_LOGS}/: a "
+             f"different run reused the name (the Pi's clock went back?). Saving them as {new_stem}.*; "
+             f"the old copies are untouched.")
+    was = {t: (local_dir / t).stat().st_size for _, t in plan if (local_dir / t).is_file()}
+    same = [n for n, t in plan if n == t]
+    for i in range(0, len(same), SCP_BATCH):
+        robot.call(robot.scp_argv([robot.remote(f"logs/{n}") for n in same[i:i + SCP_BATCH]], LOCAL_LOGS))
+    for n, t in plan:
+        if n != t:
+            robot.call(robot.scp_argv([robot.remote(f"logs/{n}")], f"{LOCAL_LOGS}/{t}"))
     rows = []
-    for n in new:
-        got = (local_dir / n).stat().st_size if (local_dir / n).is_file() else None
-        note = "" if n not in was else f"updated (was {was[n]} bytes)"
+    for n, t in plan:
+        got = (local_dir / t).stat().st_size if (local_dir / t).is_file() else None
+        note = "" if t not in was else f"updated (was {was[t]} bytes)"
+        if n != t:
+            note = f"from the Pi's {n}"
         if got != listing[n]:
             note = f"SIZE {got} != Pi {listing[n]}: still being written? fetch again after the run"
-        rows.append((n, listing[n], note))
+        rows.append((t, listing[n], note))
     echo(f"\narrived in {LOCAL_LOGS}/:")
     echo(table(rows, ("file", "bytes", "")))
     if report:
-        post_process(robot, [n for n in new if n.endswith(".csv")])
-    return new
+        post_process(robot, [t for _, t in plan if t.endswith(".csv")], map_path=map_path)
+    return [t for _, t in plan]
 
 
-def post_process(robot, csvs):
-    """diagnose_run.py (+ run_report.py if it exists) on each new log. Never fatal."""
+def post_process(robot, csvs, map_path=None):
+    """diagnose_run.py (+ run_report.py if it exists) on each new log. Never fatal.
+    `map_path`: the servo map the robot actually ran with, when the Pi kept its own (see SYNC).
+    The children print UTF-8 (deg signs, arrows): this laptop's default is cp1252, which would
+    turn them into mojibake -- or raise in the child and lose the report."""
     echo = robot.echo
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
     for tool in POST_PROCESSORS:
         if not (ROOT / tool).is_file():
             echo(f"WARNING: {tool} not found; skipped (not merged on this branch yet?)")
             continue
         for name in csvs:
             argv = [sys.executable, tool, f"{LOCAL_LOGS}/{name}"]
+            if map_path and tool.endswith("diagnose_run.py"):
+                argv += ["--map", map_path]
             if robot.dry_run:
                 echo("$ " + show(argv))
                 continue
             echo(f"\n===== {Path(tool).name} {name} =====")
-            r = robot.shell.run(argv, capture=True, cwd=str(ROOT))
+            r = robot.shell.run(argv, capture=True, cwd=str(ROOT), env=env)
             text = (r.stdout or "") + (r.stderr or "")
             echo(text.rstrip())
             if tool.endswith("diagnose_run.py") and r.stdout:
@@ -516,6 +661,9 @@ def main(argv=None, shell=None, echo=print, cfg=None):
             sp.add_argument("--push-calibration", action="store_true",
                             help="also overwrite the Pi's imu_calib.yaml / joint_servo_map.yaml when they differ")
         if name == "run":
+            sp.add_argument("--keep-pi-calibration", action="store_true",
+                            help="run on the Pi's own imu_calib.yaml / joint_servo_map.yaml when they differ "
+                                 "from the laptop's (without this, or --push-calibration, run refuses)")
             sp.add_argument("--no-tmux", action="store_true",
                             help="plain ssh -t: an SSH drop ends the run and releases torque, as before")
         if name in ("run", "attach", "fetch"):
@@ -531,17 +679,19 @@ def main(argv=None, shell=None, echo=print, cfg=None):
         if args.cmd in ("sync", "run"):
             if not (ROOT / "scripts" / "deploy" / args.script).is_file():
                 raise Abort(f"scripts/deploy/{args.script} does not exist")
-            files, run_args = run_files(run_args, robot.repo)
+            files, run_args = run_files(run_args, robot.repo, script_flags(args.script))
             base = deploy_files()
-            sync(robot, base + [f for f in files if f not in base], push_calibration=args.push_calibration)
+            synced = sync(robot, base + [f for f in files if f not in base],
+                          push_calibration=args.push_calibration)
             if args.cmd == "run":
+                map_path = keep_or_refuse(robot, synced, files, args.keep_pi_calibration)
                 run_args = with_log(args.script, run_args, echo)
                 if args.no_tmux:
                     robot.interactive(robot.ssh_argv(remote_command(robot, args.script, run_args), tty=True))
-                    fetch(robot, report=report)
+                    fetch(robot, report=report, map_path=map_path)
                 else:
                     start_in_tmux(robot, args.script, run_args)
-                    attach_and_collect(robot, report=report)
+                    attach_and_collect(robot, report=report, map_path=map_path)
         elif args.cmd == "attach":
             attach_and_collect(robot, report=report)
         elif args.cmd == "stop":
