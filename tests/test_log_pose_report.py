@@ -8,6 +8,7 @@ posture.yaml's self_tilt). A rigid robot whose IMU agrees with its encoders must
 import csv
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -29,12 +30,18 @@ def _load(name):
 log_pose = _load("log_pose")
 run_report = _load("run_report")
 sys.path.insert(0, str(ROOT / "scripts" / "deploy"))
-import frame_log  # noqa: E402
 from sim_real_map import SimRealMap  # noqa: E402
 
 SMAP = SimRealMap()
 DOFS = [j.dof for j in SMAP.joints]
 DT = 0.025
+
+# Schema 1 exactly as the 10/25 robot logs have it, hard-coded rather than taken from
+# frame_log.build_columns(): once frame_log is schema 2 that would make every "v1" log here
+# v2-shaped and the v1 path (no acc columns, FSR columns mid-row) would lose its coverage.
+V1_SCALARS = ["t_wall", "t_rel", "step", "loop_ms", "busy_ms", "pg_x", "pg_y", "pg_z", "av_x", "av_y", "av_z",
+              "upright_cos", "rej_total", "fsr_v0", "fsr_v1", "fsr_age_ms"]
+V1_COLUMNS = V1_SCALARS + [f"{b}.{d}" for b in ("u_meas", "u_cmd", "q_cmd", "jvel_f") for d in DOFS]
 
 
 def _pg(pitch_deg=0.0, roll_deg=0.0):
@@ -46,12 +53,14 @@ def _pg(pitch_deg=0.0, roll_deg=0.0):
 
 def write_log(tmp_path, n=80, q_meas=None, q_cmd=None, pg=None, upright=None, extra=None,
               meta=True, name="20261025_120000_standing"):
-    """A schema-v1 frame log (plus any `extra` columns) the way deploy_standing writes one."""
+    """A schema-v1 frame log (plus any `extra` columns) the way deploy_standing writes one.
+    pg is one vector for every row, or a function of the row index."""
     q_meas = np.zeros(17) if q_meas is None else np.asarray(q_meas, float)
     q_cmd = q_meas if q_cmd is None else np.asarray(q_cmd, float)
-    pg = _pg() if pg is None else np.asarray(pg, float)
+    pg_at = pg if callable(pg) else (lambda i, v=(_pg() if pg is None else np.asarray(pg, float)): v)
     extra = extra or {}
-    cols = frame_log.build_columns(DOFS) + list(extra)
+    assert not set(extra) & set(V1_COLUMNS), "extra columns must be new ones"
+    cols = V1_COLUMNS + list(extra)
     path = tmp_path / f"{name}.csv"
     u_meas = SMAP.rad_to_units(q_meas)
     u_cmd = SMAP.rad_to_units(q_cmd)
@@ -59,6 +68,7 @@ def write_log(tmp_path, n=80, q_meas=None, q_cmd=None, pg=None, upright=None, ex
         w = csv.DictWriter(f, fieldnames=cols)
         w.writeheader()
         for i in range(n):
+            pg = pg_at(i)
             row = {"t_wall": 1.8e9 + i * DT, "t_rel": i * DT, "step": i, "loop_ms": 25.0, "busy_ms": 21.0,
                    "pg_x": pg[0], "pg_y": pg[1], "pg_z": pg[2], "av_x": 0.0, "av_y": 0.0, "av_z": 0.0,
                    "upright_cos": -pg[2] if upright is None else upright(i), "rej_total": 0,
@@ -86,15 +96,22 @@ def _q(**deg):
 
 
 def test_a_still_upright_robot_has_no_flex_and_its_com_inside_both_feet(tmp_path):
-    _, table, s, a = log_pose.analyze(write_log(tmp_path))
+    cols, table, s, a = log_pose.analyze(write_log(tmp_path))
     assert not s["fell"]
+    assert "acc_pitch_deg" not in cols and s["optional_columns_used"] == []   # a v1 log has no accelerometer
     assert abs(s["flex_pitch_deg"]["median"]) < 0.2
     assert abs(s["flex_roll_deg"]["median"]) < 1.0          # the MJCF soles sit ~0.75 deg rolled
-    assert (a["support_margin_mm"] > 0).all() and (a["support"] == "both").all()
-    assert set(a["stance"]) <= {"R", "L"} and (a["quiet"] == 1).all()
+    assert (a["support_margin_mm"] > 0).all() and (a["stance"] == "both").all()
+    assert set(a["anchor"]) <= {"R", "L"} and (a["quiet"] == 1).all()
     assert s["model"]["foot_len_mm"] == pytest.approx(160.0)  # a 10/25 log -> the 16 cm sole plates
     for side in ("R", "L"):
         assert all(a[f"{side}_{e}_mm"].min() > 0 for e in ("toe", "heel")), side
+        # the COM sits between the feet: past each foot's INNER edge, well inside its outer one
+        assert a[f"{side}_inner_mm"].max() < 0 < a[f"{side}_outer_mm"].min(), side
+    # both feet down: each foot's closest edge is a real one (toe/heel/outer), never the inner
+    # edge the COM is always past when it sits between the feet
+    fm = s["foot_edge_min_while_supporting"]
+    assert set(fm) == {"R", "L"} and all(v["edge"] != "inner" and v["mm"] > 0 for v in fm.values())
 
 
 def test_bending_the_knees_pitches_the_pelvis_back_and_moves_the_com_toward_the_heels(tmp_path):
@@ -197,11 +214,139 @@ def test_report_reads_events_and_console_warnings(tmp_path):
     assert "| 1.2 |" in md                                        # console time made relative
 
 
-def test_replay_runs_or_says_why_not(tmp_path):
+def _rewrite(path, edit):
+    rows = list(csv.DictReader(open(path)))
+    edit(rows)
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0]))
+        w.writeheader()
+        w.writerows(rows)
+
+
+def test_a_still_straight_log_replays_upright_and_close_to_the_real_pitch(tmp_path):
     path = write_log(tmp_path, n=40)
     sections, figs, _, _ = run_report.build(path, out_dir=tmp_path / "out", do_replay=True)
-    replay = dict(sections)["Sim replay (open loop)"][0][1]
-    keys = [k for k, _ in replay]
-    assert "result" in keys or "skipped" in keys
-    if "result" in keys:
-        assert "Sim replay (open loop)" in figs
+    replay = dict(dict(sections)["Sim replay (open loop)"][0][1])
+    assert "skipped" not in replay, replay.get("skipped")
+    assert replay["result"] == "sim stayed up for the whole log"
+    gap = float(re.match(r"median ([+-][\d.]+) deg", replay["pitch gap sim - real"]).group(1))
+    # the flex plant (the 16 cm default) leans ~1.9 deg forward at the straight pose on its passive
+    # foot hinges; it must hold that lean still, not drift
+    assert 0.0 < gap < 2.5
+    sim_std = float(re.match(r"([\d.]+) vs", replay["sim pitch std vs real"]).group(1))
+    assert sim_std < 0.3
+    assert "Sim replay (open loop)" in figs
+
+
+def test_replay_that_cannot_run_is_skipped_with_the_reason(tmp_path):
+    path = write_log(tmp_path, n=20)
+    sections, figs, _, _ = run_report.build(path, out_dir=tmp_path / "out", do_replay=True,
+                                            replay_model=tmp_path / "no_such_model.xml")
+    replay = dict(dict(sections)["Sim replay (open loop)"][0][1])
+    assert "replay failed" in replay["skipped"] and "Sim replay (open loop)" not in figs
+
+
+def test_replay_starts_from_a_masked_pose_not_a_garbage_first_read(tmp_path, monkeypatch):
+    path = write_log(tmp_path, n=20, q_meas=_q(R_knee=5, L_knee=5))
+    _rewrite(path, lambda rows: rows[0].update({"u_meas.R_knee": "14338"}))
+    seen = {}
+
+    def fake_replay(xml, smap, q0, q_cmd, t, settle_s=2.0):
+        seen["q0"] = q0
+        return np.zeros(len(t)), np.zeros(len(t)), "faked"
+    monkeypatch.setattr(run_report, "replay", fake_replay)
+    run_report.build(path, out_dir=tmp_path / "out", do_replay=True)
+    assert np.degrees(seen["q0"][DOFS.index("R_knee")]) == pytest.approx(5.0, abs=0.5)   # next good read
+
+
+def test_joint_tracking_table_is_in_sim_degrees_so_mirrored_joints_agree(tmp_path):
+    # both knees 5 deg MORE bent than told: the same physical error on two mirrored servos
+    # (R_knee and L_knee have opposite servo signs, so raw units disagree in sign)
+    path = write_log(tmp_path, q_meas=_q(R_knee=5, L_knee=5), q_cmd=_q())
+    sections, _, _, _ = run_report.build(path, out_dir=tmp_path / "out")
+    blocks = dict(sections)["Joint tracking (u_cmd - u_meas)"]
+    table = next(b for b in blocks if b[0] == "table")
+    mean = {r[0]: float(r[2]) for r in table[2]}
+    assert mean["R_knee"] == pytest.approx(-5.0, abs=0.4)
+    assert mean["L_knee"] == pytest.approx(-5.0, abs=0.4)
+
+
+def test_rolling_left_moves_the_com_left_onto_the_left_foot(tmp_path):
+    (tmp_path / "straight").mkdir()
+    _, _, s0, a0 = log_pose.analyze(write_log(tmp_path / "straight"))
+    _, _, s, a = log_pose.analyze(write_log(tmp_path, pg=_pg(roll_deg=6.0)))
+    assert s["imu_roll_deg"]["median"] == pytest.approx(6.0, abs=0.1)
+    # joints unchanged, so all of the new roll is flex
+    assert s["flex_roll_deg"]["median"] - s0["flex_roll_deg"]["median"] == pytest.approx(6.0, abs=0.2)
+    assert s["com_y_mm"]["median"] > s0["com_y_mm"]["median"] + 15.0      # + y = the robot's left
+    assert s["com_y_mm"]["median"] > 0
+    assert (a["anchor"] == "L").all() and (a["stance"] == "L").all()      # the right foot lifted
+    # the COM moved toward the left foot: further past the right foot's inner edge, away from
+    # its outer edge, and closer to the left foot's outer edge
+    assert a["R_inner_mm"].max() < a0["R_inner_mm"].min()
+    assert a["R_outer_mm"].min() > a0["R_outer_mm"].max()
+    assert a["L_outer_mm"].max() < a0["L_outer_mm"].min()
+
+
+def test_rolling_right_is_the_mirror_image(tmp_path):
+    _, _, s, a = log_pose.analyze(write_log(tmp_path, pg=_pg(roll_deg=-6.0)))
+    assert s["imu_roll_deg"]["median"] == pytest.approx(-6.0, abs=0.1)
+    assert s["com_y_mm"]["median"] < 0
+    assert (a["anchor"] == "R").all() and (a["stance"] == "R").all()
+
+
+@pytest.mark.parametrize("roll, side", [(25.0, "left"), (-25.0, "right")])
+def test_a_com_past_the_outer_edge_of_the_one_supporting_foot_is_named_by_side(tmp_path, roll, side):
+    _, _, _, a = log_pose.analyze(write_log(tmp_path, pg=_pg(roll_deg=roll)))
+    foot = side[0].upper()
+    assert (a["stance"] == foot).all()
+    assert (a["support_margin_mm"] < 0).all() and (a["support_nearest"] == side).all()
+    assert (a[f"{foot}_outer_mm"] < 0).all()
+
+
+def test_a_tip_to_the_left_is_reported_as_left(tmp_path):
+    path = write_log(tmp_path, n=60, pg=_pg(roll_deg=70.0), upright=lambda i: 0.9 if i < 30 else 0.3)
+    _, _, s, _ = log_pose.analyze(path)
+    assert s["fell"] and s["fall"]["direction"] == "left"
+
+
+def test_two_flat_feet_a_fraction_of_a_mm_apart_do_not_swap_the_anchor(tmp_path):
+    # +-0.1 deg of roll noise about the attitude that has both soles level (the model's soles sit
+    # ~0.75 deg rolled at the straight pose): the soles differ by ~0.3 mm, lower side alternating
+    (tmp_path / "straight").mkdir()
+    level = log_pose.analyze(write_log(tmp_path / "straight", n=10))[2]["enc_roll_deg"]["median"]
+    _, _, s, a = log_pose.analyze(write_log(tmp_path, pg=lambda i: _pg(roll_deg=level + (0.1 if i % 2 else -0.1))))
+    assert s["anchor_switches"] == 0
+    assert (a["stance"] == "both").all() and s["stance_frames"]["both"] == len(a["stance"])
+
+
+def test_hip_roll_puts_the_com_where_the_settled_sim_does(tmp_path):
+    """Lateral geometry against MuJoCo itself: settle the sim at a one-sided hip-roll pose, log
+    what its encoders and IMU would read, and the posed COM must sit where the sim's COM sits
+    relative to each sole. (One-sided, so the two soles are NOT parallel and the IMU, not the
+    encoders, has to decide which foot is flat.)"""
+    import mujoco
+    from sim_cop import settle
+
+    m = mujoco.MjModel.from_xml_path(str(log_pose.MODEL_16CM))
+    idx = {j.mjcf: k for k, j in enumerate(SMAP.joints)}
+    perm = np.array([idx[m.joint(int(m.actuator_trnid[a, 0])).name] for a in range(m.nu)])
+    jadr = m.jnt_qposadr[[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, j.mjcf) for j in SMAP.joints]]
+    base = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "base_link")
+    kin = log_pose.Kinematics(log_pose.MODEL_16CM, SMAP)
+    sim = {}
+    for dof in ("straight", "R_hip_roll", "L_hip_roll"):
+        target = _q() if dof == "straight" else _q(**{dof: 4.0})
+        d = settle(m, target=target[perm], seconds=3.0)
+        q = np.array(d.qpos[jadr], dtype=float)
+        pg = d.xmat[base].reshape(3, 3).T @ np.array([0.0, 0.0, -1.0])
+        sim[dof] = {side: 1000 * (d.subtree_com[0][1] - d.geom_xpos[kin.foot[side]][1]) for side in ("R", "L")}
+        sub = tmp_path / dof
+        sub.mkdir()
+        _, _, _, a = log_pose.analyze(write_log(sub, n=10, q_meas=q, pg=pg))
+        for side in ("R", "L"):
+            posed = float(np.median(a["com_y_mm"] - a[f"foot_{side}_y_mm"]))
+            assert posed == pytest.approx(sim[dof][side], abs=3.0), (dof, side)
+    # and the direction itself, in the sim: + hip roll pulls that leg's foot in under the COM
+    assert sim["R_hip_roll"]["R"] < sim["straight"]["R"] - 15.0
+    assert sim["L_hip_roll"]["L"] > sim["straight"]["L"] + 15.0
