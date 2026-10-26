@@ -18,6 +18,10 @@ Defaults match the deployed model:
 
   python scripts/deploy/deploy_standing.py --dry-run     # no hardware: load+predict once, print
   python scripts/deploy/deploy_standing.py               # closed loop on the Pi
+
+Every hardware run is RECORDED by default (frame_log.py, schema 2): logs/<time>_standing.csv
+plus .meta.json (config, md5 of every file that shaped the run, gyro bias, host) and
+.console.txt (everything printed). --no-log turns it off; --dry-run never logs.
 """
 
 from __future__ import annotations
@@ -220,27 +224,53 @@ def main():
                         "run, watch which way it leans, trim against it, run again.")
     p.add_argument("--debug", action="store_true", help="print obs/action diagnostics each --debug-every steps")
     p.add_argument("--debug-every", type=int, default=10)
-    p.add_argument("--log", nargs="?", const="", default=None, metavar="PATH",
-                   help="record every frame to CSV (commanded vs actual, sensors, timing). "
-                        "Bare --log auto-names into logs/. Costs the loop a few microseconds: "
-                        "the writing happens on a background thread.")
+    p.add_argument("--log", nargs="?", const="", default="", metavar="PATH",
+                   help="where to record every frame (commanded vs actual, sensors, servo "
+                        "load/voltage/temperature, timing). Logging is ON by default and "
+                        "auto-names into logs/; give a PATH to choose the file. Costs the loop "
+                        "tens of microseconds: the writing happens on a background thread.")
+    p.add_argument("--no-log", action="store_true",
+                   help="do not record this run (no CSV, meta or console sidecar). A run that "
+                        "is not recorded cannot be diagnosed afterwards -- prefer leaving it on.")
+    p.add_argument("--no-servo-telemetry", action="store_true",
+                   help="read position only (the old 2-byte read) instead of position + speed + "
+                        "load + voltage + temperature in one 8-byte read. Same number of bus "
+                        "transactions either way (~+1 ms/frame with telemetry); use this if "
+                        "busy_ms shows the loop can no longer hold 40 Hz.")
     p.add_argument("--log-fsr", action="store_true",
-                   help="also sample the foot FSRs through the ADS1115 on a background "
+                   help="also sample the foot FSRs through the ADS1115 board(s) on a background "
                         "thread and record RAW divider volts (never a force -- the "
                         "calibration is not settled, so store raw and derive later)")
-    p.add_argument("--fsr-channels", default="0,1", help="ADS1115 channels: heel,toe")
+    p.add_argument("--fsr-channels", default="0,1",
+                   help="FSR channels in column order: bare AIN pins on 0x48 ('0,1' = left heel, "
+                        "left toe, today's wiring) or ADDR:AIN pairs across boards, e.g. "
+                        "'0x48:0,0x48:1,0x49:0'. Ignored when --fsr-layout is given.")
+    p.add_argument("--fsr-layout", default=None, metavar="YAML",
+                   help="FSR channel list WITH each sensor's foot and x/y position (mm) and the "
+                        "divider R_fixed, recorded into the meta so a per-foot centre of pressure "
+                        "can be computed later, e.g. config/fsr_layout_4per_foot.yaml.")
     p.add_argument("--stream", default=None, metavar="HOST:PORT",
                    help="also broadcast each frame over UDP so scripts/debug/live_viewer.py "
                         "can draw the robot live on a machine that has MuJoCo (the Pi does "
                         "not). Fire-and-forget: if nobody is listening the packets are just "
                         "dropped, and a dead viewer can never stall the control loop. "
-                        "Requires --log, since the sink rides on the frame logger.")
+                        "Needs logging on, since the sink rides on the frame logger.")
     p.add_argument("--require-verified", action="store_true",
                    help="refuse to drive joints whose sign is not bench-verified")
     p.add_argument("--imu-calib", default=str(ROOT / "config" / "imu_calib.yaml"),
                    help="YAML with axis_remap (raw IMU axes -> pelvis/base frame). Identity if missing.")
     p.add_argument("--dry-run", action="store_true", help="no hardware: load, predict once with zero sensors, print")
     args = p.parse_args()
+
+    # Recording starts FIRST, before anything can print or fail: the console is where a run
+    # explains itself (warnings, the posture zero, a traceback), and a run that dies loading
+    # its policy should still leave that behind.
+    log_path = None
+    if not args.no_log and not args.dry_run:
+        from frame_log import ConsoleTee, default_log_path, sidecar_path  # noqa: E402
+        log_path = Path(args.log) if args.log else default_log_path("standing")
+        ConsoleTee(sidecar_path(log_path, "console.txt"))   # held by atexit until exit
+        print(f"Recording this run -> {log_path}  (+ .meta.json, .console.txt; --no-log to skip)")
 
     dt = 1.0 / args.hz
     m = SimRealMap(args.map)
@@ -338,12 +368,17 @@ def main():
               f"{posture.tau_s:g} s, zero {zero_txt}, self_tilt {posture.self_tilt:g}), limited to "
               f"{posture.min_deg:+g}..{posture.max_deg:+g} deg{rate_txt}, from {args.posture}")
 
+    # The feedback law's own share of the command, for the frame log: q_cmd is the clipped
+    # SUM of policy + law + posture, and only this separates them afterwards.
+    law_state = {"q_prior": None}
+
     def predict_units(proj_grav, ang_vel, jpos):
         frame = builder.frame(proj_grav, ang_vel, jpos)
         obs = builder.obs(frame)
         raw_action = np.asarray(infer(obs), dtype=np.float32).ravel()
         if prior_term is not None:      # StandingEnv.step adds it here too, before any clip
-            raw_action = raw_action + prior_term(frame)
+            law_state["q_prior"] = prior_term(frame)
+            raw_action = raw_action + law_state["q_prior"]
         if posture is not None:         # sim: PosturePolicy's command, which the env clips the same way
             raw_action = raw_action + posture.offsets(proj_grav)
         # Match StandingEnv._process_action: SB3 clips the action to the space BEFORE the
@@ -379,20 +414,27 @@ def main():
         with open(args.imu_calib) as f:
             axis_remap = np.asarray(yaml.safe_load(f)["axis_remap"], dtype=np.float32)
         print(f"IMU axis_remap loaded from {args.imu_calib}:\n{axis_remap}")
-    bus = ServoBus().connect()
+    bus = ServoBus(telemetry=not args.no_servo_telemetry).connect()
     imu = IMU(axis_remap=axis_remap).connect()
 
-    # ---- frame log (off unless --log) ----
+    # ---- frame log (on unless --no-log) ----
     # Started before the ramp so `finally` can always close it, and so a run that dies
     # during startup still leaves its sidecar behind saying what was configured.
     logger = fsr = streamer = None
-    if args.log is not None:
-        from frame_log import FrameLogger, FsrSampler, default_log_path, file_md5  # noqa: E402
-        log_path = Path(args.log) if args.log else default_log_path("standing")
+    if log_path is not None:
+        from frame_log import FrameLogger, FsrSampler, files_meta, resolve_fsr  # noqa: E402
+        from hardware import TELEMETRY_DECODING  # noqa: E402
+        fsr_layout = None
         if args.log_fsr:
-            fsr = FsrSampler(channels=[int(c) for c in args.fsr_channels.split(",")])
-        logger = FrameLogger(log_path, dofs, meta={
+            fsr_chans, fsr_layout = resolve_fsr(args.fsr_channels, args.fsr_layout)
+            fsr = FsrSampler(channels=fsr_chans)
+        mode = ("hold_pose" if args.hold_pose else
+                "freeze_after" if args.freeze_after else "closed_loop")
+        # Without FSRs the default two fsr_v columns are still written (NaN), as in schema 1.
+        logger = FrameLogger(log_path, dofs, n_fsr=len(fsr.channels) if fsr else 2, meta={
             "script": "deploy_standing.py",
+            "mode": mode,
+            "args": vars(args),        # every CLI value, defaults included
             "hz": args.hz, "tau": args.tau,
             "jvel_alpha": args.jvel_alpha, "jvel_clamp": args.jvel_clamp,
             "zero_jvel": args.zero_jvel, "zero_angvel": args.zero_angvel,
@@ -403,16 +445,31 @@ def main():
             "units_per_rad": float(m.units_per_rad),
             "residual_config": args.residual_config, "trim": args.trim,
             "residual_baseline": None if res_baseline is None else res_baseline.tolist(),
+            "axis_remap": None if axis_remap is None else axis_remap.tolist(),
+            "prior_gain": None if prior_term is None else npol.prior_gain.tolist(),
+            "prior_deadband": (None if prior_term is None or npol.prior_deadband is None
+                               else npol.prior_deadband.tolist()),
+            "posture": None if posture is None else pcfg,
             # File hashes, not just a git SHA: the Pi is synced by scp, so the SHA can
-            # describe a tree that is not what ran. These identify what actually ran.
-            "file_md5": {p: file_md5(p) for p in
-                         [args.map, args.policy_npz or args.model, args.residual_config,
-                          args.imu_calib] if p},
-            "fsr": None if not args.log_fsr else {
-                "channels": args.fsr_channels,
-                "note": "fsr_v* are RAW divider volts; R_fixed and sensor positions are "
-                        "NOT known to this script -- record them with the run",
+            # describe a tree that is not what ran. These identify what actually ran --
+            # including this script and every deploy module it imports.
+            **files_meta({
+                "map": args.map,
+                "policy": args.policy_npz or args.model,
+                "vecnorm": None if args.policy_npz else args.vecnorm,
+                "residual_config": args.residual_config,
+                "posture": args.posture,
+                "imu_calib": args.imu_calib,
+                "fsr_layout": args.fsr_layout if args.log_fsr else None,
+            }),
+            "servo_telemetry": {
+                "enabled": bus.telemetry,
+                "read": ("one 8-byte read from 0x38 per servo: position, speed, load, voltage, "
+                         "temperature" if bus.telemetry else
+                         "position only (2 bytes from 0x38); telemetry columns are NaN"),
+                "decoding": TELEMETRY_DECODING,
             },
+            "fsr": None if fsr_layout is None else fsr_layout,
         })
         if args.stream:
             from frame_log import UdpSink  # noqa: E402
@@ -421,6 +478,8 @@ def main():
             logger.add_sink(streamer)
             print(f"Streaming frames -> udp://{host}:{port or 9870}")
         print(f"Logging frames -> {log_path}  (+ {log_path.with_suffix('.meta.json')})")
+    elif args.stream:
+        print("[warn] --stream ignored: it rides on the frame logger, and --no-log is set")
 
     def read_units_or(fallback):
         """read_all with NaN (validation-failed read) replaced by a safe fallback, so a
@@ -500,6 +559,10 @@ def main():
         # calibration rejects windows where the robot rotated; this tells the operator why.
         print("Hold the robot STILL now -- calibrating the gyro (1.5 s)...", flush=True)
         imu.calibrate_gyro_bias(seconds=1.5)
+        if logger is not None:
+            # The bias is subtracted from every av sample for the rest of the run, and on
+            # 9/24-9/26 a bad one was the whole story -- so the log keeps it.
+            logger.update_meta(gyro_bias=[float(v) for v in imu.gyro_bias])
 
         # warm up history with real frames at rest
         for _ in range(HISTORY):
@@ -519,8 +582,8 @@ def main():
             for _ in range(40):
                 units, applied = predict_units(pg0, av0, jp0)
             target = np.asarray(units, dtype=int).copy()
+            wp = next(i for i, j in enumerate(m.joints) if j.dof == "waist_pitch")
             if args.lean_back != 0.0:
-                wp = next(i for i, j in enumerate(m.joints) if j.dof == "waist_pitch")
                 d = int(round(m.signs[wp] * np.deg2rad(args.lean_back) * m.units_per_rad))
                 target[wp] = int(np.clip(target[wp] + d, m.lim_lo[wp], m.lim_hi[wp]))
                 print(f"[hold-pose] lean-back {args.lean_back:+.1f} deg: waist_pitch "
@@ -533,10 +596,25 @@ def main():
                 time.sleep(dt)
             print("[hold-pose] HOLDING nominal pose open-loop (NO feedback -- cannot seize). "
                   "Ease your hands away: does it STAND or TIP?")
+            # The commanded pose in sim rad, before quantization: the policy's nominal pose,
+            # plus the lean-back (rad_to_units adds sign*rad*units_per_rad, so the same degrees
+            # in radians). No policy runs here, so jvel_f and q_prior are NaN in the log.
+            q_hold = np.asarray(applied, dtype=np.float32).copy()
+            if args.lean_back != 0.0:
+                q_hold[wp] += np.deg2rad(args.lean_back)
+            nan_j = np.full(NJ, np.nan, dtype=np.float32)
             tilt_bad = 0
+            step = 0
+            rej_frames = 0
+            t_prev = time.time()
             while True:
+                t0 = time.time()
+                loop_ms = (t0 - t_prev) * 1000.0
+                t_prev = t0
                 pg, av, jpos = read_sensors()
                 upright_cos = -float(pg[2])
+                if not np.all(np.isfinite(raw_state["units"])):
+                    rej_frames += 1
                 if upright_cos < args.tilt_cut:
                     tilt_bad += 1
                     if tilt_bad >= args.tilt_debounce:
@@ -546,6 +624,17 @@ def main():
                 else:
                     tilt_bad = 0
                 bus.write_all(m.servo_ids, target, speed=args.speed)
+                if logger is not None:
+                    # Until 10/25 a hold-pose run wrote no rows at all: the one test that
+                    # asks "does this stance stand?" left nothing to answer it with.
+                    fv, fage = fsr.read() if fsr is not None else (None, float("nan"))
+                    logger.log(t_wall=t0, step=step, loop_ms=loop_ms,
+                               busy_ms=(time.time() - t0) * 1000.0,
+                               pg=pg, av=av, upright_cos=upright_cos, rej_total=rej_frames,
+                               u_meas=raw_state["units"], u_cmd=target, q_cmd=q_hold,
+                               jvel_f=nan_j, fsr=fv, fsr_age_ms=fage,
+                               acc=imu.last_accel_g, telemetry=bus.last_telemetry)
+                step += 1
                 time.sleep(dt)
             return
 
@@ -600,6 +689,7 @@ def main():
                           f"(feedback off). Ease your hands away: does it STAND or TIP?")
                 units = frozen_units
                 applied = prev_applied   # keep debug readout sane
+                law_state["q_prior"] = None   # frozen: no law runs
             else:
                 units, applied = predict_units(pg, av, jpos)
                 # per-step move clamp (rate limit), then write
@@ -617,14 +707,21 @@ def main():
                           f"knees {posture.correction:+5.2f} deg", flush=True)
 
             if logger is not None:
-                fv, fage = fsr.read() if fsr is not None else ([float("nan")] * 2, float("nan"))
+                fv, fage = fsr.read() if fsr is not None else (None, float("nan"))
+                pst = None
+                if posture is not None:
+                    lean_f, zero = posture.filtered_lean, posture.zero_deg
+                    pst = (float("nan") if lean_f is None else lean_f,
+                           float("nan") if zero is None else zero, posture.correction)
                 logger.log(t_wall=t0, step=step, loop_ms=loop_ms,
                            busy_ms=(time.time() - t0) * 1000.0,
                            pg=pg, av=av, upright_cos=upright_cos,
                            rej_total=builder.rejects_total,
                            u_meas=raw_state["units"], u_cmd=units,
                            q_cmd=applied, jvel_f=builder.jvel_f,
-                           fsr=fv, fsr_age_ms=fage)
+                           fsr=fv, fsr_age_ms=fage,
+                           acc=imu.last_accel_g, q_prior=law_state["q_prior"],
+                           telemetry=bus.last_telemetry, posture=pst)
 
             if res_baseline is not None:
                 dev = np.asarray(applied, dtype=float) - res_baseline
@@ -676,9 +773,14 @@ def main():
                 print(f"Streamed {streamer.sent} frames ({streamer.errors} send errors)")
                 streamer.close()
             if logger is not None:
-                written, dropped = logger.close()
+                written, dropped = logger.close(
+                    fsr_errors=None if fsr is None else fsr.errors,
+                    stream=None if streamer is None else {"sent": streamer.sent,
+                                                          "errors": streamer.errors})
                 print(f"\nFrame log: {written} rows -> {logger.path}"
-                      + (f"   WARNING: {dropped} rows DROPPED (writer fell behind)" if dropped else ""))
+                      + (f"   WARNING: {dropped} rows DROPPED (writer fell behind)" if dropped else "")
+                      + (f"   WARNING: {logger.malformed} MALFORMED rows skipped"
+                         if logger.malformed else ""))
             if n_dev > 0:
                 print(f"\n--- residual saturation summary ({n_dev} frames, clamp {clamp}) ---")
                 print(f"{'joint':<18} {'mean dev':>9} {'at +edge':>9} {'at -edge':>9}")
