@@ -109,11 +109,16 @@ Legacy video recording script. Prefer `evaluate.py --record` instead.
 
 `deploy_standing.py` and `pose_sweep.py` RECORD every hardware run by default
 (`scripts/deploy/frame_log.py`, schema 2; `--no-log` to skip): `logs/<time>_<tag>.csv` +
-`.meta.json` + `.console.txt` (+ `.events.jsonl`, reserved). To diagnose a run, read all of
+`.meta.json` + `.console.txt` + `.events.jsonl`. To diagnose a run, read all of
 them: the CSV has per-frame commands, encoder units, raw accel, servo load/voltage/temperature
 (RAW registers; decoding in the meta), the feedback law's share (`q_prior.*`), the posture
 controller's internals and the FSR volts; the meta says exactly which files (md5) and args ran;
-the console has what the operator saw, timestamped to line up with `t_wall`.
+the console has what the operator saw, timestamped to line up with `t_wall`; the events file
+has the operator's keypress markers (`scripts/deploy/events.py`: push_forward/back/left/right,
+fell, caught, kick, mark, note, each with `t_wall`/`t_rel` and the nearest logged `step`) and a
+`run_note` line with their after-run "what did you see?" (also `events.operator_note` in the
+meta). Start from the events: they say where in the frames to look. No events file = no key
+was pressed or there was no terminal (`events.reason` in the meta says which).
 A tilt cut leaves the cut frame and ~1 s of the fall (torque off, `u_cmd` NaN); a Ctrl-C/hangup
 leaves the ramp home. `servo_telemetry.telemetry_fallback: true` in the meta = a servo ignored
 the 8-byte read at startup and the run logged position only.

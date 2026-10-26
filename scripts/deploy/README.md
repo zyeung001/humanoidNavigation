@@ -14,6 +14,7 @@ All files here run **on the Pi** except the `--dry-run` paths, which run anywher
 | `numpy_policy.py` | Pure-NumPy inference for the `.npz` (no torch/SB3/pickle). |
 | `frame_log.py` | Run recording (schema 2): per-frame CSV + `.meta.json` + `.console.txt`, FSR sampling over several ADS1115 boards. |
 | `pose_sweep.py` | Measure the pose the robot balances in (CoP vs trim); records its live phase like `deploy_standing.py`. |
+| `events.py` | Operator event markers: single keys on the SSH terminal -> `<stem>.events.jsonl`, plus the after-run "what did you see?". |
 
 ## Recommended: torch-free NumPy policy
 Running torch + SB3 on a Pi works but the ARM wheels are heavy/fiddly. The policy is a small
@@ -76,7 +77,7 @@ never records). Next to `logs/<YYYYmmdd_HHMMSS>_<tag>.csv`:
 | `<stem>.csv` | one row per control frame (hold-pose runs too) |
 | `<stem>.meta.json` | every CLI arg, mode, gyro bias, axis remap, prior gains, posture config, md5 of every file that shaped the run (map, policy, vecnorm, residual/posture/FSR yaml, imu calib, **each deploy source**), host, python/numpy, servo-telemetry decoding, FSR layout, row/drop counts |
 | `<stem>.console.txt` | everything printed (stdout + stderr, tracebacks included), each line `unix_time \| text` |
-| `<stem>.events.jsonl` | operator markers (reserved; one JSON object per line) |
+| `<stem>.events.jsonl` | operator markers, one JSON object per line (see below; only written when a key was pressed) |
 
 Columns added in schema 2 (schema-1 names and meanings unchanged; readers look columns up by name):
 `acc_x/y/z` raw accel in g (remapped, not normalized) · `spd_raw/load_raw/volt_raw/temp_raw.<dof>`
@@ -94,6 +95,37 @@ records the 1 s ramp to home (`u_cmd` = the ramp, `q_cmd` NaN). On exit, torque 
 BEFORE the log files are closed, so a slow SD card can never keep the robot stiff.
 `pose_sweep.py` records ramps, dwells and the ramp back; a failed IMU or servo read there is NaN
 in the row and counted in the meta's `sensor_errors`, never an abort.
+
+## Marking what happened (events.py)
+The CSV shows what the robot did, never what was done to it: a push, a catch or a kick looks
+like the robot moving by itself. While `deploy_standing.py` or `pose_sweep.py` runs, press one
+key the moment it happens (no Enter; a legend is printed at the start, each key is echoed):
+
+| Key | label | Key | label |
+|-----|-------|-----|-------|
+| `f` `b` `l` `r` | `push_forward` `push_back` `push_left` `push_right` | `k` | `kick` (any impact) |
+| `x` | `fell` | `m` | `mark` (generic "look here") |
+| `c` | `caught` | `n` | `note` (stamps now; the text is asked for after the run) |
+
+Each line of `<stem>.events.jsonl` is `{"t_wall", "t_rel", "step", "key", "label", "note"}`:
+`t_rel` is on the CSV's clock and `step` is the logged frame nearest the keypress (before the
+first frame -> the first, after the last -> the last). After the run, with torque already
+off, it asks for each `n` note and a one-line "what did you see?" (Enter skips), stored as a
+`run_note` line (`key` "", the run's last step) and as `events.operator_note` in the meta.
+The meta's `events` block also says whether keys were on and, if not, why.
+
+- **Needs a terminal:** run it as `ssh -t pi@<ip> 'cd ~/humanoidnavigation && python3 ...'` or from
+  an interactive SSH shell. Piped, `nohup`, ssh without `-t`, Windows or a background job (`&`):
+  one `[events] off: <why>` line and the run is unchanged.
+- **The terminal is always given back:** cbreak mode, not raw, so Ctrl-C stops the run as
+  before; Ctrl-Z is disabled while keys are read (suspending the loop would freeze the robot at
+  torque). On a normal end, a tilt cut, Ctrl-C, SIGTERM, SIGHUP or a crash the mode is restored
+  right AFTER torque-off. If a terminal is ever left without echo, type `reset` + Enter.
+- **Costs the loop nothing:** keys are read on their own thread, and the step is matched on
+  the frame logger's writer thread. Each key is appended to the file when pressed, so a run
+  that dies keeps its markers.
+- `--no-events` leaves the terminal alone; `--no-prompt` skips the after-run question.
+  With `--no-log` there is nowhere to put them, so they are off too.
 
 ## FSRs: several boards, 4 per foot
 Default is unchanged: `--log-fsr` samples `0,1` on the ADS1115 at 0x48 (left heel, left toe).
@@ -118,7 +150,7 @@ convert in parallel, so 8 channels cost 4 conversion waits per sweep on the FSR 
 Everything above is tested on the laptop against fake servos, IMU and ADC boards. These can only
 be checked on the robot; do them once after syncing, before trusting a schema-2 log.
 
-1. **Sync + version.** scp `hardware.py`, `frame_log.py`, `deploy_standing.py`, `pose_sweep.py` and
+1. **Sync + version.** scp `hardware.py`, `frame_log.py`, `events.py`, `deploy_standing.py`, `pose_sweep.py` and
    `config/fsr_layout_4per_foot.yaml` with the usual md5 check, then
    `python3 -c "import sys; sys.path.insert(0,'scripts/deploy'); import frame_log, hardware; print(frame_log.SCHEMA_VERSION)"`
    must print 2.
@@ -148,6 +180,31 @@ be checked on the robot; do them once after syncing, before trusting a schema-2 
 8. **SSH hangup:** start a run, kill the laptop's SSH session, fetch the logs. `console.txt` has
    `Stopping: ramping to home` and the `Frame log: N rows` line; the CSV has the ~40 ramp rows; the
    meta has `rows_written`/`ended_unix`; the servos are released.
+
+### Event markers (events.py)
+9. **Keys during a run:** `ssh -t` in, `--hold-pose` as in 6, robot supported. The legend
+   prints; press `m`, `f`, `x`, `c`, `n`, and one key that means nothing (`q`): each echoes at
+   once (`q` prints a hint), none shows as a typed letter, and the hold keeps 40 Hz
+   (`loop_ms` p99 unchanged). End it with Ctrl-C: torque comes off, the terminal echoes
+   normally again, and it asks for the `n` note, then "What did you see?". Answer both.
+   `.events.jsonl` has 6 lines (5 keys + `run_note`); each `step` is the CSV row whose `t_wall`
+   is nearest the line's `t_wall`; the meta's `events.count` is 6.
+10. **Ctrl-Z is ignored, Ctrl-C is not:** during a run Ctrl-Z does nothing (the run keeps
+   going); Ctrl-C still stops it.
+11. **Restored on a kill:** start a run, `kill <pid>` (SIGTERM) from a second SSH session:
+   torque off, then the question appears in the first terminal and what you type there is
+   echoed (after it, `stty -a` shows `icanon echo`). Repeat with a tilt cut (`--hold-pose`,
+   let it tip into the cut).
+12. **Hangup:** start a run, close the laptop's SSH session: servos released (as in 8),
+   `.events.jsonl` has the keys pressed before the drop, and the run did not wait at the prompt
+   (`ended_unix` within seconds of the drop; meta `events.operator_note` null). Log back in:
+   the new shell is normal.
+13. **No terminal:** `ssh pi@<ip> 'cd ~/humanoidnavigation && python3 scripts/deploy/deploy_standing.py --hold-pose ...'`
+   (no `-t`) prints `[events] off: stdin is not a terminal ...`, runs, and never prompts.
+   Same with `... &` in a shell: `[events] off: the run is in the background ...`, and the
+   job is NOT stopped (`jobs` shows Running).
+14. **pose_sweep:** a short `--probe 0` with keys `x`/`c` as it goes over and is caught; the
+   question comes after the `--- PROBE` summary.
 9. **FSR, default wiring:** `--log-fsr` alone: meta `fsr.channels` = L_heel/L_toe on 0x48 AIN0/1;
    `fsr_v0`/`fsr_v1` behave as before (press heel, then toe).
 10. **FSR, two boards (after rewiring):** `i2cdetect -y 1` shows 48, 49, 68;
