@@ -234,7 +234,9 @@ class ConsoleTee:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         # Line-buffered: a print costs one small write, and a crash loses at most a partial line.
-        self._fh = open(self.path, "a", buffering=1, encoding="utf-8", errors="replace")
+        # 'w', like the CSV and the meta: re-running with the same --log PATH must leave three
+        # sidecars that describe the SAME run, not one run's frames beside every run's console.
+        self._fh = open(self.path, "w", buffering=1, encoding="utf-8", errors="replace")
         self._orig = (sys.stdout, sys.stderr)
         self._lock = threading.Lock()
         self.stdout = _TeeStream(sys.stdout, self)

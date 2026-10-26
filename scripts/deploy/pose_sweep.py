@@ -266,7 +266,10 @@ def main():
     if len(fsr_chans) < 2:
         raise SystemExit("the CoP here needs two FSR channels (heel, toe) first in the list")
     release_on_hangup()
-    bus = ServoBus(telemetry=not args.no_servo_telemetry).connect()
+    # Telemetry only when something records it: --no-log keeps the exact old 2-byte read.
+    bus = ServoBus(telemetry=log_path is not None and not args.no_servo_telemetry).connect()
+    if bus.telemetry:
+        bus.check_telemetry(m.servo_ids)      # torque is still off; falls back loudly if needed
     fsr = FsrSampler(channels=fsr_chans)
     # The IMU earns its place twice here: it aborts before a topple, and it measures the
     # LEAN at each trim. Lean and centre of pressure are independent instruments aimed at
@@ -306,38 +309,61 @@ def main():
             **files_meta({"map": args.map, "baseline": args.baseline,
                           "imu_calib": None if args.no_imu else args.imu_calib,
                           "fsr_layout": args.fsr_layout}),
-            "servo_telemetry": {"enabled": bus.telemetry, "decoding": TELEMETRY_DECODING},
+            "servo_telemetry": {"enabled": bus.telemetry,
+                                "requested": not args.no_servo_telemetry,
+                                "telemetry_fallback": bus.telemetry_fallback is not None,
+                                "fallback": bus.telemetry_fallback,
+                                "decoding": TELEMETRY_DECODING},
             "fsr": fsr_layout,
         })
         print(f"Logging frames -> {log_path}")
 
     nan_j = np.full(m.n, np.nan, dtype=np.float32)
-    rec = {"step": 0, "rej": 0, "t_prev": None}
+    nan3 = (float("nan"),) * 3
+    rec = {"step": 0, "rej": 0, "t_prev": None, "sensor_errors": 0}
 
     def record(u_cmd, pg=None):
         """Log one frame: servos, IMU, feet. A no-op with --no-log, so an unrecorded sweep
-        runs exactly as it always did. Reuses `pg` when the caller already read the IMU."""
+        runs exactly as it always did. Reuses `pg` when the caller already read the IMU.
+
+        It CANNOT RAISE. Every read in here exists only for the log, and the IMU deliberately
+        does not retry mid-run (hardware.IMU.connect) on an I2C bus that has failed before
+        (10/18). One OSError escaping from here used to end the sweep AND cut the ramp back
+        short at its first step, dropping torque at the trim pose. A failed read is NaN in the
+        row and counted in the meta's sensor_errors; the sweep goes on as if logging were off.
+        """
         if logger is None:
             return
-        t0 = time.time()
-        loop_ms = float("nan") if rec["t_prev"] is None else (t0 - rec["t_prev"]) * 1000.0
-        rec["t_prev"] = t0
-        u_meas = bus.read_all(m.servo_ids)
-        if not np.all(np.isfinite(u_meas)):
-            rec["rej"] += 1
-        if imu is not None:
-            pg = imu.projected_gravity() if pg is None else pg
-            av, acc = imu.angular_velocity(), imu.last_accel_g
-        else:
-            pg = av = acc = (float("nan"),) * 3
-        v, age = fsr.read()
-        u_cmd = np.asarray(u_cmd, dtype=float)
-        logger.log(t_wall=t0, step=rec["step"], loop_ms=loop_ms,
-                   busy_ms=(time.time() - t0) * 1000.0, pg=pg, av=av,
-                   upright_cos=-float(pg[2]), rej_total=rec["rej"],
-                   u_meas=u_meas, u_cmd=u_cmd, q_cmd=m.units_to_rad(u_cmd), jvel_f=nan_j,
-                   fsr=v, fsr_age_ms=age, acc=acc, telemetry=bus.last_telemetry)
-        rec["step"] += 1
+        try:
+            t0 = time.time()
+            loop_ms = float("nan") if rec["t_prev"] is None else (t0 - rec["t_prev"]) * 1000.0
+            rec["t_prev"] = t0
+            u_meas, tel = nan_j, None
+            try:
+                u_meas = bus.read_all(m.servo_ids)
+                tel = bus.last_telemetry
+            except Exception:
+                rec["sensor_errors"] += 1
+            if not np.all(np.isfinite(u_meas)):
+                rec["rej"] += 1
+            pg_row = av = acc = nan3
+            if imu is not None:
+                try:
+                    pg_row = imu.projected_gravity() if pg is None else pg
+                    acc = imu.last_accel_g
+                    av = imu.angular_velocity()
+                except Exception:
+                    rec["sensor_errors"] += 1
+            v, age = fsr.read()
+            u_cmd = np.asarray(u_cmd, dtype=float)
+            logger.log(t_wall=t0, step=rec["step"], loop_ms=loop_ms,
+                       busy_ms=(time.time() - t0) * 1000.0, pg=pg_row, av=av,
+                       upright_cos=-float(pg_row[2]), rej_total=rec["rej"],
+                       u_meas=u_meas, u_cmd=u_cmd, q_cmd=m.units_to_rad(u_cmd), jvel_f=nan_j,
+                       fsr=v, fsr_age_ms=age, acc=acc, telemetry=tel)
+            rec["step"] += 1
+        except Exception:
+            rec["sensor_errors"] += 1
 
     def hold_for(seconds, u_cmd):
         """Sleep through a settle, recording at ~40 Hz instead of leaving a gap in the log."""
@@ -446,29 +472,43 @@ def main():
                 cur = bus.read_all(m.servo_ids)
                 cur = np.where(np.isfinite(cur), cur, start)
                 for k in range(1, 81):
+                    t0 = time.time()
                     u = np.clip(cur + (start - cur) * k / 80, m.lim_lo, m.lim_hi)
                     bus.write_all(m.servo_ids, u.round().astype(int), speed=args.speed)
-                    record(u.round())
-                    time.sleep(1 / 40)
+                    record(u.round())                 # cannot raise: see record()
+                    time.sleep(max(0.0, 1 / 40 - (time.time() - t0)))
         except Exception:
             pass
+        # Torque comes off BEFORE the logging cleanup: closing the FSR sampler and the writer
+        # can take seconds (thread joins, a slow SD card), and the robot must not stay stiff.
+        torque_off = False
+        try:
+            bus.set_torque(m.servo_ids, False)
+            torque_off = True
+        except Exception as e:
+            print(f"[SAFETY] torque-off FAILED ({e!r}); retrying after the log is closed")
         try:
             fsr.close()
             if logger is not None:
                 # The per-trim summary rides along in the meta, so the numbers printed below
                 # and the frames they came from stay one record.
                 written, dropped = logger.close(
-                    fsr_errors=fsr.errors,
+                    fsr_errors=fsr.errors, sensor_errors=rec["sensor_errors"],
                     sweep_points=[{"trim": tr, "cop_mm": c, "spread_mm": sd, "lean_deg": ln,
                                    "load_S": ld} for tr, c, sd, ln, ld in rows],
                     probe_samples=len(probe_hist))
                 print(f"Frame log: {written} rows -> {logger.path}"
-                      + (f"   WARNING: {dropped} rows DROPPED" if dropped else ""))
+                      + (f"   WARNING: {dropped} rows DROPPED" if dropped else "")
+                      + (f"   WARNING: {rec['sensor_errors']} failed sensor reads (NaN in the log)"
+                         if rec["sensor_errors"] else ""))
         finally:
-            bus.set_torque(m.servo_ids, False)
-            bus.close()
-            if imu is not None:
-                imu.close()
+            try:
+                if not torque_off:
+                    bus.set_torque(m.servo_ids, False)   # a second failure raises, loudly
+            finally:
+                bus.close()
+                if imu is not None:
+                    imu.close()
 
     if args.probe is not None:
         probe_report(probe_hist, args)

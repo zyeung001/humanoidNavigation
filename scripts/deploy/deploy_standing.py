@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sim_real_map import SimRealMap, DEFAULT_MAP  # noqa: E402
 
 NJ = 17
+FALL_RECORD_S = 1.0   # after a tilt cut, keep recording the sensors this long (torque off)
 FRAME = 6 + 3 * NJ          # 57
 HISTORY = 4
 OBS_DIM = FRAME * HISTORY   # 228
@@ -244,11 +245,14 @@ def main():
     p.add_argument("--fsr-channels", default="0,1",
                    help="FSR channels in column order: bare AIN pins on 0x48 ('0,1' = left heel, "
                         "left toe, today's wiring) or ADDR:AIN pairs across boards, e.g. "
-                        "'0x48:0,0x48:1,0x49:0'. Ignored when --fsr-layout is given.")
+                        "'0x48:0,0x48:1,0x49:0'. With --fsr-layout the file IS the channel list: "
+                        "the default '0,1' is then ignored, and any other value must name the "
+                        "same channels in the same order or the run refuses to start.")
     p.add_argument("--fsr-layout", default=None, metavar="YAML",
                    help="FSR channel list WITH each sensor's foot and x/y position (mm) and the "
                         "divider R_fixed, recorded into the meta so a per-foot centre of pressure "
-                        "can be computed later, e.g. config/fsr_layout_4per_foot.yaml.")
+                        "can be computed later, e.g. config/fsr_layout_4per_foot.yaml. Implies "
+                        "--log-fsr: a layout given without sampling would record nothing.")
     p.add_argument("--stream", default=None, metavar="HOST:PORT",
                    help="also broadcast each frame over UDP so scripts/debug/live_viewer.py "
                         "can draw the robot live on a machine that has MuJoCo (the Pi does "
@@ -414,8 +418,14 @@ def main():
         with open(args.imu_calib) as f:
             axis_remap = np.asarray(yaml.safe_load(f)["axis_remap"], dtype=np.float32)
         print(f"IMU axis_remap loaded from {args.imu_calib}:\n{axis_remap}")
-    bus = ServoBus(telemetry=not args.no_servo_telemetry).connect()
+    # Telemetry only when something records it: --no-log keeps the exact old 2-byte read.
+    bus = ServoBus(telemetry=log_path is not None and not args.no_servo_telemetry).connect()
+    if bus.telemetry:
+        bus.check_telemetry(m.servo_ids)      # torque is still off; falls back loudly if needed
     imu = IMU(axis_remap=axis_remap).connect()
+    if args.fsr_layout and not args.log_fsr and log_path is not None:
+        print(f"[log] --fsr-layout given: sampling the FSRs as if --log-fsr ({args.fsr_layout})")
+        args.log_fsr = True
 
     # ---- frame log (on unless --no-log) ----
     # Started before the ramp so `finally` can always close it, and so a run that dies
@@ -464,6 +474,11 @@ def main():
             }),
             "servo_telemetry": {
                 "enabled": bus.telemetry,
+                "requested": not args.no_servo_telemetry,
+                # True = the 8-byte read failed its startup check and the run read position
+                # only (hardware.ServoBus.check_telemetry); "fallback" says which servo and why.
+                "telemetry_fallback": bus.telemetry_fallback is not None,
+                "fallback": bus.telemetry_fallback,
                 "read": ("one 8-byte read from 0x38 per servo: position, speed, load, voltage, "
                          "temperature" if bus.telemetry else
                          "position only (2 bytes from 0x38); telemetry columns are NaN"),
@@ -521,6 +536,43 @@ def main():
         jpos = (abs_rad - m.default_joint_pos).astype(np.float32)
         return pg, av, jpos
 
+    nan_j = np.full(NJ, np.nan, dtype=np.float32)
+
+    def log_torque_off(t0, step, loop_ms, pg, av, rej_total, u_cmd=nan_j):
+        """Log a frame in which the policy did not command anything: the tilt-cut frame, the
+        fall after it, the stop ramp. Sensors as read; q_cmd/jvel_f/q_prior NaN. u_cmd is NaN
+        with torque off, or the ramp's target during the stop ramp."""
+        fv, fage = fsr.read() if fsr is not None else (None, float("nan"))
+        logger.log(t_wall=t0, step=step, loop_ms=loop_ms, busy_ms=(time.time() - t0) * 1000.0,
+                   pg=pg, av=av, upright_cos=-float(pg[2]), rej_total=rej_total,
+                   u_meas=raw_state["units"], u_cmd=u_cmd, q_cmd=nan_j, jvel_f=nan_j,
+                   fsr=fv, fsr_age_ms=fage, acc=imu.last_accel_g, telemetry=bus.last_telemetry)
+
+    def record_fall(step, rej_total, t_prev):
+        """After a tilt cut, keep recording for FALL_RECORD_S with torque already off.
+
+        The log exists to explain the event that ended the run, and until 10/25 it stopped one
+        frame BEFORE it: the cut frame and the fall were never written. Torque is off, so this
+        only reads. It can never raise or start the stop ramp: a sensor fault ends it early,
+        and a Ctrl-C (or SSH hangup) here just stops recording -- ramping servos that have
+        just been released would stiffen a falling robot again."""
+        if logger is None:
+            return
+        t_end = time.time() + FALL_RECORD_S
+        try:
+            while time.time() < t_end:
+                t0 = time.time()
+                try:
+                    pg, av, _ = read_sensors()
+                    step += 1
+                    log_torque_off(t0, step, (t0 - t_prev) * 1000.0, pg, av, rej_total)
+                except Exception:
+                    return
+                t_prev = t0
+                time.sleep(max(0.0, dt - (time.time() - t0)))
+        except KeyboardInterrupt:
+            pass
+
     # Ramp target = SIM-STRAIGHT: all joints at sim 0 = the per-joint centers. Measured in sim,
     # the balanced policy's settled standing attractor is joints ~= 0 (symmetric to ~0.003 rad,
     # upright, low-gain), where the obs jpos = (0 - default_joint_pos) = -default -- the actual
@@ -545,6 +597,7 @@ def main():
     arm_mask = np.array(["shoulder" in j.dof or "elbow" in j.dof for j in m.joints])
     step_cap[arm_mask] = float(arm_step)
 
+    step = 0                  # frame counter; the stop ramp continues it
     try:
         print("Enabling torque, calibrating gyro, ramping to home...")
         bus.set_torque(m.servo_ids, True)
@@ -602,7 +655,6 @@ def main():
             q_hold = np.asarray(applied, dtype=np.float32).copy()
             if args.lean_back != 0.0:
                 q_hold[wp] += np.deg2rad(args.lean_back)
-            nan_j = np.full(NJ, np.nan, dtype=np.float32)
             tilt_bad = 0
             step = 0
             rej_frames = 0
@@ -620,6 +672,9 @@ def main():
                     if tilt_bad >= args.tilt_debounce:
                         print(f"\n[SAFETY] upright_cos={upright_cos:.2f} < {args.tilt_cut}: cutting torque.")
                         bus.set_torque(m.servo_ids, False)
+                        if logger is not None:     # the cut frame, then the fall itself
+                            log_torque_off(t0, step, loop_ms, pg, av, rej_frames)
+                            record_fall(step, rej_frames, t0)
                         break
                 else:
                     tilt_bad = 0
@@ -672,6 +727,9 @@ def main():
                     print(f"\n[SAFETY] upright_cos={upright_cos:.2f} < {args.tilt_cut} for "
                           f"{tilt_bad} frames: cutting torque.")
                     bus.set_torque(m.servo_ids, False)
+                    if logger is not None:         # the cut frame, then the fall itself
+                        log_torque_off(t0, step, loop_ms, pg, av, builder.rejects_total)
+                        record_fall(step, builder.rejects_total, t0)
                     break
             else:
                 tilt_bad = 0
@@ -758,14 +816,35 @@ def main():
         try:
             cur = read_units_or(home_units)
             steps = max(1, int(1.0 / dt))
+            t_prev = time.time()
             for k in range(1, steps + 1):
+                t0 = time.time()
                 u = (cur + (home_units - cur) * k / steps).round().astype(int)
                 bus.write_all(m.servo_ids, u, speed=args.speed)
-                time.sleep(dt)
+                if logger is not None:
+                    # The stop ramp is recorded too: u_cmd = its target, sensors as read. Its
+                    # own try, so a sensor fault can only cost rows, never the ramp.
+                    try:
+                        pg, av, _ = read_sensors()
+                        log_torque_off(t0, step, (t0 - t_prev) * 1000.0, pg, av,
+                                       builder.rejects_total, u_cmd=u)
+                        step += 1
+                    except Exception:
+                        pass
+                t_prev = t0
+                time.sleep(max(0.0, dt - (time.time() - t0)))
         except Exception:
             pass
     finally:
-        # Torque comes off even if the logging or the summary below raises.
+        # Torque comes off FIRST, before any logging cleanup: closing the FSR sampler and the
+        # writer can take seconds (thread joins, a slow SD card), and a robot that has just
+        # been Ctrl-C'd or lost its SSH session must not stay stiff for that long.
+        torque_off = False
+        try:
+            bus.set_torque(m.servo_ids, False)
+            torque_off = True
+        except Exception as e:
+            print(f"[SAFETY] torque-off FAILED ({e!r}); retrying after the log is closed")
         try:
             if fsr is not None:
                 fsr.close()
@@ -790,9 +869,12 @@ def main():
                     print(f"{dofs[i]:<18} {dev_sum[i]/n_dev:+9.3f} "
                           f"{100.0*sat_hi[i]/n_dev:8.0f}% {100.0*sat_lo[i]/n_dev:8.0f}%")
         finally:
-            bus.set_torque(m.servo_ids, False)
-            bus.close()
-            imu.close()
+            try:
+                if not torque_off:
+                    bus.set_torque(m.servo_ids, False)   # a second failure raises, loudly
+            finally:
+                bus.close()
+                imu.close()
 
 
 if __name__ == "__main__":
