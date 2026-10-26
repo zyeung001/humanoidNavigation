@@ -29,19 +29,22 @@ def tap_shape(dt, tau):
     return np.where(dt >= 0, np.exp(-np.clip(dt, 0, None) / tau), 0.0)
 
 
-def make_log(v2=True, seed=0, knee_deg=10.0):
+def make_log(v2=True, seed=0, knee_deg=10.0, acc_tau=0.02, tilt_deg=3.0):
+    """acc_tau: how long the tap's acceleration spike lasts. A real finger tap is a few ms,
+    shorter than the 25 ms between log rows; the taps here sit 15 / 5 ms after a sample."""
     rng = np.random.default_rng(seed)
     t = T_WALL0 + np.arange(0, LOG_S, 1 / 40) + rng.normal(0, 0.0005, int(LOG_S * 40))
     n = len(t)
     sway = 0.03 * np.sin(2 * np.pi * 0.4 * (t - T_WALL0))
     av = np.column_stack([rng.normal(0, 0.004, n), sway + rng.normal(0, 0.004, n), rng.normal(0, 0.004, n)])
-    acc = np.column_stack([rng.normal(0, 0.006, n), rng.normal(0, 0.006, n), 1 + rng.normal(0, 0.006, n)])
+    th = math.radians(tilt_deg)                 # at rest the accelerometer reads +1 g up = -pg
+    acc = np.column_stack([-math.sin(th) + rng.normal(0, 0.006, n), rng.normal(0, 0.006, n),
+                           math.cos(th) + rng.normal(0, 0.006, n)])
     for tap in TAPS:
         av[:, 1] += 0.6 * tap_shape(t - tap, 0.06)
-        acc[:, 0] += 0.9 * tap_shape(t - tap, 0.02)
+        acc[:, 0] += 0.9 * tap_shape(t - tap, acc_tau)
     cols = {"t_wall": t, "t_rel": t - T_WALL0 + 6.0, "step": np.arange(n),
-            "pg_x": np.full(n, math.sin(math.radians(3))), "pg_y": np.zeros(n),
-            "pg_z": np.full(n, -math.cos(math.radians(3))),
+            "pg_x": np.full(n, math.sin(th)), "pg_y": np.zeros(n), "pg_z": np.full(n, -math.cos(th)),
             "av_x": av[:, 0], "av_y": av[:, 1], "av_z": av[:, 2]}
     if v2:
         cols.update(acc_x=acc[:, 0], acc_y=acc[:, 1], acc_z=acc[:, 2])
@@ -55,7 +58,9 @@ def video_clock(t_wall, drift_ppm=0.0):
     return (t_wall - VIDEO_START) * (1 + drift_ppm * 1e-6)
 
 
-def make_tags(drift_ppm=0.0, seed=1, gap=None):
+def make_tags(drift_ppm=0.0, seed=1, gap=None, video_only=(), world_ref=1):
+    """video_only: (t_video, px) disturbances the log never sees -- the robot lifted into
+    view or set down before the log starts moves every tag far more than a tap's 6 px."""
     rng = np.random.default_rng(seed)
     tv = np.arange(0, VIDEO_S, 1 / 60)
     tw = VIDEO_START + tv / (1 + drift_ppm * 1e-6)
@@ -63,6 +68,7 @@ def make_tags(drift_ppm=0.0, seed=1, gap=None):
     for f, (t_v, t_w) in enumerate(zip(tv, tw)):
         # A tap knocks the body 6 px over ~40 ms, then it creeps back over ~1 s.
         push = sum(6.0 * (1 - tap_shape(t_w - tap, 0.04)) * tap_shape(t_w - tap, 1.0) for tap in TAPS)
+        push += sum(px * (1 - tap_shape(t_v - t0, 0.04)) * tap_shape(t_v - t0, 1.0) for t0, px in video_only)
         for tid, x0 in ((1, 800.0), (7, 820.0), (0, 900.0)):
             missing = gap is not None and gap[0] <= t_v <= gap[1] and tid != 0
             moves = 0.0 if tid == 0 else push
@@ -70,7 +76,7 @@ def make_tags(drift_ppm=0.0, seed=1, gap=None):
                          "px_cx": "" if missing else x0 + moves + rng.normal(0, 0.15),
                          "px_cy": "" if missing else 400 + rng.normal(0, 0.15)})
         in_gap = gap is not None and gap[0] <= t_v <= gap[1]
-        links.append({"frame": f, "t_video": t_v, "world_ref": 1,
+        links.append({"frame": f, "t_video": t_v, "world_ref": world_ref,
                       "pelvis.pitch": "" if in_gap else 5 * math.sin(2 * math.pi * 0.5 * (t_w - T_WALL0)),
                       "pelvis.roll": "" if in_gap else 0.5,
                       "R_knee.pitch": "" if in_gap else 12.0})
@@ -151,11 +157,17 @@ def test_cli_writes_an_aligned_csv_keyed_on_log_t_wall(tmp_path):
     assert np.nanmax(np.abs(pitch[~gap] - want[~gap])) < 0.5
     knee_enc = np.array([float(r["enc.R_knee.pitch"]) for r in out])
     assert knee_enc == pytest.approx(10.0, abs=0.3)
-    assert np.array([float(r["imu.pitch"]) for r in out]) == pytest.approx(3.0, abs=1e-3)
+    assert np.array([float(r["imu.pg.pitch"]) for r in out]) == pytest.approx(3.0, abs=1e-3)
+    # The raw accelerometer gives the same tilt, unfiltered (taps aside: the median).
+    assert np.median([float(r["imu.acc.pitch"]) for r in out]) == pytest.approx(3.0, abs=0.1)
+    assert {r["cam.world_ref"] for r in out if r["cam.world_ref"]} == {"1"}
     js = json.loads((tmp_path / "clip.sync.json").read_text())
+    assert js["verified"] is True
     knee = js["camera_vs_reference"]["R_knee.pitch"]
     assert knee["median_offset_deg"] == pytest.approx(2.0, abs=0.3)   # cam 12 vs encoder 10
-    assert js["camera_vs_reference"]["pelvis.pitch (cam - imu)"]["n"] > 1000
+    assert js["camera_vs_reference"]["pelvis.pitch (cam - imu.pg)"]["n"] > 1000
+    assert js["camera_vs_reference"]["pelvis.pitch (cam - imu.acc)"]["n"] > 1000
+    assert js["log_filters"] is None                 # no run.meta.json beside this log
 
 
 def test_v1_log_cli_falls_back_to_the_gyro(tmp_path):
@@ -171,3 +183,87 @@ def test_v1_log_cli_falls_back_to_the_gyro(tmp_path):
     assert rep["log_signal"] == "gyro"
     assert rep["t_wall_at_video_0"] == pytest.approx(VIDEO_START, abs=0.02)
     assert any("links.csv not found" in w for w in rep["warnings"])
+
+
+def _write_log(path, log):
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(list(log))
+        for i in range(len(log["t_wall"])):
+            w.writerow([f"{log[k][i]:.6f}" for k in log])
+
+
+@pytest.mark.parametrize("scale", [3.0, 10.0])
+def test_a_video_only_disturbance_cannot_take_over_the_sync(scale):
+    """Handling the robot before the log starts moves every tag; the log never sees it.
+    Unclipped, one such event 2-3x a tap's size outvoted both taps and put the log 63 s
+    before the video, matching the start tap to the end one -- and it reported success."""
+    tags, _ = make_tags(video_only=[(1.0, 6.0 * scale)])
+    tv, zv, tl, zl, _ = _signals(make_log(), tags)
+    near = lambda t0: zv[np.abs(tv - t0) < 0.3].max()  # noqa: E731
+    assert near(1.0) > 2 * max(near(tap - VIDEO_START) for tap in TAPS)    # it IS the biggest event
+    s = sync.synchronise(tv, zv, tl, zl)
+    assert s["verified"] and [e["name"] for e in s["events"]] == ["start", "end"]
+    assert s["a"] == pytest.approx(VIDEO_START, abs=0.015)
+    assert s["log_cover"] > 0.99
+
+
+def test_a_match_outside_the_filming_protocol_is_reported_not_taken():
+    """The protocol films the whole log; a lag that leaves most of it outside the video is
+    never chosen, even when it scores higher, and the warning says how to force it."""
+    tl = T_WALL0 + np.arange(0, LOG_S, 0.025)
+    zl = np.zeros_like(tl)
+    zl[np.abs(tl - (T_WALL0 + 1.0)) < 0.03] = 18.0       # a strong log event near its start
+    zl[np.abs(tl - (T_WALL0 + 30.0)) < 0.03] = 8.0       # and a weaker one mid-run
+    tv = np.arange(0, VIDEO_S, 1 / 60)
+    zv = np.zeros_like(tv)
+    zv[np.abs(tv - 74.0) < 0.03] = 18.0                  # matches the strong one only if the log
+    zv[np.abs(tv - 32.0) < 0.03] = 8.0                   # starts 73 s into a 75 s video
+    s = sync.synchronise(tv, zv, tl, zl)
+    assert s["coarse_offset"] == pytest.approx(T_WALL0 - 2.0, abs=0.05)
+    assert any("--offset-guess" in w for w in s["warnings"])
+
+
+def test_a_tap_too_short_for_the_log_rate_falls_back_to_the_gyro():
+    """A 1 ms acceleration spike between two 40 Hz samples is invisible in |acc|; the gyro
+    still sees the body rock, and the better-matching signal is the one used."""
+    tags, _ = make_tags()
+    log = make_log(acc_tau=0.001)
+    tv, zv = sync.tag_motion_signal(_cols(tags), exclude_ids=[0])
+    s, kind, tried = sync.synchronise_best(tv, zv, sync.log_motion_signals(log))
+    assert set(tried) == {"acc", "gyro"} and kind == "gyro"
+    assert not tried["acc"]["verified"]
+    assert s["verified"] and s["a"] == pytest.approx(VIDEO_START, abs=0.02)
+
+
+def test_one_event_is_not_verified_and_says_so(tmp_path):
+    log = make_log()
+    keep = log["t_wall"] < T_WALL0 + 40.0                # the log stopped before the end tap
+    log = {k: v[keep] for k, v in log.items()}
+    _write_log(tmp_path / "short.csv", log)
+    tags, _ = make_tags()
+    _write(tmp_path / "s.tags.csv", tags)
+    rep = sync.main([str(tmp_path / "s.tags.csv"), str(tmp_path / "short.csv")])
+    assert rep["verified"] is False and len(rep["events"]) == 1
+    assert any(w.startswith("SYNC NOT VERIFIED") for w in rep["warnings"])
+    assert rep["t_wall_at_video_0"] == pytest.approx(VIDEO_START, abs=0.02)   # still the best guess
+
+
+def test_camera_frame_link_angles_are_blanked_not_compared_with_the_imu(tmp_path):
+    """No floor tag -> links.csv angles are in the CAMERA frame. Next to gravity-referenced
+    IMU angles they would read as a tilt the robot never had; the joint angle is kept."""
+    log = make_log()
+    _write_log(tmp_path / "run.csv", log)
+    (tmp_path / "run.meta.json").write_text(json.dumps({"projgrav_alpha": 0.35, "angvel_alpha": 1.0,
+                                                        "hz": 40.0, "schema_version": 2}))
+    tags, links = make_tags(world_ref=0)
+    _write(tmp_path / "c.tags.csv", tags)
+    _write(tmp_path / "c.links.csv", links)
+    rep = sync.main([str(tmp_path / "c.tags.csv"), str(tmp_path / "run.csv")])
+    out = list(csv.DictReader(open(tmp_path / "c.aligned.csv")))
+    assert all(r["cam.pelvis.pitch"] == "" for r in out)
+    assert sum(r["cam.R_knee.pitch"] != "" for r in out) > 1000
+    assert {r["cam.world_ref"] for r in out if r["cam.world_ref"]} == {"0"}
+    assert not any(k.startswith("pelvis.") for k in rep["camera_vs_reference"])
+    assert any("floor tag missing" in w for w in rep["warnings"])
+    assert rep["log_filters"]["projgrav_alpha"] == 0.35

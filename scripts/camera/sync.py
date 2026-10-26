@@ -6,7 +6,10 @@ WHY A TAP. The phone and the Pi keep separate clocks, and a phone's video timest
 at zero, so nothing in the files says which video frame goes with which log row. A firm
 tap on the pelvis is an event both see at the same instant: a jump in tag motion in the
 video, a spike in |acceleration| (schema v2 acc_x/y/z) or angular rate (av_*, the only
-choice in a v1 log) in the log. Tapping again at the END measures clock drift between the
+choice in a v1 log) in the log. A v2 log is tried both ways and the signal whose start/end
+events match best is used: a finger tap's acceleration spike lasts a few ms, and the log
+keeps one IMU sample per 25 ms loop, so it can fall between samples; the body's rocking
+(gyro) lasts far longer. Tapping again at the END measures clock drift between the
 two -- phone video clocks and nominal frame rates are off by up to ~0.1%, i.e. 60 ms over
 a minute, which is more than a frame.
 
@@ -15,11 +18,20 @@ a minute, which is more than a frame.
 
 HOW. (1) Coarse: cross-correlate the two motion-event signals over every lag, so the
 match is found wherever the recordings overlap and from every shared event (taps, pushes,
-a fall), not just one. (2) Fine: take the largest event near the start (and the end) of
-the overlap in the video, the matching spike in the log within +-0.3 s of where the coarse
-offset puts it, and compare their ONSETS (30% of peak, interpolated) -- onsets, because a
-40 Hz IMU and a 60 fps camera smear a peak differently but agree on when it began. With
-two events, t_wall = a + b * t_video (b - 1 = drift); with one, b = 1.
+a fall), not just one. The score is how many events line up, not how big they are --
+lifting the robot into view moves every tag far more than a tap does, and the log never
+sees it (coarse_search). The protocol (film before the log starts, stop after it ends) is
+used too: only lags that put the log inside the video are searched, and a stronger match
+outside that is reported, not taken.
+(2) Fine: take the largest event near the start (and the end) of the overlap in the video,
+the matching spike in the log within +-0.3 s of where the coarse offset puts it, and
+compare their ONSETS (30% of peak, interpolated) -- onsets, because a 40 Hz IMU and a
+60 fps camera smear a peak differently but agree on when it began. With two events, t_wall = a + b * t_video (b - 1 = drift); with one, b = 1.
+
+VERIFIED means two events (start and end) gave the same clock within DRIFT_MAX_PPM. One
+event, or two that disagree, still writes the files, but sync.json says verified: false,
+the printout says SYNC NOT VERIFIED and the exit status is 2: a wrong offset looks exactly
+like a right one in aligned.csv, so it must never pass quietly.
 
 PRECISION: about +-half a log sample (12 ms at 40 Hz) per event; the onset of a tap is
 sharp in both signals but the log only samples it every 25 ms. Check the reported events
@@ -28,11 +40,21 @@ tap is what the start/end windows are meant to find.
 
 WRITES next to the video/tags.csv (or --out):
   <stem>.aligned.csv  one row per LOG row: t_wall, t_rel, step, t_video, in_video, the IMU's
-                      pelvis roll/pitch (from pg), every links.csv column interpolated to that
-                      instant as cam.<link>.<field> / cam.<pair>.<angle> (blank across a
-                      detection gap), and enc.<pair>.<angle>: the same joint angle from the
+                      pelvis roll/pitch, every links.csv column interpolated to that instant as
+                      cam.<link>.<field> / cam.<pair>.<angle> (blank across a detection gap),
+                      cam.world_ref, and enc.<pair>.<angle>: the same joint angle from the
                       encoders (tags.yaml `pairs`), so camera and encoder sit side by side.
-  <stem>.sync.json    offset, drift, the events used, and camera-vs-encoder/IMU offsets.
+                        imu.pg.roll/pitch   from the logged pg, which deploy_standing EMA-filters
+                                            (projgrav_alpha; at 0.35 that is ~2 samples, ~50 ms
+                                            of lag): a lag in a push is the filter, not flex.
+                        imu.acc.roll/pitch  (v2 logs) from the raw accelerometer, unfiltered --
+                                            exact when quasi-static, but a push's linear
+                                            acceleration tilts it too.
+                      cam.<link>.* are blank where world_ref = 0 (floor tag never seen): those
+                      angles would be in the CAMERA frame, not comparable with the IMU. Pair
+                      angles never use the world and are always kept.
+  <stem>.sync.json    verified, offset, drift, the events used, the log's filter settings
+                      (from <log>.meta.json) and camera-vs-encoder/IMU offsets.
 """
 from __future__ import annotations
 
@@ -51,6 +73,10 @@ import camlib  # noqa: E402
 GRID_DT = 0.01          # s, common grid for the coarse cross-correlation
 HP_WINDOW_S = 0.5       # moving-median window removed from each signal: keeps the sharp events only
 MIN_EVENT_Z = 6.0       # an event must stand this many robust sigmas above the noise
+EVENT_CLIP_Z = 3 * MIN_EVENT_Z  # cross-correlation input cap: one huge event must not decide the lag
+EVENT_SEP_S = 1.0       # peaks closer than this are one event (a push rings for a while)
+EVENT_HALF_WIDTH_S = 0.15  # an event's triangle in the coarse search: covers onset smear + ~0.1% drift
+MIN_LOG_COVER = 0.9     # the protocol films the whole log; a lag putting less of it in view is suspect
 ONSET_FRAC = 0.3        # onset = where the spike first reaches this fraction of its peak
 MATCH_S = 0.3           # the log spike must lie this close to where the coarse offset predicts
 MIN_OVERLAP_S = 3.0
@@ -111,20 +137,41 @@ def _rate(t):
 
 # ---------------------------------------------------------------- signals
 
-def log_motion_signal(cols):
-    """(t_wall, event signal, kind). acc (schema v2) when present, else gyro (v1)."""
+_LOG_SIGNALS = (("acc", ("acc_x", "acc_y", "acc_z")), ("gyro", ("av_x", "av_y", "av_z")))
+
+
+def log_motion_signals(cols):
+    """[(t_wall, event signal, kind)] for every IMU signal the log has: acc (schema v2), gyro.
+
+    Both, because neither is always best. |acc| has the sharpest onset, but a finger tap's
+    acceleration spike lasts a few ms and the log keeps one sample per 25 ms loop (the
+    ICM-20948's low-pass is not narrowed by hardware.py), so it is caught at a random point
+    in its decay or missed. The gyro sees the body rock for ~100 ms: a blunter onset that
+    is always there. synchronise_best() keeps whichever matches better.
+    """
     t = cols["t_wall"]
-    acc = [cols.get(c) for c in ("acc_x", "acc_y", "acc_z")]
-    if all(a is not None for a in acc) and np.isfinite(np.column_stack(acc)).mean() > 0.5:
-        X, kind = np.column_stack(acc), "acc"
-    elif all(c in cols for c in ("av_x", "av_y", "av_z")):
-        X, kind = np.column_stack([cols["av_x"], cols["av_y"], cols["av_z"]]), "gyro"
-    else:
+    out = []
+    for kind, names in _LOG_SIGNALS:
+        if not all(c in cols for c in names):
+            continue
+        X = np.column_stack([cols[c] for c in names])
+        ok = np.isfinite(t) & np.isfinite(X).all(axis=1)
+        if ok.mean() <= 0.5:
+            continue
+        tk, X = t[ok], X[ok]
+        hp = X - moving_median(X, round(HP_WINDOW_S * _rate(tk)))
+        out.append((tk, robust_z(np.linalg.norm(hp, axis=1)), kind))
+    if not out:
         raise SystemExit("log has neither acc_x/y/z (schema v2) nor av_x/y/z")
-    ok = np.isfinite(t) & np.isfinite(X).all(axis=1)
-    t, X = t[ok], X[ok]
-    hp = X - moving_median(X, round(HP_WINDOW_S * _rate(t)))
-    return t, robust_z(np.linalg.norm(hp, axis=1)), kind
+    return out
+
+
+def log_motion_signal(cols, kind=None):
+    """(t_wall, event signal, kind): the named kind, else the first available (acc, then gyro)."""
+    for s in log_motion_signals(cols):
+        if kind is None or s[2] == kind:
+            return s
+    raise SystemExit(f"log has no {kind} signal")
 
 
 def tag_motion_signal(tag_cols, exclude_ids=()):
@@ -174,22 +221,82 @@ def frame_diff_signal(video, fps=None):
 
 # ---------------------------------------------------------------- matching
 
-def coarse_offset(tv, zv, tl, zl, dt=GRID_DT, min_overlap_s=MIN_OVERLAP_S):
-    """offset (t_log - t_video) maximising the cross-correlation of the two event signals."""
-    gv = np.arange(tv[0], tv[-1], dt)
-    gl = np.arange(tl[0], tl[-1], dt)
-    v = np.clip(np.interp(gv, tv, zv), 0, None)
-    lg = np.clip(np.interp(gl, tl, zl), 0, None)
+def event_onsets(t, z, min_z=MIN_EVENT_Z, sep_s=EVENT_SEP_S):
+    """Onset times of the distinct events in a signal: peaks >= min_z, strongest first, each
+    at least sep_s from a stronger one (one push's ringing is one event, not five)."""
+    cand = np.flatnonzero(z >= min_z)
+    taken = []
+    for i in cand[np.argsort(-z[cand], kind="stable")]:
+        if all(abs(t[i] - t[j]) >= sep_s for j in taken):
+            taken.append(int(i))
+    return np.array(sorted(onset_time(t, z, i) for i in taken))
+
+
+def _event_train(grid, onsets, half_width=EVENT_HALF_WIDTH_S):
+    """One unit triangle per event: the correlation of two trains counts the events that line up."""
+    x = np.zeros(len(grid))
+    for te in onsets:
+        x += np.clip(1.0 - np.abs(grid - te) / half_width, 0.0, None)
+    return x
+
+
+def _xcorr_all_lags(v, lg):
+    """(lags, c): c[k] = sum_i v[i] * lg[i + k] for every lag at which the two overlap."""
     nv, nl = len(v), len(lg)
     nfft = 1 << int(math.ceil(math.log2(nv + nl)))
     c = np.fft.irfft(np.conj(np.fft.rfft(v, nfft)) * np.fft.rfft(lg, nfft), nfft)
     lags = np.concatenate([np.arange(0, nl), np.arange(-(nv - 1), 0)])
-    cc = np.concatenate([c[:nl], c[nfft - (nv - 1):]]) if nv > 1 else c[:nl]
+    return lags, (np.concatenate([c[:nl], c[nfft - (nv - 1):]]) if nv > 1 else c[:nl])
+
+
+def coarse_search(tv, zv, tl, zl, dt=GRID_DT, min_overlap_s=MIN_OVERLAP_S, clip_z=EVENT_CLIP_Z):
+    """Cross-correlate the two recordings' events over every lag.
+
+    -> {offset, log_cover, free_offset, free_log_cover, free_ratio}. offset (t_log - t_video)
+    is the best lag that keeps at least MIN_LOG_COVER of the best achievable share of the
+    log inside the video (the protocol); free_* is the best lag with no such constraint, and
+    free_ratio its score over the constrained one (> 1 = a lag outside the protocol fits better).
+
+    THE SCORE counts events, not signal energy. A correlation of raw z is decided by the
+    largest product, so one big disturbance only one stream holds -- lifting the robot into
+    view, the camera bumped -- outvoted both taps and put the log a minute off (review, on
+    the test signals). Clipping alone is not enough either: handling is a long event, and
+    its clipped area still beats two short taps. So each recording becomes a train of unit
+    triangles at its event onsets, and the lag where the most events coincide wins; the
+    clipped signals' correlation only breaks ties (and decides when neither stream has a
+    clear event).
+    """
+    gv = np.arange(tv[0], tv[-1], dt)
+    gl = np.arange(tl[0], tl[-1], dt)
+    v = np.clip(np.interp(gv, tv, zv), 0, clip_z)
+    lg = np.clip(np.interp(gl, tl, zl), 0, clip_z)
+    nv, nl = len(v), len(lg)
+    lags, c_sig = _xcorr_all_lags(v, lg)
+    _, c_ev = _xcorr_all_lags(_event_train(gv, event_onsets(tv, zv)), _event_train(gl, event_onsets(tl, zl)))
+    # One coinciding event scores ~(2/3) * half_width / dt; the tie-break is worth less than that.
+    one_event = (2.0 / 3.0) * EVENT_HALF_WIDTH_S / dt
+    top = np.max(np.abs(c_sig)) if len(c_sig) else 0.0
+    cc = c_ev + (0.5 * one_event * c_sig / top if top > 0 else 0.0)
     overlap = np.minimum(nv, nl - lags) - np.maximum(0, -lags)
     need = min(round(min_overlap_s / dt), max(1, min(nv, nl) // 2))
-    cc = np.where(overlap >= need, cc, -np.inf)
-    k = int(lags[int(np.argmax(cc))])
-    return float(gl[0] - gv[0] + k * dt)
+    free = np.where(overlap >= need, cc, -np.inf)
+    cover = overlap / max(nl, 1)                    # share of the log inside the video
+    best_cover = min(nv, nl) / max(nl, 1)           # < 1 only if the video is shorter than the log
+    held = np.where(cover >= MIN_LOG_COVER * best_cover - 1e-9, free, -np.inf)
+    k, kf = int(np.argmax(held)), int(np.argmax(free))
+    if not np.isfinite(held[k]):
+        k = kf
+    ratio = float(free[kf] / held[k]) if held[k] > 0 else (math.inf if free[kf] > 0 else 1.0)
+
+    def offset(i):
+        return float(gl[0] - gv[0] + int(lags[i]) * dt)
+    return {"offset": offset(k), "log_cover": float(cover[k]), "free_offset": offset(kf),
+            "free_log_cover": float(cover[kf]), "free_ratio": ratio}
+
+
+def coarse_offset(tv, zv, tl, zl, dt=GRID_DT, min_overlap_s=MIN_OVERLAP_S):
+    """offset (t_log - t_video) maximising the cross-correlation of the two event signals."""
+    return coarse_search(tv, zv, tl, zl, dt, min_overlap_s)["offset"]
 
 
 def onset_time(t, z, ipk, frac=ONSET_FRAC):
@@ -233,14 +340,30 @@ def find_events(tv, zv, tl, zl, offset, window_s=20.0, min_z=MIN_EVENT_Z):
 
 
 def synchronise(tv, zv, tl, zl, window_s=20.0, offset_guess=None):
-    """-> dict(a, b, drift_ppm, events, coarse_offset, warnings); t_wall = a + b * t_video."""
+    """-> dict(a, b, drift_ppm, verified, events, coarse_offset, log_cover, warnings);
+    t_wall = a + b * t_video. verified = the start and end events agree on one clock."""
     warn = []
-    coarse = coarse_offset(tv, zv, tl, zl) if offset_guess is None else float(offset_guess)
+    if offset_guess is None:
+        cs = coarse_search(tv, zv, tl, zl)
+        coarse, cover = cs["offset"], cs["log_cover"]
+        if cs["free_ratio"] > 1.05 and abs(cs["free_offset"] - coarse) > 1.0:
+            warn.append(f"a stronger motion match at offset {cs['free_offset']:.2f} s puts only "
+                        f"{100 * cs['free_log_cover']:.0f}% of the log inside the video, against the "
+                        f"protocol (film before the log starts, stop after it ends); used {coarse:.2f} s. "
+                        f"If filming started late, rerun with --offset-guess {cs['free_offset']:.2f}")
+    else:
+        coarse = float(offset_guess)
+        lo, hi = max(tv[0], tl[0] - coarse), min(tv[-1], tl[-1] - coarse)
+        cover = max(0.0, hi - lo) / max(tl[-1] - tl[0], 1e-9)
+    if cover < MIN_LOG_COVER:
+        warn.append(f"only {100 * cover:.0f}% of the log lies inside the video: start filming "
+                    "before the run and stop after it.")
     events = find_events(tv, zv, tl, zl, coarse, window_s)
-    a, b, drift = coarse, 1.0, None
+    a, b, drift, verified = coarse, 1.0, None, False
     if not events:
-        warn.append("no clear tap in both recordings; using the coarse cross-correlation only "
-                    "(+-1 grid step at best). Tap harder, in view, with the robot still.")
+        warn.append("SYNC NOT VERIFIED: no clear tap in both recordings; using the coarse "
+                    "cross-correlation only (+-1 grid step at best, and unchecked). Tap harder, "
+                    "in view, with the robot still.")
     else:
         a = events[0]["offset"]
         if len(events) == 2 and events[1]["t_video"] - events[0]["t_video"] > 5.0:
@@ -250,12 +373,37 @@ def synchronise(tv, zv, tl, zl, window_s=20.0, offset_guess=None):
             if abs(drift) <= DRIFT_MAX_PPM:
                 b = b_try
                 a = e0["t_wall"] - b * e0["t_video"]
+                verified = True
             else:
-                warn.append(f"end event implies {drift:.0f} ppm drift: not the same event in both. "
-                            "Using the start event alone.")
-        elif len(events) == 1:
-            warn.append("only one event found: offset only, no drift check. Tap at the end too.")
-    return {"a": a, "b": b, "drift_ppm": drift, "coarse_offset": coarse, "events": events, "warnings": warn}
+                warn.append(f"SYNC NOT VERIFIED: the start and end events disagree by {drift:.0f} ppm "
+                            "of drift, so at least one is not the same event in both recordings. "
+                            "Using the start event alone; check its time against when you tapped.")
+        else:
+            warn.append("SYNC NOT VERIFIED: only one event found, so nothing confirms the offset "
+                        "(and no drift check). Check the event time against when you tapped; tap "
+                        "at the end too.")
+    return {"a": a, "b": b, "drift_ppm": drift, "verified": verified, "coarse_offset": coarse,
+            "log_cover": cover, "events": events, "warnings": warn}
+
+
+def synchronise_best(tv, zv, log_signals, window_s=20.0, offset_guess=None):
+    """synchronise() against each log signal (acc, gyro) and keep the one that matched best:
+    verified first, then more events, then the stronger of the weakest matched log events --
+    counted only up to EVENT_CLIP_Z, so when both are clearly strong the first listed (acc,
+    the sharper onset) is kept. -> (sync dict, kind, {kind: summary of each try})."""
+    order = [kind for _, _, kind in log_signals]
+    tries = {kind: synchronise(tv, zv, tl, zl, window_s, offset_guess) for tl, zl, kind in log_signals}
+
+    def weakest(k):
+        return min((e["z_log"] for e in tries[k]["events"]), default=0.0)
+
+    def key(k):
+        s = tries[k]
+        return (s["verified"], len(s["events"]), min(weakest(k), EVENT_CLIP_Z), -order.index(k))
+    kind = max(tries, key=key)
+    summary = {k: {"verified": s["verified"], "events": len(s["events"]),
+                   "min_z_log": weakest(k), "t_wall_at_video_0": s["a"]} for k, s in tries.items()}
+    return tries[kind], kind, summary
 
 
 # ---------------------------------------------------------------- aligned output
@@ -302,11 +450,40 @@ def encoder_angles(log_cols, cfg, servo_map_path=None):
     return out
 
 
-def imu_angles(log_cols):
+def _tilt_from_pg(gx, gy, gz):
     """Pelvis roll/pitch (deg) from projected gravity pg = R^T (0, 0, -1), Z-Y-X convention."""
-    gx, gy, gz = log_cols["pg_x"], log_cols["pg_y"], log_cols["pg_z"]
     return {"pitch": np.degrees(np.arctan2(gx, np.hypot(gy, gz))),
             "roll": np.degrees(np.arctan2(-gy, -gz))}
+
+
+def imu_angles(log_cols):
+    """{"pg.roll", "pg.pitch"[, "acc.roll", "acc.pitch"]} in degrees.
+
+    pg is what the policy saw: EMA-filtered on the Pi (projgrav_alpha), so it lags a push by
+    a few samples. acc (schema v2) is the raw accelerometer in g, which at rest reads +1 g UP
+    = -pg; normalised and negated it is the same tilt with no filter -- but under a push its
+    linear acceleration tilts it too, so the two together separate lag from flex.
+    """
+    out = {}
+    if all(c in log_cols for c in ("pg_x", "pg_y", "pg_z")):
+        out.update({f"pg.{k}": v for k, v in
+                    _tilt_from_pg(log_cols["pg_x"], log_cols["pg_y"], log_cols["pg_z"]).items()})
+    if all(c in log_cols for c in ("acc_x", "acc_y", "acc_z")):
+        a = np.column_stack([log_cols["acc_x"], log_cols["acc_y"], log_cols["acc_z"]])
+        n = np.linalg.norm(a, axis=1, keepdims=True)
+        g = -a / np.where(n > 1e-9, n, np.nan)
+        out.update({f"acc.{k}": v for k, v in _tilt_from_pg(g[:, 0], g[:, 1], g[:, 2]).items()})
+    return out
+
+
+def log_filters(log_path):
+    """The Pi's IMU filter settings from <log>.meta.json (None if the sidecar is missing)."""
+    meta = Path(log_path).with_suffix(".meta.json")
+    try:
+        m = json.loads(meta.read_text())
+    except (OSError, ValueError):
+        return None
+    return {k: m.get(k) for k in ("projgrav_alpha", "angvel_alpha", "hz", "schema_version")}
 
 
 def _offset_stats(cam, ref):
@@ -323,33 +500,50 @@ def _offset_stats(cam, ref):
 
 
 def align(log_cols, link_header, link_cols, sync, cfg, servo_map_path=None):
-    """Columns (ordered dict) of the aligned table, one row per log row."""
+    """(columns of the aligned table, one row per log row; camera-vs-reference stats; warnings)."""
     tw = log_cols["t_wall"]
     tv = (tw - sync["a"]) / sync["b"]
     out = {"t_wall": tw, "t_rel": log_cols.get("t_rel"), "step": log_cols.get("step"), "t_video": tv}
-    stats = {}
+    stats, warn = {}, []
     if link_cols is not None:
         t_cam = link_cols["t_video"]
         out["in_video"] = ((tv >= np.nanmin(t_cam)) & (tv <= np.nanmax(t_cam))).astype(float)
-    imu = imu_angles(log_cols) if "pg_x" in log_cols else {}
+    imu = imu_angles(log_cols)
     for k, v in imu.items():
         out[f"imu.{k}"] = v
     if link_cols is not None:
-        gap = max(MAX_GAP_S, 2.5 / _rate(link_cols["t_video"]))
+        gap = max(MAX_GAP_S, 2.5 / _rate(t_cam))
+        # world_ref = 0: the floor tag was not seen, so a link's pose is in the CAMERA frame.
+        # Next to the gravity-referenced IMU it would read as a tilt the robot never had, so
+        # those link columns are blanked; pair angles (child in parent) never use the world.
+        world_ref = link_cols.get("world_ref")
+        no_world = (world_ref == 0) if world_ref is not None else np.zeros(len(t_cam), bool)
+        if world_ref is not None:
+            out["cam.world_ref"] = _interp_masked(tv, t_cam, world_ref.astype(float), gap)
+        if no_world.any():
+            warn.append(f"floor tag missing in {100 * no_world.mean():.0f}% of video frames: link "
+                        "poses there are in the camera frame, so cam.<link>.* are blank and no "
+                        "camera-vs-IMU stats use them (pair angles are kept)")
+        links = set(cfg.links)
         for c in link_header:
             if c in ("frame", "t_video", "world_ref") or c.endswith((".tag", ".reproj_px")):
                 continue
-            out[f"cam.{c}"] = _interp_masked(tv, t_cam, link_cols[c], gap,
+            y = link_cols[c]
+            if c.rsplit(".", 1)[0] in links and no_world.any():
+                y = np.where(no_world, np.nan, y)
+            out[f"cam.{c}"] = _interp_masked(tv, t_cam, y, gap,
                                              angle=c.rsplit(".", 1)[-1] in _ANGLE_FIELDS)
     enc = encoder_angles(log_cols, cfg, servo_map_path)
     for k, v in enc.items():
         out[f"enc.{k}"] = v
         if f"cam.{k}" in out:
             stats[k] = _offset_stats(out[f"cam.{k}"], v)
-    for k in imu:
-        if f"cam.pelvis.{k}" in out:
-            stats[f"pelvis.{k} (cam - imu)"] = _offset_stats(out[f"cam.pelvis.{k}"], imu[k])
-    return {k: v for k, v in out.items() if v is not None}, stats
+    for k, v in imu.items():               # k = "pg.pitch" etc.
+        src, ang = k.split(".")
+        st = _offset_stats(out[f"cam.pelvis.{ang}"], v) if f"cam.pelvis.{ang}" in out else None
+        if st:                             # none at all without a floor tag (blanked above)
+            stats[f"pelvis.{ang} (cam - imu.{src})"] = st
+    return {k: v for k, v in out.items() if v is not None}, stats, warn
 
 
 def write_columns(path, cols):
@@ -368,7 +562,7 @@ def write_columns(path, cols):
                     row.append(f"{v:.6f}")       # epoch seconds: keep the microseconds
                 elif n in ("t_video", "t_rel"):
                     row.append(f"{v:.6f}")
-                elif n in ("step", "in_video"):
+                elif n in ("step", "in_video", "cam.world_ref"):
                     row.append(int(v))
                 else:
                     row.append(f"{v:.6g}")
@@ -393,7 +587,7 @@ def main(argv=None):
     cfg = camlib.load_tag_config(a.tags)
     cam = Path(a.camera)
     _, log_cols = read_columns(a.log)
-    tl, zl, log_kind = log_motion_signal(log_cols)
+    log_signals = log_motion_signals(log_cols)
 
     if cam.name.endswith(".tags.csv"):
         stem = cam.name[: -len(".tags.csv")]
@@ -406,27 +600,31 @@ def main(argv=None):
         vid_kind = "frame difference"
     links_path = cam.parent / f"{stem}.links.csv"
 
-    s = synchronise(tv, zv, tl, zl, a.window, a.offset_guess)
+    s, log_kind, tried = synchronise_best(tv, zv, log_signals, a.window, a.offset_guess)
     link_header = link_cols = None
     if links_path.exists():
         link_header, link_cols = read_columns(links_path)
     else:
         s["warnings"].append(f"{links_path.name} not found: run video_pose.py first for camera columns")
-    cols, stats = align(log_cols, link_header, link_cols, s, cfg, a.servo_map)
+    cols, stats, align_warn = align(log_cols, link_header, link_cols, s, cfg, a.servo_map)
+    s["warnings"] += align_warn
+    filters = log_filters(a.log)
 
     out = Path(a.out) if a.out else cam.parent / f"{stem}.aligned.csv"
     write_columns(out, cols)
     t_rel0 = float(np.nanmin(log_cols["t_rel"])) if "t_rel" in log_cols else 0.0
     t_wall0 = float(np.nanmin(log_cols["t_wall"]))
-    report = {"camera": str(cam), "log": str(a.log), "video_signal": vid_kind, "log_signal": log_kind,
+    report = {"camera": str(cam), "log": str(a.log), "verified": s["verified"],
+              "video_signal": vid_kind, "log_signal": log_kind, "log_signals_tried": tried,
               "t_wall_at_video_0": s["a"], "scale_b": s["b"], "drift_ppm": s["drift_ppm"],
-              "log_t_rel_at_video_0": s["a"] - t_wall0 + t_rel0,
+              "log_t_rel_at_video_0": s["a"] - t_wall0 + t_rel0, "log_in_video_frac": s["log_cover"],
               "coarse_offset": s["coarse_offset"], "events": s["events"], "warnings": s["warnings"],
-              "camera_vs_reference": stats, "aligned_csv": str(out)}
+              "log_filters": filters, "camera_vs_reference": stats, "aligned_csv": str(out)}
     json_path = out.with_name(f"{stem}.sync.json")
     json_path.write_text(json.dumps(report, indent=2, default=float))
 
-    print(f"video signal: {vid_kind}; log signal: {'|acc| (v2)' if log_kind == 'acc' else 'gyro (v1 fallback)'}")
+    print(f"video signal: {vid_kind}; log signal: {'|acc|' if log_kind == 'acc' else 'gyro'}"
+          f" (tried {', '.join(tried)})")
     for e in s["events"]:
         print(f"  {e['name']:5s} event: video t={e['t_video']:8.3f} s (z {e['z_video']}) <-> log t_rel="
               f"{e['t_wall'] - t_wall0 + t_rel0:8.3f} s (z {e['z_log']})  offset {e['offset']:.4f} s")
@@ -437,15 +635,19 @@ def main(argv=None):
               f"over {e1['t_video'] - e0['t_video']:.1f} s" + ("  (applied)" if s["b"] != 1.0 else ""))
     for w in s["warnings"]:
         print(f"WARNING: {w}")
+    if not s["verified"]:
+        print("\n*** SYNC NOT VERIFIED: do not trust the camera-vs-log timing until the event "
+              "times above match when you tapped (see the warnings). ***")
     if stats:
-        print(f"\n{'camera vs reference':<26} {'n':>6} {'offset deg':>11} {'std deg':>8} {'corr':>6}")
+        print(f"\n{'camera vs reference':<31} {'n':>6} {'offset deg':>11} {'std deg':>8} {'corr':>6}")
         for k, st in stats.items():
             if st:
-                print(f"{k:<26} {st['n']:>6} {st['median_offset_deg']:>11.2f} {st['std_after_offset_deg']:>8.2f} "
+                print(f"{k:<31} {st['n']:>6} {st['median_offset_deg']:>11.2f} {st['std_after_offset_deg']:>8.2f} "
                       f"{st.get('corr', float('nan')):>6.2f}")
     print(f"\nwrote {out}\n      {json_path}")
     return report
 
 
 if __name__ == "__main__":
-    main()
+    # Exit 2 when not verified, so a wrapper or a shell `&&` stops instead of using the files.
+    sys.exit(0 if main()["verified"] else 2)
