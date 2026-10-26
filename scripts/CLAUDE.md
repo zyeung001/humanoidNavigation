@@ -40,6 +40,46 @@ reads results. The old `models/standing/scoreboard.csv` (9/19 harness) is histor
 are not comparable with the new score. `gate_standing_kick.py` is superseded (binary, every
 model passed it).
 
+### `robot_run.py` — one command per hardware run (laptop side)
+
+```bash
+cp config/robot.yaml.example config/robot.yaml      # once: host/user/repo of the Pi (gitignored)
+python scripts/robot_run.py run -- --policy-npz models/real_standing_knee2_kneelaw_db.npz \
+    --residual-config config/stances/knee2.yaml --posture config/stances/posture.yaml
+python scripts/robot_run.py run --script pose_sweep.py -- --joints waist_pitch
+python scripts/robot_run.py sync  -- <same deploy args>   # only sync (prints the md5 table)
+python scripts/robot_run.py attach | stop | fetch           # after an SSH drop / to end it / logs only
+python scripts/robot_run.py <any of the above> --dry-run    # print the exact ssh/scp, touch nothing
+```
+
+- `sync`: one ssh `md5sum` of every `scripts/deploy/*.py` + the files the run's arguments name +
+  the default servo map / IMU calibration; scp only what differs; md5 again; mismatch = error.
+  Text files (.py .yaml .yml .json .txt .sh .md) are hashed and sent as CRLF->LF, i.e. as the git
+  blob: this laptop has `core.autocrlf=true`, so a raw md5 of its CRLF checkout never matches the
+  Pi's git (LF) copy -- on 10/25 that made the Pi's `imu_calib.yaml` look different when it was
+  the repo's calibration (bf19d884 = the git blob). A Pi file differing only in line endings is
+  re-copied as LF, silently. `config/imu_calib.yaml` and `config/joint_servo_map.yaml` are
+  written by the Pi's calibration tools, so when their content differs the Pi copy is KEPT
+  (warning) unless `--push-calibration`.
+  Each `.npz` is checked with the `numpy_policy.py` being synced and its `requires` printed.
+  Abbreviated file flags (`--policy` = `--policy-npz` to the deploy scripts' argparse) are
+  resolved against the target script's flags and spelled out, so they are synced and checked
+  too; an ambiguous one that might be a file flag is refused.
+- `run`: sync, then the deploy script runs inside `tmux` on the Pi and you are attached with
+  `ssh -t`; `--log` is added to `deploy_standing.py` if absent (not if `--no-log` is given).
+  A KEPT calibration file stops `run` (its warning would vanish under tmux): re-run with
+  `--push-calibration` or `--keep-pi-calibration`; the latter copies the Pi's servo map to
+  `logs/pi/pi_maps/` and diagnoses with it. **An SSH drop no longer releases
+  the torque** (it did since 10/18 via `release_on_hangup`): the run continues until `attach` +
+  Ctrl-C, `stop`, or the tilt cut. `--no-tmux` restores the old behaviour. If the Pi cannot be
+  reached after the attach ends, the run is assumed live and nothing is fetched.
+- `fetch` (automatic after the tmux session ends): every file in the Pi's `logs/` that is new or
+  LARGER than the copy in `logs/pi/`. A SMALLER one is a different run under a reused name (no
+  RTC on the Pi; fake-hwclock steps back after an unclean power-off): its whole `<stem>.*` group
+  is saved as `<stem>-pi2.*`, never over the old run. Then `scripts/debug/diagnose_run.py` on
+  each new `.csv` (saved as `<stem>.diagnose.txt`) and `scripts/debug/run_report.py` if present,
+  run with `PYTHONIOENCODING=utf-8`.
+
 ### `train_walking.py`
 
 Train the walking controller, typically via transfer from a standing model.
@@ -104,6 +144,26 @@ Videos saved to `data/videos/{task}_eval.mp4`.
 ### `record_video.py`
 
 Legacy video recording script. Prefer `evaluate.py --record` instead.
+
+## Robot runs (`scripts/deploy/`, run on the Pi)
+
+`deploy_standing.py` and `pose_sweep.py` RECORD every hardware run by default
+(`scripts/deploy/frame_log.py`, schema 2; `--no-log` to skip): `logs/<time>_<tag>.csv` +
+`.meta.json` + `.console.txt` + `.events.jsonl`. To diagnose a run, read all of
+them: the CSV has per-frame commands, encoder units, raw accel, servo load/voltage/temperature
+(RAW registers; decoding in the meta), the feedback law's share (`q_prior.*`), the posture
+controller's internals and the FSR volts; the meta says exactly which files (md5) and args ran;
+the console has what the operator saw, timestamped to line up with `t_wall`; the events file
+has the operator's keypress markers (`scripts/deploy/events.py`: push_forward/back/left/right,
+fell, caught, kick, mark, note, each with `t_wall`/`t_rel` and the nearest logged `step`) and a
+`run_note` line with their after-run "what did you see?" (also `events.operator_note` in the
+meta). Start from the events: they say where in the frames to look. No events file = no key
+was pressed or there was no terminal (`events.reason` in the meta says which). No `run_note`
+after a kill or SSH hangup is expected: the question is not asked then (nobody may be there).
+A tilt cut leaves the cut frame and ~1 s of the fall (torque off, `u_cmd` NaN); a Ctrl-C/hangup
+leaves the ramp home. `servo_telemetry.telemetry_fallback: true` in the meta = a servo ignored
+the 8-byte read at startup and the run logged position only.
+`scripts/debug/diagnose_run.py <csv>` summarises one. Details: `scripts/deploy/README.md`.
 
 ## Debug Scripts (`scripts/debug/`)
 
