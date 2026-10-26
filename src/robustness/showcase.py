@@ -68,7 +68,9 @@ SHOWCASE: List[Beat] = [
     Beat(9.0, "push", "5 N behind", 5.0, "torso", (1.0, 0.0)),       # push_5N
     Beat(12.0, "push", "6 N right", 6.0, "torso", (0.0, 1.0)),       # push_6N
     Beat(15.0, "push", "5 N pelvis left", 5.0, "pelvis", (0.0, -1.0)),   # low vs high
-    Beat(18.0, "kick", "kick 2x", toward=(_D, _D), dv=0.30, yaw_rate=1.0),   # kick_2x
+    # Toward front-RIGHT: the main camera sits front-left, so a front-left kick would point
+    # straight at it and its arrow would shrink to a dot.
+    Beat(18.0, "kick", "kick 2x", toward=(_D, -_D), dv=0.30, yaw_rate=1.0),   # kick_2x
     Beat(21.0, "fault_on", "gyro fault", gyro=(0.0, 0.12, 0.0)),     # the 9/26 fault
     Beat(23.0, "push", "5 N behind+gyro", 5.0, "torso", (1.0, 0.0)),  # push_5N_gyro
     Beat(27.0, "fault_off", "fault off"),
@@ -235,7 +237,8 @@ def run_showcase(policy, env_cfg: dict, seed: int = 12345, on_frame: Optional[Ca
                               "force_body", "phase")}
         st = {"k": 0, "fault": None, "label": None, "label_until": -1, "push": None, "kick": None,
               "calm": CALM_STEPS, "since": 0, "last_beat": None, "recovered": None,
-              "banner": None, "phase": "run", "settle_until": -1, "last_fired": None}
+              "banner": None, "phase": "run", "settle_until": -1, "last_fired": None,
+              "last_card": False}
 
         def record(phase):
             f = d.xfrc_applied[:, :3]
@@ -265,7 +268,9 @@ def run_showcase(policy, env_cfg: dict, seed: int = 12345, on_frame: Optional[Ca
             k = st["k"]
             t = k * dt
             planned_end = end_step * dt
-            if st["calm"] >= CALM_STEPS:
+            if phase == "falling":
+                hud = ("fallen", 0.0)
+            elif st["calm"] >= CALM_STEPS:
                 hud = ("recovered", st["recovered"]) if st["recovered"] is not None else ("settled", 0.0)
             else:
                 hud = ("recovering", (k - st["since"]) * dt)
@@ -284,9 +289,12 @@ def run_showcase(policy, env_cfg: dict, seed: int = 12345, on_frame: Optional[Ca
                     "summary": _summary(beats, tr, falls, k, dt) if end_card else None,
                     "fwd": robot_forward(m, d)}
 
-        def emit(phase, final=False):
+        def emit(phase, final=False, hold_s=0.0):
             if on_frame is not None and (st["k"] % render_every == 0 or final):
-                on_frame(wenv, frame(phase, final))
+                fr = frame(phase, final)
+                fr["hold_s"] = hold_s
+                st["last_card"] = bool(fr["end_card"])
+                on_frame(wenv, fr)
 
         def fire(b):
             beat = b["_beat"]
@@ -375,7 +383,7 @@ def run_showcase(policy, env_cfg: dict, seed: int = 12345, on_frame: Optional[Ca
                 wt += 1
                 st["k"] += 1
                 record("falling")
-                emit("falling", final=final and j == fall_steps - 1)
+                emit("falling")
             if final:
                 break
             obs = start(seed + len(falls))
@@ -387,6 +395,10 @@ def run_showcase(policy, env_cfg: dict, seed: int = 12345, on_frame: Optional[Ca
                     b["step"] += shift
                     b["t"] = b["step"] * dt
             end_step += shift
+        # The end card must be seen: when the video ended without it on screen (the last fall
+        # after max_resets, or a fall in the last 2 s), hold a final frame with it for 2 s.
+        if not st["last_card"]:
+            emit(tr["phase"][-1], final=True, hold_s=2.0)
     finally:
         np.random.set_state(rng_state)
 

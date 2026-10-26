@@ -113,6 +113,18 @@ def test_the_video_ends_after_max_resets_falls(wenv):
     assert res.trace["phase"][-1] == "falling"
 
 
+def test_the_end_card_is_held_when_the_video_ends_on_a_fall(wenv):
+    """The last fall after max_resets ends the video mid-fall, where the end card is never on
+    screen: the driver then hands over one final frame with the card, to hold for 2 s."""
+    tl = [Beat(0.0, "start", "s"), Beat(0.3, "push", "big", 20.0, "torso", (1.0, 0.0), duration_s=0.5)]
+    frames = []
+    showcase.run_showcase(HoldPosePolicy(CFG["residual_baseline"]), CFG, timeline=tl, seconds=4.0,
+                          wenv=wenv, max_resets=0, on_frame=lambda w, f: frames.append(f))
+    assert frames[-1]["end_card"] and frames[-1]["hold_s"] == 2.0
+    assert "FELL" in frames[-1]["end_card"][1] and frames[-2]["hud"][0] == "fallen"
+    assert not any(f["hold_s"] for f in frames[:-1])
+
+
 def test_the_showcase_is_reproducible_and_leaves_the_global_rng_alone(wenv):
     np.random.seed(99)
     before = np.random.get_state()[1].copy()
@@ -168,6 +180,28 @@ def test_the_push_arrow_ends_short_of_the_point_with_its_tail_upwind():
     np.testing.assert_allclose(head, p - [0.0, 0.03, 0.0])
     assert tail[1] < head[1]                         # the force points +y: the tail is at -y
     assert video.arrow_segment(p, [0.0, 0.0, 0.0]) is None
+
+
+def test_project_puts_points_where_a_pinhole_camera_would():
+    from types import SimpleNamespace
+    cam = SimpleNamespace(pos=[0, 0, 0], forward=[1, 0, 0], up=[0, 0, 1], frustum_near=0.1,
+                          frustum_top=0.05, frustum_bottom=-0.05, frustum_center=0.0, frustum_width=0.0)
+    p = video.project(cam, [[1, 0, 0], [1, -0.25, 0], [1, 0, 0.25], [-1, 0, 0]], 400, 200)
+    np.testing.assert_allclose(p[0], [200, 100])
+    np.testing.assert_allclose(p[1], [250, 100])      # -y is to the right looking along +x
+    np.testing.assert_allclose(p[2], [200, 50])       # up is up the image
+    assert np.isnan(p[3]).all()                        # behind the camera
+
+
+def test_aim_follows_the_com_and_puts_the_robot_right_of_centre_in_the_main_view(wenv):
+    import mujoco
+    d = wenv.base.env.unwrapped.data
+    cams = video.make_cameras(showcase.robot_forward(wenv.base.env.unwrapped.model, d))
+    video.aim(cams, d)
+    com = np.asarray(d.subtree_com[1])
+    np.testing.assert_allclose(cams["side"].lookat, com)
+    np.testing.assert_allclose(np.linalg.norm(cams["main"].lookat - com), video.MAIN_SHIFT_M)
+    assert cams["main"].type == mujoco.mjtCamera.mjCAMERA_FREE
 
 
 def test_force_colour_ramps_yellow_to_red_and_clips():
@@ -245,8 +279,14 @@ def test_mujoco_draws_the_arrow_at_the_length_asked_for(gl):
             r.scene.ngeom += 1
         cols = np.nonzero((np.abs(r.render().astype(int) - bg).sum(axis=2) > 30).any(axis=0))[0]
         width.append(cols.max() - cols.min())
+        if draw == "arrow":
+            drawn = (cols.min(), cols.max())
+            gl_cam = mujoco.mjv_averageCamera(r.scene.camera[0], r.scene.camera[1])
+            projected = video.project(gl_cam, [[-0.4, 0, 0.5], [0.0, 0, 0.5]], 400, 300)[:, 0]
     r.close()
     assert abs(width[0] - width[1]) <= 0.1 * width[1], width     # the capsule adds its round caps
+    # The flat x-ray copy of the arrow lands on the shaded one.
+    np.testing.assert_allclose(sorted(projected), drawn, atol=3)
 
 
 def test_a_short_validation_video_shows_the_robot_and_the_push(gl, tmp_path):
@@ -274,7 +314,9 @@ def test_a_short_validation_video_shows_the_robot_and_the_push(gl, tmp_path):
     def grab(wenv, fr):
         if fr["step"] == 16:          # 0.1 s into the push
             d = wenv.base.env.unwrapped.data
-            cam = video.make_cameras(fr["fwd"])["main"]
+            cams = video.make_cameras(fr["fwd"])
+            video.aim(cams, d)
+            cam = cams["main"]
             r.update_scene(d, camera=cam)
             plain = r.render().copy()
             r.update_scene(d, camera=cam)
@@ -321,6 +363,32 @@ def test_a_failure_while_filming_only_warns(tmp_path, monkeypatch, capsys):
     said = capsys.readouterr().out
     assert "WARNING: validation video failed (RuntimeError: renderer lost its context)" in said
     assert f"scripts/validation_video.py --run {run.root}" in said
+
+
+def test_ctrl_c_while_filming_still_lets_the_run_close_its_logs(tmp_path, monkeypatch, capsys):
+    def interrupted(*a, **k):
+        raise KeyboardInterrupt
+    out, run, rows = _hook(tmp_path, monkeypatch, make=interrupted)
+    assert out is None and rows[-1]["validation/video_failed"] == 1.0
+    assert "validation video interrupted" in capsys.readouterr().out
+
+
+def test_a_video_w_and_b_refuses_does_not_stop_the_run_being_finished(tmp_path):
+    from src.training.run_logger import MetricsSink
+
+    class Run:
+        finished = False
+
+        def log(self, data, step):
+            raise ValueError("unsupported video")
+
+        def finish(self):
+            Run.finished = True
+    sink = MetricsSink(tmp_path / "m.jsonl", wandb_run=Run())
+    sink.log_video("validation/video", tmp_path / "v.mp4", 10)
+    assert sink.wandb is not None
+    sink.close()
+    assert Run.finished
 
 
 def test_no_gl_skips_the_video_and_says_why(tmp_path, monkeypatch, capsys):

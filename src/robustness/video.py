@@ -1,14 +1,16 @@
 """The validation video: the showcase timeline (showcase.py) filmed, one file per run.
 
     +------------------------------ top bar: run . checkpoint . t ------------------------------+
-    | main view: tracking 3/4 front-left, push arrow,   | side view: from the robot's right      |
+    | main view: 3/4 from front-left, push arrow,       | side view: from the robot's right      |
     | event label, HUD (pitch/roll, height, recovery)  +----------------------------------------+
     |                                                   | support map: feet, COM, push, top-down |
     +------------------------- timeline: beats, faults, falls, playhead -------------------------+
 
 The PUSH ARROW is what the physics applied: read every frame from data.xfrc_applied, drawn
 ending 3 cm short of the body's centre of mass (where MuJoCo applies it), 5 cm per newton,
-yellow at 0 N to red at 8 N, then a faint afterimage until 0.6 s after onset. A KICK has no
+yellow at 0 N to red at 8 N, then a faint afterimage until 0.6 s after onset. It is drawn
+twice: shaded in 3D, and flat and translucent over the view, so a push from behind the robot
+still shows through its torso. A KICK has no
 force to read, so its cyan arrow (0.5 m per m/s, at the pelvis COM) comes from the event log.
 The SUPPORT MAP answers "from where and how much" without any camera-angle ambiguity: forward
 is up, 1.2 px/mm, feet filled while in contact, COM dot red once it leaves the feet's hull.
@@ -45,6 +47,8 @@ MAP_PX_PER_MM = 1.2     # support map scale at full size
 MAP_PX_PER_N = 12.0     # push arrow on the map (the 3D scale would leave the map at 4 N)
 MAP_PX_PER_MPS = 300.0  # kick arrow on the map
 ARROW_DRAW_SCALE = 2.0  # see _add_arrow
+XRAY_ALPHA = 0.5        # the arrow is also drawn flat over each view, so the body cannot hide it
+MAIN_SHIFT_M = 0.20     # main view aims this far left of the robot: it stands clear of the HUD
 
 # RGB, 0-255
 _WHITE, _GREY, _DARK = (235, 235, 235), (140, 140, 140), (22, 24, 28)
@@ -140,20 +144,71 @@ def _add_arrow(scene, tail, head, rgba, width) -> None:
 
 
 def make_cameras(fwd) -> dict:
-    """Tracking cameras on the pelvis subtree COM, fixed in azimuth from the heading at reset
-    (they do not turn with the robot, so a yaw kick shows). MuJoCo's azimuth is the direction
-    the camera LOOKS: main sits front-left looking back-right, side sits on the robot's right
-    looking along its left axis, so a fore-aft push crosses the side view."""
+    """Cameras that follow the pelvis subtree COM (aim() each frame), fixed in azimuth from
+    the heading at reset (they do not turn with the robot, so a yaw kick shows). MuJoCo's
+    azimuth is the direction the camera LOOKS: main sits front-left looking back-right, side
+    sits on the robot's right looking along its left axis, so a fore-aft push crosses the side
+    view. The main view aims MAIN_SHIFT_M to the robot's image-left, so the robot stands right
+    of centre and the HUD box on the left does not cover it."""
     import mujoco  # noqa: PLC0415
     psi = float(np.degrees(np.arctan2(fwd[1], fwd[0])))
     cams = {}
     for name, az in (("main", psi + 225.0), ("side", psi + 90.0)):
         c = mujoco.MjvCamera()
-        c.type = mujoco.mjtCamera.mjCAMERA_TRACKING
-        c.trackbodyid = 1
+        c.type = mujoco.mjtCamera.mjCAMERA_FREE
         c.distance, c.elevation, c.azimuth = 1.6, -12.0, az
         cams[name] = c
     return cams
+
+
+def aim(cams: dict, data) -> None:
+    """Point every camera at the pelvis subtree COM (what mjCAMERA_TRACKING does), the main
+    one MAIN_SHIFT_M to the left of it in the image."""
+    com = np.asarray(data.subtree_com[1], dtype=np.float64)
+    for name, c in cams.items():
+        a = np.radians(c.azimuth)
+        right = np.array([np.sin(a), -np.cos(a), 0.0])     # image-right for this azimuth
+        c.lookat[:] = com - (MAIN_SHIFT_M if name == "main" else 0.0) * right
+
+
+def project(cam, pts, w: int, h: int) -> np.ndarray:
+    """World points -> pixel (x, y) in a w x h render through mjvGLCamera `cam`. For a mono
+    view pass mujoco.mjv_averageCamera of the scene's two eyes: that is what mjr_render draws
+    (either eye alone is off by half the stereo baseline, ~14 px here). Points behind the
+    camera come back as nan."""
+    pos, fwd, up = (np.asarray(v, dtype=np.float64) for v in (cam.pos, cam.forward, cam.up))
+    right = np.cross(fwd, up)
+    v = np.atleast_2d(np.asarray(pts, dtype=np.float64)) - pos
+    z = v @ fwd
+    with np.errstate(divide="ignore", invalid="ignore"):
+        x = (v @ right) * cam.frustum_near / z
+        y = (v @ up) * cam.frustum_near / z
+    span = cam.frustum_top - cam.frustum_bottom
+    half_w = cam.frustum_width if cam.frustum_width > 0 else 0.5 * (w / h) * span
+    px = ((x - cam.frustum_center) / half_w + 1.0) / 2.0 * w
+    py = (1.0 - (2.0 * (y - cam.frustum_bottom) / span - 1.0)) / 2.0 * h
+    out = np.stack([px, py], axis=1)
+    out[z <= 0] = np.nan
+    return out
+
+
+def draw_xray(img, cam, arrows, s: float) -> None:
+    """Each arrow again, flat and translucent, on top of the rendered view: a push from the
+    far side of the robot is otherwise hidden behind its own torso."""
+    import cv2  # noqa: PLC0415
+    if not arrows:
+        return
+    h, w = img.shape[:2]
+    over = img.copy()
+    for tail, head, rgba, _ in arrows:
+        (x0, y0), (x1, y1) = project(cam, [tail, head], w, h)
+        n = float(np.hypot(x1 - x0, y1 - y0))
+        if not np.isfinite(n) or n < 2:
+            continue
+        col = tuple(int(round(255 * c * rgba[3] + 255 * (1 - rgba[3]) * 0.5)) for c in rgba[:3])
+        cv2.arrowedLine(over, (int(x0), int(y0)), (int(x1), int(y1)), col, max(1, round(3 * s)),
+                        cv2.LINE_AA, tipLength=min(0.45, 12 * s / n))
+    cv2.addWeighted(over, XRAY_ALPHA, img, 1.0 - XRAY_ALPHA, 0.0, dst=img)
 
 
 # ------------------------------------------------------------------------------ support map
@@ -319,7 +374,7 @@ def _hud(img, frame, sup, L: Layout) -> None:
     _text(img, f"lean {frame['lean']:4.1f} deg   COM z {frame['com_z']:.3f} m", (x, y + 2 * lh), fs, _WHITE)
     state, sec = frame["hud"]
     msg, col = {"settled": ("settled", _GREEN), "recovered": (f"recovered in {sec:.2f} s", _GREEN),
-                "recovering": (f"recovering {sec:.2f} s", _AMBER)}[state]
+                "recovering": (f"recovering {sec:.2f} s", _AMBER), "fallen": ("FALLEN", _RED)}[state]
     _text(img, f"|w| {frame['rate']:4.2f} rad/s  {msg}", (x, y + 3 * lh), fs, col)
     _text(img, "feet", (x, y + 4 * lh), fs, _WHITE)
     li = sup.get("left_index", 0)
@@ -348,22 +403,22 @@ def _timeline(img, frame, L: Layout) -> None:
     off = [b for b in beats if b["kind"] == "fault_off"]
     for a in on:
         z = next((b["t"] for b in off if b["t"] >= a["t"]), T)
-        _shade(img, X(a["t"]), ym - round(9 * s), X(z), ym + round(9 * s), _AMBER, 0.35)
+        _shade(img, X(a["t"]), ym - round(9 * s), X(z), ym + round(5 * s), _AMBER, 0.35)
     for f in frame["falls"]:       # the 2 s a fall costs: its own physics, reset and settle
-        _shade(img, X(f["t"]), ym - round(9 * s), X(f["t"] + 2.0), ym + round(9 * s), (90, 90, 90), 0.5)
+        _shade(img, X(f["t"]), ym - round(9 * s), X(f["t"] + 2.0), ym + round(5 * s), (90, 90, 90), 0.5)
     cv2.line(img, (x0, ym), (x1, ym), (70, 72, 80), 1)
     for b in beats:
         col = {"push": _RED, "kick": _CYAN, "start": _WHITE}.get(b["kind"])
         if col is None:
             continue
         x = X(b["t"])
-        cv2.line(img, (x, ym - round(10 * s)), (x, ym + round(10 * s)), col, max(1, round(2 * s)))
+        cv2.line(img, (x, ym - round(10 * s)), (x, ym + round(5 * s)), col, max(1, round(2 * s)))
         short = b["name"].split(" ")[0] + ("N" if b["kind"] == "push" else "")
         if b["kind"] == "push" and "pelvis" in b["name"]:
             short += "p"
         _text(img, short if b["kind"] != "start" else "", (x + round(3 * s), ym - round(8 * s)), 0.36 * s, col)
     for f in frame["falls"]:
-        x, r = X(f["t"]), max(2, round(6 * s))
+        x, r = X(f["t"]), max(2, round(5 * s))
         cv2.line(img, (x - r, ym - r), (x + r, ym + r), _RED, max(1, round(2 * s)), cv2.LINE_AA)
         cv2.line(img, (x - r, ym + r), (x + r, ym - r), _RED, max(1, round(2 * s)), cv2.LINE_AA)
     xp = X(frame["t"])
@@ -557,32 +612,38 @@ def make_validation_video(policy, env_cfg: dict, out_stem, label: str, width: in
     if writer is None:
         raise RuntimeError("no working video encoder (tried " +
                            ", ".join(f"{e}/{c}" for e, c, _ in WRITERS) + ")")
-    r_main = mujoco.Renderer(m, height=L.main_h, width=L.main_w)
-    r_side = mujoco.Renderer(m, height=L.side_h, width=L.side_w)
-    for r in (r_main, r_side):
-        # The CAD meshes are ~760k vertices; the shadow pass draws them all again and was 3/4
-        # of each render (~100 ms -> ~25 ms per view measured 10/25). Look only, no physics.
-        r.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
-        r.scene.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
     st = {"frames": 0, "cams": None, "resets": -1}
     data = wenv.base.env.unwrapped.data
+    views_r = []          # (renderer, camera name)
 
     def on_frame(w, fr):
         n_resets = len(fr["falls"]) if fr["phase"] != "falling" else st["resets"]
         if st["cams"] is None or n_resets != st["resets"]:     # fixed at each reset
             st["cams"], st["resets"] = make_cameras(robot_forward(m, data)), n_resets
+        aim(st["cams"], data)
         arrows = scene_arrows(data, fr)
         views = []
-        for r, cam in ((r_main, st["cams"]["main"]), (r_side, st["cams"]["side"])):
-            r.update_scene(data, camera=cam)
+        for r, name in views_r:
+            r.update_scene(data, camera=st["cams"][name])
             for a in arrows:
                 _add_arrow(r.scene, *a)
-            views.append(r.render())
-        img = compose_frame(views[0], views[1], fr, support_geometry(w), label, L)
-        writer.write(cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-        st["frames"] += 1
+            img = r.render()
+            draw_xray(img, mujoco.mjv_averageCamera(r.scene.camera[0], r.scene.camera[1]), arrows, L.s)
+            views.append(img)
+        img = cv2.cvtColor(compose_frame(views[0], views[1], fr, support_geometry(w), label, L),
+                           cv2.COLOR_RGB2BGR)
+        for _ in range(max(1, round(fr.get("hold_s", 0.0) * fps))):    # the end card, held
+            writer.write(img)
+            st["frames"] += 1
 
     try:
+        for name, (h, w) in (("main", (L.main_h, L.main_w)), ("side", (L.side_h, L.side_w))):
+            r = mujoco.Renderer(m, height=h, width=w)
+            views_r.append((r, name))
+            # The CAD meshes are ~760k vertices; the shadow pass draws them all again and was
+            # 3/4 of each render (~100 ms -> ~25 ms per view measured 10/25). Look only.
+            r.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
+            r.scene.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
         res = run_showcase(policy, env_cfg, seed=seed, on_frame=on_frame, render_every=render_every,
                            timeline=timeline, seconds=seconds, wenv=wenv, label=label)
     except BaseException:
@@ -592,8 +653,8 @@ def make_validation_video(policy, env_cfg: dict, out_stem, label: str, width: in
         raise
     finally:
         writer.release()
-        r_main.close()
-        r_side.close()
+        for r, _ in views_r:
+            r.close()
     wall = time.time() - t0
     res.settings.update(video=str(path), frames=st["frames"], fps=fps, size=[width, height],
                         wall_s=round(wall, 2))
