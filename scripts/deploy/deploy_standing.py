@@ -22,6 +22,11 @@ Defaults match the deployed model:
 Every hardware run is RECORDED by default (frame_log.py, schema 2): logs/<time>_standing.csv
 plus .meta.json (config, md5 of every file that shaped the run, gyro bias, host) and
 .console.txt (everything printed). --no-log turns it off; --dry-run never logs.
+
+While it runs, single keys on the SSH terminal mark what the operator did or saw (events.py:
+f/b/l/r push, x fell, c caught, k kick, m mark, n note) into .events.jsonl, and after the run
+(torque off) it asks "what did you see?" -- not after a kill or hangup, and never for more than
+2 min. --no-events turns the keys off, --no-prompt the question.
 """
 
 from __future__ import annotations
@@ -233,6 +238,14 @@ def main():
     p.add_argument("--no-log", action="store_true",
                    help="do not record this run (no CSV, meta or console sidecar). A run that "
                         "is not recorded cannot be diagnosed afterwards -- prefer leaving it on.")
+    p.add_argument("--no-events", action="store_true",
+                   help="do not read operator keys during the run. By default single keys on the "
+                        "SSH terminal (f/b/l/r push, x fell, c caught, k kick, m mark, n note) are "
+                        "stamped into <log>.events.jsonl with the nearest logged step; the "
+                        "terminal is restored on every exit. Needs a terminal (ssh -t).")
+    p.add_argument("--no-prompt", action="store_true",
+                   help="do not ask for the after-run 'what did you see?' note (or the text of "
+                        "any 'n' notes). Skipped anyway when there is no terminal.")
     p.add_argument("--no-servo-telemetry", action="store_true",
                    help="read position only (the old 2-byte read) instead of position + speed + "
                         "load + voltage + temperature in one 8-byte read. Same number of bus "
@@ -471,6 +484,9 @@ def main():
                 "posture": args.posture,
                 "imu_calib": args.imu_calib,
                 "fsr_layout": args.fsr_layout if args.log_fsr else None,
+                # frame_log.DEPLOY_SOURCES predates events.py; hash it here so a run says
+                # which version read its keys.
+                "source:events.py": Path(__file__).resolve().parent / "events.py",
             }),
             "servo_telemetry": {
                 "enabled": bus.telemetry,
@@ -495,6 +511,19 @@ def main():
         print(f"Logging frames -> {log_path}  (+ {log_path.with_suffix('.meta.json')})")
     elif args.stream:
         print("[warn] --stream ignored: it rides on the frame logger, and --no-log is set")
+
+    # ---- operator event markers (events.py) ----
+    # A sidecar of the frame log: its steps are the logged frames', matched on the writer
+    # thread through a sink, so the control loop does nothing for them. Keys are read from
+    # start() on, which is inside the try below so the `finally` always restores the terminal.
+    events = None
+    if logger is not None and not args.no_events:
+        from events import EventRecorder  # noqa: E402
+        from frame_log import sidecar_path  # noqa: E402
+        events = EventRecorder(sidecar_path(log_path, "events.jsonl"), t0=logger.t0)
+        logger.add_sink(events.on_row)
+    elif log_path is None and not args.no_events:
+        print("[events] off: --no-log (the markers are a sidecar of the frame log)")
 
     def read_units_or(fallback):
         """read_all with NaN (validation-failed read) replaced by a safe fallback, so a
@@ -599,6 +628,9 @@ def main():
 
     step = 0                  # frame counter; the stop ramp continues it
     try:
+        if events is not None:
+            events.start()
+            logger.update_meta(events=events.summary())   # a run that dies still says so
         print("Enabling torque, calibrating gyro, ramping to home...")
         bus.set_torque(m.servo_ids, True)
         cur = read_units_or(home_units)
@@ -846,6 +878,10 @@ def main():
         except Exception as e:
             print(f"[SAFETY] torque-off FAILED ({e!r}); retrying after the log is closed")
         try:
+            # The terminal back to normal right after torque-off: everything printed from here
+            # on, and the after-run question, needs it. close() never raises.
+            if events is not None:
+                events.close()
             if fsr is not None:
                 fsr.close()
             if streamer is not None:
@@ -872,9 +908,21 @@ def main():
             try:
                 if not torque_off:
                     bus.set_torque(m.servo_ids, False)   # a second failure raises, loudly
+                    torque_off = True
             finally:
                 bus.close()
                 imu.close()
+                # Last, after a torque-off retry and with every row on disk: an operator who
+                # walks away from the prompt then holds up nothing. Only asked once torque is
+                # KNOWN off: after a failed retry the servos may still be stiff, and that
+                # traceback must not wait behind "what did you see?" (the events are saved).
+                if events is not None:
+                    summary = events.finish(prompt=not args.no_prompt and torque_off)
+                    if logger is not None:
+                        try:
+                            logger.update_meta(events=summary)
+                        except OSError:
+                            pass
 
 
 if __name__ == "__main__":
