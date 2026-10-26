@@ -1,0 +1,26 @@
+# FSR layout for 4 sensors per foot on two ADS1115 boards (deploy_standing / pose_sweep --fsr-layout).
+#
+# The list order IS the column order: the first entry is fsr_v0. Each entry says which board
+# (adc, its I2C address) and pin (ain), which foot, and where the sensor sits:
+#   x_mm  + forward, y_mm  + toward the robot's LEFT, both from the centre of THAT foot's sole.
+# With positions per foot, the centre of pressure of each foot is sum(g_i * x_i) / sum(g_i)
+# (g = 1/R_fsr from the raw volts, R_fixed and vcc below), without knowing the stance.
+#
+# Positions are null until MEASURED on the built feet (calipers, sensor centre to sole centre).
+# A guessed position turns into a confident wrong CoP, so leave null rather than estimate;
+# every log records this file's contents and md5, so a log taken before the measurement says so.
+#
+# Wiring: board A ADDR pin -> GND = 0x48 (left foot), board B ADDR pin -> VDD = 0x49 (right foot).
+# Both share SDA/SCL with the IMU on I2C bus 1 (0x68, no clash). See scripts/deploy/README.md.
+fsr:
+  rfixed_ohm: 2000      # the divider resistor actually soldered, ohms (fsr_monitor --rfixed)
+  vcc: 3.3              # divider supply, volts
+  channels:
+    - {adc: 0x48, ain: 0, foot: left,  name: L_heel_out, x_mm: null, y_mm: null}
+    - {adc: 0x48, ain: 1, foot: left,  name: L_toe_out,  x_mm: null, y_mm: null}
+    - {adc: 0x48, ain: 2, foot: left,  name: L_heel_in,  x_mm: null, y_mm: null}
+    - {adc: 0x48, ain: 3, foot: left,  name: L_toe_in,   x_mm: null, y_mm: null}
+    - {adc: 0x49, ain: 0, foot: right, name: R_heel_out, x_mm: null, y_mm: null}
+    - {adc: 0x49, ain: 1, foot: right, name: R_toe_out,  x_mm: null, y_mm: null}
+    - {adc: 0x49, ain: 2, foot: right, name: R_heel_in,  x_mm: null, y_mm: null}
+    - {adc: 0x49, ain: 3, foot: right, name: R_toe_in,   x_mm: null, y_mm: null}
