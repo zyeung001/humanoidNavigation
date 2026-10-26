@@ -21,9 +21,11 @@ HOW A ROW BECOMES A POSE, and the assumption behind each step:
      takes the body's measured "up" to world up, so pitch/roll read back from it with the same
      atan2 formulas diagnose_run.py and pose_sweep.py use.
   3. Ground: there are no ankles, so a leg's attitude is the pelvis attitude plus its encoders.
-     The STANCE foot is whichever sole centre the IMU-tilted legs put lowest; its sole centre
-     sits on the floor (z = 0). The other foot counts as supporting while it is within
-     CONTACT_MM of the floor. Each supporting foot's support box is its sole rectangle (from the
+     The ANCHOR foot is whichever sole centre the IMU-tilted legs put lowest; its sole centre
+     sits on the floor (z = 0). It only changes feet when the other sole is lower by more than
+     ANCHOR_HYST_MM, so two flat feet sub-millimetre apart do not swap it every frame. The
+     other foot counts as supporting while it is within CONTACT_MM of the floor, and STANCE
+     names the supporting feet: R, L, or both. Each supporting foot's support box is its sole rectangle (from the
      model's foot geom) laid FLAT on the floor at the sole centre, with the foot's heading.
      That is the "flex lumped at the sole" picture the flex plant uses (servo play modelled as
      a passive hinge at each foot): the feet are flat, the body above them is tilted by
@@ -49,7 +51,7 @@ from 1 says the same thing directly.
 
 COMMANDED vs MEASURED: where the COM would have been had every servo reached its command (u_cmd
 by default -- what the servos were actually told; --cmd q_cmd for the policy's pre-quantisation
-action). The feet stay flat and the stance sole stays where it was, so a joint that fell short
+action). The feet stay flat and the anchor sole stays where it was, so a joint that fell short
 moves the body ABOVE the feet: the pelvis attitude becomes the commanded pose's feet-flat
 attitude plus the same hidden flex the row measured (IMU o enc_meas^-1 o enc_cmd). Holding the
 pelvis attitude fixed instead would get the sign backwards for the knees -- a knee that sagged
@@ -89,6 +91,7 @@ MODEL_12CM = ROOT / "models" / "humanoid_real_v2_compliant.xml"
 SOLE_PLATES_FROM = "2026-10-24"
 
 CONTACT_MM = 10.0       # the other foot counts as supporting within this of the floor
+ANCHOR_HYST_MM = 2.0    # the anchor foot changes only when the other sole is this much lower
 UNITS_MIN, UNITS_MAX = 0, 1023   # SCS15 positions are 10-bit
 FILL_WARN = 0.01        # flag in the summary when more than this share of rows had a NaN read
 
@@ -382,16 +385,22 @@ def polygon_margin(p, hull, fwd=np.array([1.0, 0.0])):
     return 1000 * best * (1.0 if inside else -1.0), way
 
 
-def place(fk, R, stance=None, anchor=None):
+def place(fk, R, stance=None, anchor=None, prev=None):
     """Put fk (base frame) in the world with body rotation R.
 
-    The stance foot (lowest sole unless given) gets its sole centre on the floor; `anchor`
-    (world xyz) fixes that sole centre somewhere specific, else the origin is the midpoint
-    between the two soles on the floor. Returns world positions plus the stance choice.
+    The anchor foot `stance` (lowest sole unless given) gets its sole centre on the floor;
+    `anchor` (world xyz) fixes that sole centre somewhere specific, else the origin is the
+    midpoint between the two soles on the floor. With `prev` (last frame's anchor foot) the
+    lowest-sole choice keeps `prev` unless the other sole is ANCHOR_HYST_MM lower. Returns
+    world positions plus the anchor choice (w["stance"]).
     """
     soles = {s: R @ fk[f"sole_{s}"] for s in ("R", "L")}
     if stance is None:
         stance = "R" if soles["R"][2] <= soles["L"][2] else "L"
+        if prev in ("R", "L") and stance != prev:
+            other = "L" if prev == "R" else "R"
+            if soles[prev][2] - soles[other][2] < ANCHOR_HYST_MM / 1000:
+                stance = prev
     if anchor is None:
         mid = 0.5 * (soles["R"] + soles["L"])
         t = np.array([-mid[0], -mid[1], -soles[stance][2]])
@@ -548,7 +557,7 @@ def analyze(log_path, model=None, cmd="u_cmd", map_path=DEFAULT_MAP):
     fallen = np.arange(len(rows)) >= end
 
     # 3/4. place, measure support
-    cols = (["t_rel", "step", "fallen", "quiet", "u_meas_filled", "stance", "support", "swing_clear_mm",
+    cols = (["t_rel", "step", "fallen", "quiet", "u_meas_filled", "stance", "anchor", "swing_clear_mm",
              "imu_pitch_deg", "imu_roll_deg", "enc_pitch_deg", "enc_roll_deg",
              "flex_pitch_deg", "flex_roll_deg"]
             + (["acc_pitch_deg", "acc_roll_deg", "acc_norm_g"] if has_acc else [])
@@ -559,13 +568,16 @@ def analyze(log_path, model=None, cmd="u_cmd", map_path=DEFAULT_MAP):
             + [f"{s}_{e}_mm" for s in ("R", "L") for e in FOOT_EDGES]
             + ["support_margin_mm", "support_nearest"])
     table = []
+    prev = None
     for i in range(len(rows)):
         R = tilt_rotation(pg[i])
-        w = place(fks[i], R)
+        w = place(fks[i], R, prev=prev)
+        prev = w["stance"]
         sup = support(w, kin)
+        # stance = the feet carrying weight (R/L/both); anchor = the one pinned to the floor
         rec = {"t_rel": t[i], "step": step[i], "fallen": int(fallen[i]),
                "quiet": int(np.isfinite(rate[i]) and rate[i] < CALM_RATE), "u_meas_filled": int(filled[i]),
-               "stance": w["stance"], "support": sup["support"], "swing_clear_mm": w["clear_mm"],
+               "stance": sup["support"], "anchor": w["stance"], "swing_clear_mm": w["clear_mm"],
                "imu_pitch_deg": imu_pitch[i], "imu_roll_deg": imu_roll[i],
                "enc_pitch_deg": enc_pitch[i], "enc_roll_deg": enc_roll[i],
                "flex_pitch_deg": flex_pitch[i], "flex_roll_deg": flex_roll[i]}
@@ -610,6 +622,26 @@ def _stats(x):
             "p05": round(float(np.percentile(x, 5)), 2), "p95": round(float(np.percentile(x, 95)), 2)}
 
 
+def moving_average(x, n):
+    """Centred n-sample moving average that skips NaN (NaN only where the window has no data)."""
+    x = np.asarray(x, dtype=float)
+    n = min(int(n), x.size)          # np.convolve "same" returns max(len) samples
+    if n <= 1:
+        return x.copy()
+    ok = np.isfinite(x)
+    k = np.ones(n)
+    num = np.convolve(np.where(ok, x, 0.0), k, mode="same")
+    den = np.convolve(ok.astype(float), k, mode="same")
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return np.where(den > 0, num / np.maximum(den, 1e-12), np.nan)
+
+
+def std_ratio(a, b):
+    """std(a) / std(b), None when b does not move."""
+    sb = float(np.nanstd(b)) if np.isfinite(b).any() else 0.0
+    return round(float(np.nanstd(a)) / sb, 2) if sb > 1e-9 else None
+
+
 def missed_share(imu, enc):
     """Share of the IMU's attitude excursion the encoders do not explain.
 
@@ -646,15 +678,31 @@ def summarize(log_path, rows, meta, A, kin, xml, why, cmd_used, alpha, end, t, u
     k_min = int(np.nanargmin(sm)) if np.isfinite(sm).any() else None
     edge_cols = [f"{s}_{e}_mm" for s in ("R", "L") for e in FOOT_EDGES]
     st = A["stance"][win]
+    anc = A["anchor"][win]
+    # Each foot's closest edge over every frame it carried weight (alone or with the other):
+    # which foot happened to be a fraction of a mm lower is not a reason to split them. With
+    # both feet down the COM is normally past each foot's INNER edge (it sits between the
+    # feet, inside the polygon), so the inner edge only counts while that foot stands alone.
     foot_min = {}
     for s in ("R", "L"):
-        on = st == s
+        on = (st == s) | (st == "both")
         if on.any():
-            vals = {e: float(np.nanmin(A[f"{s}_{e}_mm"][win][on])) for e in FOOT_EDGES}
+            vals = {}
+            for e in FOOT_EDGES:
+                m = (st == s) if e == "inner" else on
+                if m.any():
+                    vals[e] = float(np.nanmin(A[f"{s}_{e}_mm"][win][m]))
             e = min(vals, key=vals.get)
-            foot_min[s] = {"edge": e, "mm": round(vals[e], 1)}
+            foot_min[s] = {"edge": e, "mm": round(vals[e], 1),
+                           "frames": int(on.sum()), "alone_frames": int((st == s).sum())}
 
-    sw = A["support"][win]
+    # Slow motion only: a 1 s moving average of both pitch traces, so the ratio is not
+    # inflated by accelerometer spikes during pushes (pg is specific force, not gravity).
+    dt = float(np.nanmedian(np.diff(tt))) if len(tt) > 1 else 0.025
+    nwin = max(1, int(round(1.0 / dt))) if np.isfinite(dt) and dt > 0 else 40
+    imu_lp = moving_average(A["imu_pitch_deg"][win], nwin)
+    enc_lp = moving_average(A["enc_pitch_deg"][win], nwin)
+    q_win = quiet[:end]
     sumry = {
         "log": str(log_path),
         "schema_version": meta.get("schema_version"),
@@ -671,16 +719,22 @@ def summarize(log_path, rows, meta, A, kin, xml, why, cmd_used, alpha, end, t, u
                      "between the sole centres; all positions mm",
             "attitude": "+pitch = forward, +roll = robot's LEFT (atan2 of pg, as diagnose_run.py)",
             "pelvis_attitude_from": "logged pg (EMA-filtered, what the controller saw), yaw 0",
-            "stance_rule": "stance = lower sole centre with the IMU-tilted legs; its sole centre on the floor; "
-                           f"the other foot also supports while within {CONTACT_MM:g} mm of the floor",
+            "stance_rule": "anchor = lower sole centre with the IMU-tilted legs (kept unless the other is "
+                           f"{ANCHOR_HYST_MM:g} mm lower); its sole centre on the floor. The other foot also "
+                           f"supports while within {CONTACT_MM:g} mm of the floor; stance = supporting feet "
+                           "(R, L or both)",
             "support_box": "each sole box laid flat on the floor at its sole centre (flex lumped at the sole)",
             "margins": "signed mm, + = COM floor projection inside that edge / polygon",
+            "foot_edge_min_while_supporting": "per foot, the closest edge over the frames it carried weight; "
+                                              "its inner edge counts only while it stood alone",
             "quiet": f"1 when |av| < {CALM_RATE} rad/s; pg is accelerometer-based, so attitude/flex/margins on "
                      "non-quiet rows include the body's own acceleration (an upper bound on the excursion)",
             "flex": "IMU attitude - encoder-implied attitude (both soles flat), encoder side EMA-filtered "
-                    f"with alpha {alpha:g} to match the deploy pg filter",
+                    f"with alpha {alpha:g} to match the deploy pg filter; *_quiet = quiet rows only",
+            "excursion_ratio": "std(IMU pitch) / std(encoder-implied pitch) over the standing window; _1s = "
+                               "both traces 1 s moving-averaged first (slow motion only)",
             "com_err": f"COM had the joints reached their commands ({cmd_used}) - COM measured; feet flat, same "
-                       "stance sole, same hidden flex (pelvis = commanded feet-flat attitude + measured flex)",
+                       "anchor sole, same hidden flex (pelvis = commanded feet-flat attitude + measured flex)",
             "com_flat": "COM placed by the encoders alone (pelvis at the encoder-implied attitude)",
         },
         "pg_ema_alpha": alpha,
@@ -696,9 +750,10 @@ def summarize(log_path, rows, meta, A, kin, xml, why, cmd_used, alpha, end, t, u
         "flex_roll_deg": _stats(A["flex_roll_deg"][win]),
         "pitch_missed_by_encoders": missed_share(A["imu_pitch_deg"][win], A["enc_pitch_deg"][win]),
         "roll_missed_by_encoders": missed_share(A["imu_roll_deg"][win], A["enc_roll_deg"][win]),
-        "pitch_excursion_ratio_imu_over_enc": (
-            round(float(np.nanstd(A["imu_pitch_deg"][win]) / np.nanstd(A["enc_pitch_deg"][win])), 2)
-            if np.nanstd(A["enc_pitch_deg"][win]) > 1e-9 else None),
+        "pitch_excursion_ratio_imu_over_enc": std_ratio(A["imu_pitch_deg"][win], A["enc_pitch_deg"][win]),
+        "pitch_excursion_ratio_imu_over_enc_1s": std_ratio(imu_lp, enc_lp),
+        "flex_pitch_quiet_deg": _stats(A["flex_pitch_deg"][win][q_win]),
+        "flex_roll_quiet_deg": _stats(A["flex_roll_deg"][win][q_win]),
         "com_x_mm": _stats(A["com_x_mm"][win]),
         "com_y_mm": _stats(A["com_y_mm"][win]),
         "com_flat_x_mm": _stats(A["com_flat_x_mm"][win]),
@@ -707,12 +762,14 @@ def summarize(log_path, rows, meta, A, kin, xml, why, cmd_used, alpha, end, t, u
                                            if quiet.any() else None),
         "support_margin_min": None if k_min is None else {
             "mm": round(float(sm[k_min]), 1), "t_rel": round(float(tt[k_min]), 2),
-            "nearest": str(A["support_nearest"][win][k_min]), "stance": str(st[k_min])},
+            "nearest": str(A["support_nearest"][win][k_min]), "stance": str(st[k_min]),
+            "anchor": str(anc[k_min])},
         "share_outside_support": round(float(np.mean(sm < 0)), 3) if len(sm) else None,
         "support_margin_flat_mm": _stats(A["support_margin_flat_mm"][win]),
-        "foot_edge_min_while_stance": foot_min,
-        "stance_frames": {s: int((st == s).sum()) for s in ("R", "L")},
-        "support_frames": {s: int((sw == s).sum()) for s in ("both", "R", "L")},
+        "foot_edge_min_while_supporting": foot_min,
+        "stance_frames": {s: int((st == s).sum()) for s in ("both", "R", "L")},
+        "anchor_frames": {s: int((anc == s).sum()) for s in ("R", "L")},
+        "anchor_switches": int(np.sum(anc[1:] != anc[:-1])) if len(anc) > 1 else 0,
         "u_meas_filled_rows": int(filled.sum()),
         "u_meas_filled_at_t": [round(float(x), 2) for x in t[filled][:20]],
         "optional_columns_used": (["acc_x", "acc_y", "acc_z"] if has_acc else []),

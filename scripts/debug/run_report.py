@@ -345,12 +345,16 @@ def build(log_path, model=None, out_dir=None, do_replay=False, replay_model=None
         ("table", head, [_stat_row("IMU pitch", S["imu_pitch_deg"], "deg"),
                          _stat_row("encoder-implied pitch", S["enc_pitch_deg"], "deg"),
                          _stat_row("flex pitch (IMU - enc)", S["flex_pitch_deg"], "deg"),
+                         _stat_row("flex pitch, quiet rows only", S["flex_pitch_quiet_deg"], "deg"),
                          _stat_row("IMU roll", S["imu_roll_deg"], "deg"),
                          _stat_row("encoder-implied roll", S["enc_roll_deg"], "deg"),
-                         _stat_row("flex roll (IMU - enc)", S["flex_roll_deg"], "deg")]),
+                         _stat_row("flex roll (IMU - enc)", S["flex_roll_deg"], "deg"),
+                         _stat_row("flex roll, quiet rows only", S["flex_roll_quiet_deg"], "deg")]),
         ("kv", [("share of IMU pitch excursion the encoders miss", _f(S["pitch_missed_by_encoders"], 3)),
                 ("share of IMU roll excursion the encoders miss", _f(S["roll_missed_by_encoders"], 3)),
                 ("IMU pitch std / encoder pitch std", _f(S["pitch_excursion_ratio_imu_over_enc"])),
+                ("same, both 1 s moving-averaged (slow motion only)",
+                 _f(S["pitch_excursion_ratio_imu_over_enc_1s"])),
                 ("note", "encoder-implied = the pelvis attitude that puts both soles flat; the static part of "
                          "flex also holds IMU mounting error and the model's ~0.75 deg sole roll. "
                          "share > 1 = the joints moved AGAINST the lean (a feedback law correcting it).")])]))
@@ -367,7 +371,7 @@ def build(log_path, model=None, out_dir=None, do_replay=False, replay_model=None
 
     # ---- balance ---------------------------------------------------------------------
     mn = S["support_margin_min"] or {}
-    fm = S["foot_edge_min_while_stance"]
+    fm = S["foot_edge_min_while_supporting"]
     bal = [("support margin (polygon)", f"median {_f((S['support_margin_mm'] or {}).get('median'), 1)} mm, "
                                         f"quiet-standing median {_f(S['support_margin_quiet_median_mm'], 1)} mm"),
            ("minimum margin", f"{_f(mn.get('mm'), 1)} mm at t={_f(mn.get('t_rel'))} s, nearest edge "
@@ -377,11 +381,15 @@ def build(log_path, model=None, out_dir=None, do_replay=False, replay_model=None
            ("COM x (+ forward of mid-feet)", f"median {_f(S['com_x_mm']['median'], 1)} mm, "
                                             f"p05..p95 {_f(S['com_x_mm']['p05'], 1)}..{_f(S['com_x_mm']['p95'], 1)} mm"),
            ("COM y (+ left)", f"median {_f(S['com_y_mm']['median'], 1)} mm"),
-           ("stance foot frames", f"R {S['stance_frames']['R']}, L {S['stance_frames']['L']}; both feet "
-                                  f"supporting {S['support_frames']['both']}")]
+           ("stance frames (feet carrying weight)", f"both {S['stance_frames']['both']}, R only "
+                                                    f"{S['stance_frames']['R']}, L only {S['stance_frames']['L']}"),
+           ("anchor foot (sole pinned to the floor)", f"R {S['anchor_frames']['R']}, L {S['anchor_frames']['L']} "
+                                                      f"frames, {S['anchor_switches']} switches")]
     for s in ("R", "L"):
         if s in fm:
-            bal.append((f"closest edge while {s} is stance", f"{fm[s]['edge']} {fm[s]['mm']:.1f} mm"))
+            bal.append((f"closest edge while {s} carried weight", f"{fm[s]['edge']} {fm[s]['mm']:.1f} mm over "
+                                                                  f"{fm[s]['frames']} frames (inner edge: only the "
+                                                                  f"{fm[s]['alone_frames']} it stood alone)"))
     if "com_err_x_mm" in S:
         bal.append(("COM error from tracking (cmd - meas)",
                     f"x median {_f(S['com_err_x_mm']['median'], 1)} mm, y median {_f(S['com_err_y_mm']['median'], 1)} mm, "
@@ -397,11 +405,13 @@ def build(log_path, model=None, out_dir=None, do_replay=False, replay_model=None
                "COM fore/aft (+ forward of the mid-feet point)", "mm", events, fall_t, hline=0)]
 
     # ---- joints ----------------------------------------------------------------------
-    upr = smap.units_per_rad
     # out-of-range reads (garbage that passed the checksum) are NaN here, as in log_pose
     u_cmd = log_pose.units_matrix(rows, smap, "u_cmd")
     u_meas = log_pose.units_matrix(rows, smap, "u_meas")
-    err = np.degrees((u_cmd - u_meas) / upr)
+    # In SIM radians, through each servo's sign: raw units follow the servo's own direction,
+    # so mirrored joints (R/L knee, R/L hip pitch) would show opposite signs for the same
+    # physical sag and a symmetric error would read as a left/right asymmetry.
+    err = np.degrees(np.asarray(smap.signs, dtype=float) * (u_cmd - u_meas) / smap.units_per_rad)
     jt = []
     for k, d in enumerate(dofs):
         e = err[:end, k]
@@ -410,6 +420,9 @@ def build(log_path, model=None, out_dir=None, do_replay=False, replay_model=None
             jt.append([d, _f(np.sqrt(np.mean(e ** 2))), _f(np.mean(e)), _f(np.max(np.abs(e)))])
     jt.sort(key=lambda r: -float(r[1]))
     sections.append(("Joint tracking (u_cmd - u_meas)", [
+        ("kv", [("convention", "err = q_cmd - q_meas in SIM degrees (u_cmd/u_meas through the servo map, "
+                               "sign included), so R and L read alike: + = the joint stopped short of its "
+                               "command in the joint's + direction (knee: + = straighter than commanded)")]),
         ("table", ["joint", "rms deg", "mean deg", "max |err| deg"], jt)]))
     legs = ["R_hip_pitch", "L_hip_pitch", "R_knee", "L_knee", "waist_pitch"]
     li = [dofs.index(x) for x in legs]
@@ -553,8 +566,10 @@ def replay_section(log_path, meta, S, rows, smap, t, end, replay_model, plt, fig
         xml = (REPLAY_MODEL_12CM if str(meta.get("started_iso", ""))[:10] < log_pose.SOLE_PLATES_FROM
                and meta.get("started_iso") else REPLAY_MODEL_16CM)
     try:
-        q_meas = np.array([log_pose.frame_log.pose_from_row(r, smap)["q_meas"] for r in rows], dtype=float)
-        q_meas, _ = log_pose.forward_fill(q_meas)
+        # joint_matrix masks reads outside 0..1023 as log_pose does: forward_fill only repairs
+        # NaN, so an unmasked garbage first frame (14338 on 10/25 01:28) would settle the sim
+        # thousands of degrees off.
+        q_meas, _ = log_pose.forward_fill(log_pose.joint_matrix(rows, smap, "u_meas"))
         q_cmd, _ = log_pose.forward_fill(log_pose.joint_matrix(rows, smap, "u_cmd"))
         sp, sr, note = replay(xml, smap, q_meas[0], q_cmd, t)
     except Exception as exc:          # a replay must never cost the report
