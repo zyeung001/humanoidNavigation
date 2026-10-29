@@ -14,6 +14,9 @@ THE DASHBOARD, by W&B section. Read them in this order:
   ppo/       Algorithm health: approx_kl, clip_fraction, explained_variance, entropy, std.
   health/    The rules below, applied to ppo/*: 1 = tripped. The console says which and why.
   perf/      Throughput.
+  validation/  Once, at the end: validation/video (the best policy on the fixed showcase
+             timeline -- pushes, a kick, a gyro fault -- with arrows, support map and HUD),
+             beats_held and falls. To SEE what the score measured; scripts/train_standing.py.
 
 Every record also goes to runs/<name>/metrics.jsonl, so nothing depends on W&B being up.
 """
@@ -79,6 +82,25 @@ class MetricsSink:
         self._fh.write(json.dumps(rec, default=float) + "\n")
         data = {k: v for k, v in rec.items() if k != "wall_time"}
         self._wandb_call("log", lambda run: run.log(data, step=int(step)))
+
+    def log_video(self, key: str, path, step: int, caption: str = "") -> None:
+        """A video FILE (mp4/webm) to W&B under `key`; its path goes to the JSONL. Passing the
+        path, not frames, means wandb uploads it as-is (frames would need moviepy, which is
+        not installed). A failure is a warning, like every other W&B call here."""
+        path = Path(path)
+        self._fh.write(json.dumps({"timesteps": int(step), "wall_time": time.time(), key: str(path)}) + "\n")
+
+        if self.wandb is None:
+            return
+        try:
+            import wandb  # noqa: PLC0415
+            self.wandb.log({key: wandb.Video(str(path), caption=caption,
+                                             format=path.suffix.lstrip("."))}, step=int(step))
+        except Exception as e:  # noqa: BLE001
+            # Unlike _wandb_call, W&B stays on: a video it cannot take (format, size) says
+            # nothing about the service, and close() must still finish() the run.
+            print(f"  WARNING: W&B video upload failed ({type(e).__name__}: {e}); the file is "
+                  f"{path}")
 
     def summary(self, values: Dict[str, object]) -> None:
         def write(run):

@@ -21,8 +21,22 @@ python scripts/train_standing.py --config config/real_humanoid_stand.yaml \
 ```
 
 Key args: `--timesteps` (cumulative), `--model`/`--vecnorm`, `--wandb online|offline|disabled`,
-`--seed`, `--eval-every N` (0 = off), `--dry-run`, `--run-name`. Ctrl+C saves to
+`--seed`, `--eval-every N` (0 = off), `--dry-run`, `--run-name`, `--no-video`. Ctrl+C saves to
 `runs/<name>/interrupted/` (never over the legacy final path).
+
+When a run finishes normally it films ONE validation video of its best checkpoint
+(`runs/<name>/validation.mp4`, W&B `validation/video`; see `src/robustness/CLAUDE.md`). Any
+failure there only warns; no GL context -> skipped (checked in a subprocess first).
+
+### `validation_video.py` — the same video for an existing run
+
+```bash
+python scripts/validation_video.py --run runs/<name>                      # best/, else final/
+python scripts/validation_video.py --run runs/<name> --checkpoint checkpoints/00035.00M
+python scripts/validation_video.py --npz models/kneelaw_db.npz --config config/experiments/flex_plant.yaml
+```
+
+Writes `<run>/validation.mp4` (or `.webm`) + `.json` (event log, per-beat outcome). No upload.
 
 ### `eval_standing.py` / `compare_models.py` — which model is best
 
