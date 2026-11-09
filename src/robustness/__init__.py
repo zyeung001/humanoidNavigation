@@ -4,6 +4,8 @@
   wrapper.py    ScenarioWrapper: plays a scenario per episode on a StandingEnv
   policies.py   what can be evaluated: SB3 .zip, exported .npz, or no policy (hold the pose)
   suite.py      evaluate() -> SuiteResult: the score, per-scenario detail, JSON, a text table
+  showcase.py   one fixed perturbation timeline for the validation video (no GL)
+  video.py      films it: force arrows, support map, HUD -> runs/<name>/validation.mp4
 """
 
 from .scenarios import SUITE, SUITE_VERSION, TRAINING, Scenario, suite_scenarios, training_scenarios

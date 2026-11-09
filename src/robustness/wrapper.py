@@ -6,6 +6,11 @@ the scenario through reset(options={"scenario": ...}). Either way the episode's 
 
 With no mix and no scenario requested the wrapper does nothing at all: same RNG draws, same
 observations as the bare env (tests/test_robustness.py holds it to that).
+
+Every push and kick, the scenario's own or one injected from outside (inject_push /
+inject_kick, which the validation video's fixed timeline uses), goes through the same two
+helpers and is written to `events`, so anything drawn or scored can say exactly what hit the
+robot, where and when.
 """
 
 from __future__ import annotations
@@ -92,6 +97,7 @@ class ScenarioWrapper(gym.Wrapper):
         self._stratum = None
         self.scenario: Optional[Scenario] = None
         self.disturbance_steps = []   # control steps at which a disturbance began this episode
+        self.events: list = []        # one dict per disturbance this episode (see _log)
         self._reset_schedule()
 
     # ------------------------------------------------------------------ mix
@@ -164,7 +170,9 @@ class ScenarioWrapper(gym.Wrapper):
         return obs, info
 
     def step(self, action):
-        if self.scenario is not None and self.scenario.disturb.kind != "none":
+        # An injected push needs clearing even with no scenario; with neither, nothing runs.
+        if self._push_until is not None or (self.scenario is not None
+                                            and self.scenario.disturb.kind != "none"):
             self._disturb()
         obs, reward, terminated, truncated, info = self.env.step(action)
         self._t += 1
@@ -246,28 +254,70 @@ class ScenarioWrapper(gym.Wrapper):
         self._t = 0
         self._next_at = None
         self._push_until = None
+        self._push_bid = None
         self._kick_sign = 1.0
         self.disturbance_steps = []
+        self.events = []
 
     def _disturb(self) -> None:
-        d, rng = self.scenario.disturb, self._rng_disturb
         data = self.base.env.unwrapped.data
         if self._push_until is not None and self._t >= self._push_until:
-            data.xfrc_applied[self._body(d.body), :] = 0.0
-            self._push_until = None
+            data.xfrc_applied[self._push_bid, :] = 0.0
+            self._push_until = self._push_bid = None
+        if self.scenario is None or self.scenario.disturb.kind == "none":
+            return                               # only an injected push to clear
+        d, rng = self.scenario.disturb, self._rng_disturb
         if self._next_at is None or self._t < self._next_at:
             return
+        # The draws, in this order, ARE the paired-seed contract: direction, size, then the
+        # push's duration or the kick's yaw rate, then the interval. Do not reorder.
         direction = _horizontal(rng, self._stratum, phase=2.0, k=len(self.disturbance_steps))
         mag = _u(rng, d.magnitude)
         if d.kind == "push":
-            data.xfrc_applied[self._body(d.body), 0:3] = mag * direction
-            self._push_until = self._t + max(1, round(_u(rng, d.duration_s) / self._dt))
+            steps = max(1, round(_u(rng, d.duration_s) / self._dt))
+            self._apply_push(self._body(d.body), mag * direction, steps, d.body, "scenario")
         else:
-            data.qvel[0:3] += mag * direction
-            data.qvel[5] += self._kick_sign * _u(rng, d.yaw_rate)
+            yaw = self._kick_sign * _u(rng, d.yaw_rate)
+            self._apply_kick(mag * direction, yaw, "scenario")
             self._kick_sign = -self._kick_sign
-        self.disturbance_steps.append(self._t)
         self._next_at = self._t + max(1, round(_u(rng, d.interval_s) / self._dt))
+
+    def _apply_push(self, bid: int, force, steps: int, body: str, source: str) -> None:
+        """A horizontal world-frame force on body `bid`, at its centre of mass, for `steps`."""
+        data = self.base.env.unwrapped.data
+        if self._push_bid is not None and self._push_bid != bid:
+            data.xfrc_applied[self._push_bid, :] = 0.0
+        force = np.asarray(force, dtype=np.float64)
+        data.xfrc_applied[bid, 0:3] = force
+        self._push_bid, self._push_until = int(bid), self._t + int(steps)
+        self._log("push", body, int(bid), force, float(np.linalg.norm(force)), int(steps), 0.0, source)
+
+    def _apply_kick(self, dv, yaw_rate: float, source: str) -> None:
+        """A step in the root's velocity: dv (world, m/s) and yaw_rate (rad/s, its own z)."""
+        data = self.base.env.unwrapped.data
+        dv = np.asarray(dv, dtype=np.float64)
+        data.qvel[0:3] += dv
+        data.qvel[5] += yaw_rate
+        self._log("kick", None, None, dv, float(np.linalg.norm(dv)), 0, float(yaw_rate), source)
+
+    def _log(self, kind, body, body_id, vec, magnitude, duration_steps, yaw_rate, source) -> None:
+        self.disturbance_steps.append(self._t)
+        self.events.append({"step": self._t, "t": self._t * self._dt, "kind": kind, "body": body,
+                            "body_id": body_id, "vec": [float(x) for x in vec],
+                            "magnitude": magnitude, "duration_steps": duration_steps,
+                            "yaw_rate": yaw_rate, "source": source})
+
+    # ------------------------------------------------------------------ injected disturbances
+    def inject_push(self, force_world, body: str = "torso", duration_s: float = 0.2) -> None:
+        """Push NOW (from the next step on): `force_world` newtons on `body` ('torso', 'pelvis'
+        or a body name) for `duration_s`. The same code path, and so the same physics, as a
+        scenario's push; it draws no random numbers, so the scenario's own pushes are unmoved."""
+        steps = max(1, round(float(duration_s) / self._dt))
+        self._apply_push(self._body(body), force_world, steps, body, "inject")
+
+    def inject_kick(self, dv_world, yaw_rate: float = 0.0) -> None:
+        """Kick NOW: add dv_world (m/s) to the root's velocity and yaw_rate (rad/s) to its spin."""
+        self._apply_kick(dv_world, float(yaw_rate), "inject")
 
     def _body(self, name: str) -> int:
         """Body id for a push. 'torso' = the highest subtree holding >= 15% of the mass (the

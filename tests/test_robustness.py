@@ -143,6 +143,74 @@ def test_paired_scenarios_get_the_same_pushes(wenv):
     assert forces["push_5N"][1] == forces["push_5N_gyro"][1]
 
 
+# ---------------------------------------------------------------- the event log and injected pushes
+
+def _checksum(wenv, name, steps=115):
+    """Forces and observations of suite episode 0 of `name` at seed 12345, holding the pose."""
+    import hashlib
+    s = sc.suite_scenarios(names=[name])[0]
+    np.random.seed(12345)
+    wenv.reset(seed=12345, options={"scenario": s, "stratum": (0, 12)})
+    data, torso, h = wenv.base.env.unwrapped.data, wenv._body("torso"), hashlib.sha256()
+    for _ in range(steps):
+        obs, _, term, trunc, _ = wenv.step(wenv.base.episode_baseline)
+        h.update((np.round(data.xfrc_applied[torso, :3], 6) + 0.0).tobytes())   # + 0.0: no -0.0
+        h.update((np.round(obs.astype(np.float64), 3) + 0.0).tobytes())
+        if term or trunc:
+            break
+    return h.hexdigest()[:16]
+
+
+def test_the_disturbance_refactor_changed_no_push_kick_or_observation():
+    """Recorded on the code before _disturb was split into _apply_push/_apply_kick (10/25). The
+    draws are the paired-seed contract; a different checksum means scores have moved.
+
+    Its own env: the shared fixture has run a scenario with env_randomisation unset, and the
+    env keeps that episode's randomised residual baseline when the next one turns
+    randomisation off (suite.evaluate never mixes the two on one env)."""
+    wenv = suite.make_eval_env(CFG, seconds=3.0)
+    assert _checksum(wenv, "push_5N") == "4eda566f780f1d7d"
+    assert _checksum(wenv, "kick_2x") == "325acb0a98a517e1"
+
+
+@pytest.mark.parametrize("name", ["push_5N", "kick_2x"])
+def test_the_event_log_matches_the_disturbances(wenv, name):
+    s = sc.suite_scenarios(names=[name])[0]
+    np.random.seed(5)
+    wenv.reset(seed=5, options={"scenario": s})
+    data, torso = wenv.base.env.unwrapped.data, wenv._body("torso")
+    for _ in range(110):
+        before = data.xfrc_applied[torso, :3].copy()
+        wenv.step(wenv.base.episode_baseline)
+        if wenv.events and wenv.events[-1]["step"] == wenv._t - 1 and s.disturb.kind == "push":
+            np.testing.assert_allclose(data.xfrc_applied[torso, :3], wenv.events[-1]["vec"])
+            assert not np.any(before)
+    assert [e["step"] for e in wenv.events] == wenv.disturbance_steps and wenv.events
+    for e in wenv.events:
+        assert e["kind"] == s.disturb.kind and e["source"] == "scenario"
+        assert e["magnitude"] == pytest.approx(s.disturb.magnitude[0])
+        assert e["t"] == pytest.approx(e["step"] * 0.025)
+        if s.disturb.kind == "kick":
+            assert abs(e["yaw_rate"]) == pytest.approx(s.disturb.yaw_rate[0])
+
+
+def test_an_injected_push_without_a_scenario_is_applied_then_cleared():
+    w = ScenarioWrapper(_env())
+    w.reset(seed=0)
+    data, torso = w.base.env.unwrapped.data, w._body("torso")
+    w.step(w.base.episode_baseline)
+    w.inject_push([0.0, 3.0, 0.0], "torso", duration_s=0.1)       # 4 steps
+    applied = []
+    for _ in range(6):
+        w.step(w.base.episode_baseline)
+        applied.append(float(np.linalg.norm(data.xfrc_applied[torso, :3])))
+    np.testing.assert_allclose(applied[:4], 3.0)
+    assert applied[4:] == [0.0, 0.0]
+    assert w.events[0]["source"] == "inject" and w.events[0]["step"] == 1
+    w.inject_kick([0.1, 0.0, 0.0], yaw_rate=0.5)
+    assert w.events[-1]["kind"] == "kick" and w.disturbance_steps == [1, 7]
+
+
 # ---------------------------------------------------------------- one episode never leaks into the next
 
 def test_plant_overrides_are_undone_before_the_next_scenario(wenv):

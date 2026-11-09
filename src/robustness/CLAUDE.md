@@ -10,6 +10,22 @@ Standing only.
 | `wrapper.py` | `ScenarioWrapper(gym.Wrapper)`: plays one scenario per episode on a `StandingEnv`. Training passes `mix`; eval passes `reset(options={"scenario": s, "stratum": (i, n)})` |
 | `policies.py` | `SB3Policy` (.zip + .pkl, or live model), `NpzPolicy` (runs `scripts/deploy/numpy_policy.py`, the robot's code), `HoldPosePolicy` (a fixed pose, no feedback) |
 | `suite.py` | `evaluate(policy, cfg, ...) -> SuiteResult`; `format_result()` prints the table |
+| `showcase.py` | `SHOWCASE`: ONE fixed 30 s timeline for the validation video (3/4/5/6 N torso pushes from front/left/behind/right, 5 N pelvis, kick 2x toward front-right, 5 N under a 0.12 rad/s gyro fault). `run_showcase()` plays it through the wrapper's `inject_push`/`inject_kick`; a fall shows 1 s of physics, resets, and shifts later beats 2 s. No GL |
+| `video.py` | `make_validation_video()` films it: main + side view with the applied-force arrow, top-down support map, HUD, timeline, end card -> `.mp4` (H.264 via MSMF) or `.webm` + `.json` |
+
+## The validation video (end of every standing run)
+
+`runs/<name>/validation.mp4` + `validation.json`, logged to W&B as `validation/video`: the
+run's `best/` (else `final/`) on the showcase timeline. Same timeline, seed and layout for
+every model, so two runs' videos compare beat by beat. It is for SEEING what the policy does
+(where it was pushed, how hard, how it responded); the score is still `eval/score`. The
+arrow is read from `data.xfrc_applied`, so it is exactly what the physics applied; it is
+drawn shaded in 3D and again flat and translucent over each view (`draw_xray`), so a push
+from behind still shows through the torso. If the video ends on a fall, the end card is
+held for 2 s. Cost:
+~1.5 min wall for ~800 frames on this laptop under load (shadows off: the 760k-vertex CAD
+meshes made the shadow pass 3/4 of each render); the H.264 file is ~1.3 MB per second
+(MSMF fixes the bitrate at fps x w x h).
 
 ## The score
 
@@ -41,6 +57,8 @@ policy braced against it (they fell sideways on the robot within 1.5 s).
 - The wrapper restores nominal mass/friction/gains and env settings before EVERY reset (the env
   itself never puts randomised arrays back when randomisation is switched off).
 - With no mix and no scenario the wrapper is a strict no-op (tested bit-for-bit).
+- Every push/kick (scenario or injected) goes through `_apply_push`/`_apply_kick` and is logged
+  to `wenv.events`; the draw order in `_disturb` is the paired-seed contract (checksum test).
 - Eval workers (`workers=N`) give identical results to `workers=1`.
 - `StandingEnv` hooks used here: `place_robot()`, `set_sensor_offsets()`, `episode_baseline`,
   `actuator_lag_scale`, `debug_print_every`.
