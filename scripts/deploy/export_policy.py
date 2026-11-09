@@ -19,16 +19,25 @@ runs/<name>/) and written into the bundle as `prior_gain`, which deploy_standing
   # the prior ALONE (a network that outputs exactly zero): the controller to test on the robot
   python scripts/deploy/export_policy.py --prior-only \\
       --config config/experiments/scratch_prior.yaml --out models/real_standing_prior_only.npz
+
+Every bundle is written through numpy_policy.stamp(): it gets `format_version` and a `requires` list
+naming each runtime feature its optional keys need (feedback_prior, prior_deadband), and is loaded
+back with NumpyPolicy.load before this script reports OK. A Pi whose numpy_policy.py predates a
+feature then refuses the bundle by name instead of running without it (on 10/25 the gyro deadband
+would have been silently ignored by an old copy).
 """
 
 from __future__ import annotations
 import argparse
 import pickle
+import sys
 from pathlib import Path
 
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import numpy_policy  # noqa: E402  (the Pi's own loader checks every bundle written here)
 
 
 def silu(x):
@@ -123,9 +132,19 @@ def main():
         print(f"no feedback prior in {args.config}")
     else:
         print("no --config and no run config next to the model: exported WITHOUT a feedback prior")
-    np.savez(args.out, **arrays)
+    save_bundle(args.out, arrays)
     sz = Path(args.out).stat().st_size / 1e6
     print(f"OK: wrote {args.out} ({sz:.2f} MB). Parity verified. torch/SB3 not needed to run it.")
+
+
+def save_bundle(out, arrays):
+    """Write `arrays` with the format/requires header (numpy_policy.stamp), then load it back with
+    the Pi's loader, so a bundle this repo's own numpy_policy.py would refuse is never written."""
+    np.savez(out, **numpy_policy.stamp(arrays))
+    pol = numpy_policy.NumpyPolicy.load(out)
+    print(f"bundle format {numpy_policy.BUNDLE_FORMAT}, requires {pol.requires} -- a Pi whose "
+          f"numpy_policy.py lacks any of these refuses to load it")
+    return pol
 
 
 def prior_gain(config):
@@ -165,11 +184,11 @@ def write_prior_only(out, prior, config, obs_dim=228, pose=None, deadband=None):
     act_dim = prior.shape[0]
     out_b = np.zeros(act_dim, np.float32) if pose is None else np.asarray(pose, np.float32)
     extra = {} if deadband is None else {"prior_deadband": np.asarray(deadband, np.float32)}
-    np.savez(out, n_hidden=np.array(0, dtype=np.int64),
-             out_w=np.zeros((act_dim, obs_dim), np.float32), out_b=out_b,
-             obs_mean=np.zeros(obs_dim, np.float32), obs_var=np.ones(obs_dim, np.float32),
-             clip_obs=np.array(50.0, np.float32), epsilon=np.array(1e-8, np.float32),
-             prior_gain=prior.astype(np.float32), **extra)
+    save_bundle(out, dict(n_hidden=np.array(0, dtype=np.int64),
+                          out_w=np.zeros((act_dim, obs_dim), np.float32), out_b=out_b,
+                          obs_mean=np.zeros(obs_dim, np.float32), obs_var=np.ones(obs_dim, np.float32),
+                          clip_obs=np.array(50.0, np.float32), epsilon=np.array(1e-8, np.float32),
+                          prior_gain=prior.astype(np.float32), **extra))
     what = "the straight pose" if pose is None else "the config's stance"
     print(f"OK: wrote {out}: {what} + the feedback prior from {config}, no network.")
 

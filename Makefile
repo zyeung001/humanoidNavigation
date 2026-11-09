@@ -6,6 +6,7 @@
 #   make train-walking                            # Train walking controller
 #   make train-walking ARGS="--debug --n-envs 1"  # Debug mode (no multiprocessing)
 #   make record                                   # Record evaluation video
+#   make robot-run ARGS="run -- --policy-npz models/x.npz"  # Sync the Pi, run, fetch + diagnose logs
 #   make clean                                    # Remove venv and caches
 
 # ── Python detection ──────────────────────────────────────────────
@@ -23,7 +24,7 @@ ARGS ?=
 
 # ── Targets ───────────────────────────────────────────────────────
 
-.PHONY: setup train-standing train-walking record evaluate lint clean help
+.PHONY: setup train-standing train-walking record evaluate robot-run lint clean help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -50,6 +51,9 @@ record: $(VENV)/installed ## Record evaluation video (pass ARGS="..." for flags)
 
 evaluate: $(VENV)/installed ## Run evaluation script (pass ARGS="..." for flags)
 	$(PY) scripts/evaluate.py $(ARGS)
+
+robot-run: $(VENV)/installed ## Real robot: sync/run/attach/stop/fetch via scripts/robot_run.py (ARGS="run -- ...")
+	$(PY) scripts/robot_run.py $(ARGS)
 
 lint: ## Run ruff linter on all Python files
 	$(PY) -m ruff check src/ scripts/ || $(PYTHON) -m ruff check src/ scripts/

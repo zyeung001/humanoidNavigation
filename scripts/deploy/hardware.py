@@ -7,7 +7,11 @@ Wired to the robot's actual drivers (reverse-engineered from the working bench s
 ~/move_servo.py, ~/read_positions.py, ~/stop_all.py, ~/read_imu.py):
   - Servos: raw Feetech-SCS half-duplex serial over pyserial (/dev/ttyAMA0 @ 1 Mbaud).
             NOT scservo_sdk. Packet = FF FF id len instr params... checksum.
-  - IMU:    ICM-20948 over I2C (smbus) bus 1 @ 0x68, accel 0x2D / gyro 0x33.
+            ServoBus(telemetry=True) makes read_all() read position, speed, load, voltage and
+            temperature in ONE 8-byte read per servo (0x38-0x3F) and keep the raw telemetry in
+            last_telemetry for the frame log. The default is the old 2-byte position read.
+  - IMU:    ICM-20948 over I2C (smbus) bus 1 @ 0x68, accel 0x2D / gyro 0x33. The raw accel
+            behind each projected_gravity() is kept in last_accel_g (no second I2C read).
 
 All hardware imports are lazy so this module imports fine on the dev machine (Windows)
 for logic/unit testing; they only fail if you actually open the bus without the libs.
@@ -23,7 +27,35 @@ DEFAULT_BAUD = 1_000_000
 # Feetech SCS control-table registers
 REG_TORQUE_ENABLE = 0x28
 REG_GOAL_POSITION = 0x2A
-REG_PRESENT_POSITION = 0x38
+REG_PRESENT_POSITION = 0x38      # 2 bytes, HIGH byte first (read_pos, calibrate_centers' limits)
+REG_PRESENT_SPEED = 0x3A         # 2 bytes, high first; bit 15 = direction (SCSCL)
+REG_PRESENT_LOAD = 0x3C          # 2 bytes, high first; bit 10 = direction, 0..1000 magnitude
+REG_PRESENT_VOLTAGE = 0x3E       # 1 byte, 0.1 V per unit
+REG_PRESENT_TEMPERATURE = 0x3F   # 1 byte, deg C
+# Position through temperature are contiguous, so one 8-byte read returns all five. That is the
+# same single transaction per servo as the 2-byte position read, with 6 more reply bytes
+# (~60 us at 1 Mbaud): ~1 ms per 17-servo frame, against the ~10 ms the reads already cost.
+STATE_NBYTES = REG_PRESENT_TEMPERATURE - REG_PRESENT_POSITION + 1     # 8
+TELEMETRY_FIELDS = ("spd_raw", "load_raw", "volt_raw", "temp_raw")
+
+# How the RAW telemetry registers decode, recorded in every log's meta sidecar. The logs store
+# the raw register value on purpose (as fsr_v stores raw volts): if any of this turns out wrong
+# on this firmware, every old log can still be decoded the right way later.
+TELEMETRY_DECODING = {
+    "spd_raw": "reg 0x3A-0x3B, big-endian (same byte order as position). Sign-magnitude: "
+               "bit 15 = direction, bits 0-14 = speed in encoder steps per second. Decode: "
+               "v = raw & 0x7FFF; v = -v if raw & 0x8000.",
+    "load_raw": "reg 0x3C-0x3D, big-endian. Sign-magnitude: bit 10 = direction, bits 0-9 = "
+                "0..1000 in 0.1 % of max output (PWM duty, a torque PROXY, not newton-metres). "
+                "Decode: v = raw & 0x3FF; v = -v if raw & 0x400.",
+    "volt_raw": "reg 0x3E, 1 byte, 0.1 V per unit (e.g. 74 = 7.4 V).",
+    "temp_raw": "reg 0x3F, 1 byte, degrees C.",
+    "confidence": "Addresses and byte order: high -- the SCSCL control table (FT SCServo SDK "
+                  "scscl.py: PRESENT_POSITION 56, SPEED 58, LOAD 60, VOLTAGE 62, TEMPERATURE 63) "
+                  "and read_pos() / calibrate_centers.py both read this bus high byte first. "
+                  "Sign bits and units: medium -- from the SDK, not yet checked on this robot "
+                  "(push a joint each way with torque on and watch load_raw's bit 10 flip).",
+}
 
 
 def _checksum(idv, length, instr, params):
@@ -37,8 +69,9 @@ def release_on_hangup():
     kept holding the last pose at full torque. On 10/18 the laptop driving a run shut off and
     the robot was then handled while still stiff. This raises KeyboardInterrupt instead, so the
     caller's own ramp-and-release path runs. The terminal is gone after a hangup, so output is
-    sent to /dev/null first: a print that raises would skip the torque-off. Later signals are
-    ignored so a second one cannot interrupt the cleanup.
+    sent to /dev/null first: a print that raises would skip the torque-off (a console tee keeps
+    writing its file and drops only the terminal). Later signals are ignored so a second one
+    cannot interrupt the cleanup.
     """
     import os
     import signal
@@ -50,19 +83,55 @@ def release_on_hangup():
         for s in sigs:
             signal.signal(s, signal.SIG_IGN)
         if signum == getattr(signal, "SIGHUP", None):
-            sys.stdout = sys.stderr = open(os.devnull, "w")
+            # A console tee (frame_log.ConsoleTee) keeps recording to its file and only loses
+            # the dead terminal: the shutdown after a hangup is exactly what its log is for.
+            devnull = open(os.devnull, "w")
+            for name in ("stdout", "stderr"):
+                stream = getattr(sys, name)
+                if hasattr(stream, "detach_terminal"):
+                    stream.detach_terminal(devnull)
+                else:
+                    setattr(sys, name, devnull)
         raise KeyboardInterrupt
 
     for s in sigs:
         signal.signal(s, _stop)
 
 
-class ServoBus:
-    """Raw-serial Feetech SCS bus. Positions are servo units (0..1023)."""
+def _reply_data(resp, servo_id: int, nbytes: int):
+    """Data bytes of a READ reply, or None unless the WHOLE packet checks out.
 
-    def __init__(self, port: str = DEFAULT_PORT, baud: int = DEFAULT_BAUD):
+    Reply = FF FF id len err data... checksum, with len = nbytes + 2. Every field is checked
+    (header, id echo, length, checksum): header-only acceptance let corrupted bytes through on
+    a large fraction of frames (7/27). The error byte is allowed to be nonzero -- the servo
+    sets voltage/temperature flags there and the data is still valid."""
+    if (len(resp) == 6 + nbytes and resp[0] == 0xFF and resp[1] == 0xFF
+            and resp[2] == servo_id and resp[3] == nbytes + 2
+            and resp[-1] == ((~sum(resp[2:-1])) & 0xFF)):
+        return resp[5:5 + nbytes]
+    return None
+
+
+class ServoBus:
+    """Raw-serial Feetech SCS bus. Positions are servo units (0..1023).
+
+    telemetry=True makes read_all() fetch speed, load, voltage and temperature in the SAME read
+    as the position, and leave them in `last_telemetry` for the frame log. It is OFF by default:
+    only the scripts that log it (deploy_standing, pose_sweep) turn it on, so every other tool
+    -- deploy_arm_reach's control loop, replay_turn's --read-all-every timing experiment --
+    keeps the exact read it had, and a timing taken with it stays comparable to the old ones.
+    Callers that turn it on should run check_telemetry() before torque comes on.
+    """
+
+    def __init__(self, port: str = DEFAULT_PORT, baud: int = DEFAULT_BAUD, telemetry: bool = False):
         self.port, self.baud = port, baud
+        self.telemetry = bool(telemetry)
+        # Set by check_telemetry() when the 8-byte read had to be abandoned: {"servo", "reason"}.
+        self.telemetry_fallback = None
         self._ser = None
+        # (4, n) raw spd/load/volt/temp from the last read_all(), rows in TELEMETRY_FIELDS
+        # order; NaN where a read failed or telemetry is off. None before the first read.
+        self.last_telemetry = None
 
     def connect(self):
         import serial  # pyserial
@@ -91,12 +160,58 @@ class ServoBus:
         for _ in range(retries + 1):
             self._ser.reset_input_buffer()
             self._send(servo_id, 0x02, [REG_PRESENT_POSITION, 0x02])
-            resp = self._ser.read(8)
-            if (len(resp) == 8 and resp[0] == 0xFF and resp[1] == 0xFF
-                    and resp[2] == servo_id and resp[3] == 0x04
-                    and resp[7] == ((~(resp[2] + resp[3] + resp[4] + resp[5] + resp[6])) & 0xFF)):
-                return (resp[5] << 8) | resp[6]
+            d = _reply_data(self._ser.read(8), servo_id, 2)
+            if d is not None:
+                return (d[0] << 8) | d[1]
         return None
+
+    def read_state(self, servo_id: int, retries: int = 2):
+        """(position, speed, load, voltage, temperature) as RAW register values, or None.
+
+        One 8-byte read from 0x38: the same single bus transaction as read_pos(), validated
+        and retried the same way, so a garbled reply can never put a bad position into the
+        obs just because the read got longer. Speed and load are the raw 16-bit words with
+        their direction bits still in them; TELEMETRY_DECODING says how to sign them, which
+        is left to whoever reads the log."""
+        for _ in range(retries + 1):
+            self._ser.reset_input_buffer()
+            self._send(servo_id, 0x02, [REG_PRESENT_POSITION, STATE_NBYTES])
+            d = _reply_data(self._ser.read(6 + STATE_NBYTES), servo_id, STATE_NBYTES)
+            if d is not None:
+                return ((d[0] << 8) | d[1], (d[2] << 8) | d[3], (d[4] << 8) | d[5], d[6], d[7])
+        return None
+
+    def check_telemetry(self, servo_ids) -> bool:
+        """Prove the 8-byte read works on every servo BEFORE torque comes on; fall back if not.
+
+        WHY. The longer read has never run on this robot. If some servo -- a clone, an SCS0009
+        arm, a firmware that caps the read length -- does not answer it, every read_state() on
+        that servo burns 3 x 50 ms of timeouts and returns None. read_all() would then take
+        ~2.5 s and return NaN positions: the ramp to home starts from its own target (a snap at
+        full speed) and the closed loop runs at ~0.4 Hz with torque on. So each servo gets one
+        read_state() here. A servo that fails it but answers the plain 2-byte read_pos() is the
+        fault this guards against: telemetry goes OFF for the whole bus, loudly, and the run
+        continues exactly as it did before telemetry existed. A servo that answers neither is
+        simply not answering, which is not a telemetry problem, and is left to the run's own
+        checks. Returns whether telemetry is still on.
+        """
+        if not self.telemetry:
+            return False
+        for sid in servo_ids:
+            sid = int(sid)
+            if self.read_state(sid) is not None or self.read_pos(sid) is None:
+                continue
+            self.telemetry = False
+            self.telemetry_fallback = {
+                "servo": sid,
+                "reason": "no valid reply to the 8-byte read from 0x38, but the 2-byte position "
+                          "read works: reading position only for this run"}
+            print(f"[warn] servo {sid} does not answer the 8-byte telemetry read (its position "
+                  f"read works). Servo telemetry is OFF for this run: load/speed/voltage/"
+                  f"temperature columns will be NaN. Pass --no-servo-telemetry to skip this check.",
+                  flush=True)
+            return False
+        return True
 
     def write_pos(self, servo_id: int, units: int, speed: int = 0):
         u = int(units) & 0xFFFF
@@ -106,10 +221,23 @@ class ServoBus:
                    drain_ack=True)
 
     def read_all(self, servo_ids) -> np.ndarray:
+        """Positions in units, NaN for a rejected read. With telemetry on, the same reads also
+        fill last_telemetry, so the log gets speed/load/voltage/temperature for no extra bus
+        transactions."""
         out = []
-        for i in servo_ids:
-            p = self.read_pos(int(i))
-            out.append(float(p) if p is not None else np.nan)
+        tel = np.full((len(TELEMETRY_FIELDS), len(servo_ids)), np.nan, dtype=np.float32)
+        for k, i in enumerate(servo_ids):
+            if self.telemetry:
+                st = self.read_state(int(i))
+                if st is None:
+                    out.append(np.nan)
+                    continue
+                out.append(float(st[0]))
+                tel[:, k] = st[1:]
+            else:
+                p = self.read_pos(int(i))
+                out.append(float(p) if p is not None else np.nan)
+        self.last_telemetry = tel
         return np.array(out, dtype=np.float32)
 
     def write_all(self, servo_ids, units, speed: int = 0):
@@ -166,6 +294,11 @@ class IMU:
         # upright, projected_gravity() must read ~[0,0,-1].
         self.axis_remap = np.eye(3, dtype=np.float32) if axis_remap is None else np.asarray(axis_remap, np.float32)
         self.gyro_bias = np.zeros(3, dtype=np.float32)
+        # The raw accelerometer (g, remapped, NOT normalized) behind the last projected_gravity()
+        # call, kept so the frame log gets it without a second I2C read. projected_gravity()
+        # normalizes the magnitude away, and the magnitude is what tells a quasi-static tilt
+        # from a jolt: |a| far from 1 g means the robot is accelerating and pg is not gravity.
+        self.last_accel_g = np.full(3, np.nan, dtype=np.float32)
 
     def connect(self):
         try:
@@ -218,6 +351,7 @@ class IMU:
         """proj_grav in sim base frame. At rest accel reads +1g UP = -proj_grav, so feed
         -normalize(accel) (handoff). Valid when quasi-static (true for standing)."""
         a = self._read_accel_g()
+        self.last_accel_g = (self.axis_remap @ a).astype(np.float32)
         n = np.linalg.norm(a)
         a = a / n if n > 1e-6 else a
         return (self.axis_remap @ (-a)).astype(np.float32)
