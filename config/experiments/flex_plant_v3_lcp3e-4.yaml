@@ -17,3 +17,5 @@ experiment:
 overrides:
   standing:
     lcp_lambda: 0.0003
+    # v3 went flat by 15M (training seeds) and tied the law held-out; stop a flat sweep run there.
+    early_stop: {mode: stop}
