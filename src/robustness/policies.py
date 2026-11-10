@@ -108,7 +108,9 @@ class NpzPolicy:
         self.prior_gain = self._p.prior_gain
 
     def act(self, obs: np.ndarray) -> np.ndarray:
-        return self._p.predict(obs)
+        # Under a privileged_critic config the env appends sim truth after the actor's obs;
+        # the bundle (like the robot) only ever reads the first obs_dim entries.
+        return self._p.predict(np.asarray(obs)[:self.obs_dim])
 
 
 class HoldPosePolicy:

@@ -95,16 +95,26 @@ def main():
     # VecNormalize obs stats (so the Pi doesn't need the pkl / SB3).
     with open(args.vecnorm, "rb") as f:
         vn = pickle.load(f)
-    arrays["obs_mean"] = np.asarray(vn.obs_rms.mean, dtype=np.float32)
-    arrays["obs_var"] = np.asarray(vn.obs_rms.var, dtype=np.float32)
+    # A privileged-critic policy (src/training/asymmetric_policy.py) was trained on
+    # [actor obs | sim truth]; only the actor ships, and it reads the first obs_dim entries --
+    # its first layer's input width. The normalizer's tail belongs to the critic.
+    full_dim = int(np.asarray(vn.obs_rms.mean).shape[0])
+    obs_dim = int(hidden[0].in_features)
+    if obs_dim != full_dim and getattr(pol, "actor_obs_dim", None) != obs_dim:
+        raise SystemExit(f"actor input {obs_dim} != normalizer {full_dim} and the policy is not "
+                         f"asymmetric: the .pkl does not belong to this model")
+    arrays["obs_mean"] = np.asarray(vn.obs_rms.mean, dtype=np.float32)[:obs_dim]
+    arrays["obs_var"] = np.asarray(vn.obs_rms.var, dtype=np.float32)[:obs_dim]
     arrays["clip_obs"] = np.array(float(getattr(vn, "clip_obs", 10.0)), dtype=np.float32)
     arrays["epsilon"] = np.array(float(getattr(vn, "epsilon", 1e-8)), dtype=np.float32)
-    obs_dim = arrays["obs_mean"].shape[0]
     act_dim = arrays["out_b"].shape[0]
+    if full_dim != obs_dim:
+        print(f"privileged critic: exporting the actor only ({obs_dim} of {full_dim} obs dims)")
 
     # ---- parity check: numpy forward vs SB3 deterministic, on normalized inputs ----
     rng = np.random.default_rng(0)
-    z = rng.standard_normal((16, obs_dim)).astype(np.float32)
+    z_full = rng.standard_normal((16, full_dim)).astype(np.float32)
+    z = z_full[:, :obs_dim]
 
     def np_forward(x):
         for i in range(len(hidden)):
@@ -115,8 +125,14 @@ def main():
     # model.predict() additionally clips to the action space; deploy_standing applies
     # that same clip downstream, so validating the pre-clip mean is the right test.
     with torch.no_grad():
-        dist = model.policy.get_distribution(torch.as_tensor(z))
+        dist = model.policy.get_distribution(torch.as_tensor(z_full))
         sb3_mean = dist.distribution.mean.cpu().numpy()
+        if full_dim != obs_dim:      # the sim truth must not reach the actor at all
+            z_other = z_full.copy()
+            z_other[:, obs_dim:] = rng.standard_normal((16, full_dim - obs_dim)).astype(np.float32) * 5
+            leak = float(np.max(np.abs(model.policy.get_distribution(
+                torch.as_tensor(z_other)).distribution.mean.cpu().numpy() - sb3_mean)))
+            assert leak == 0.0, f"privileged dims change the action by {leak:.2e} — do not deploy"
     np_act = np_forward(z)
     max_err = float(np.max(np.abs(np_act - sb3_mean)))
     print(f"parity max|numpy - sb3 mean| = {max_err:.2e}  (obs_dim={obs_dim}, act_dim={act_dim})")

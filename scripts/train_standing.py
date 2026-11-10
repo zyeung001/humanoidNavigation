@@ -51,9 +51,12 @@ from src.environments.real_turning_env import make_real_turning_env
 from src.robustness import SUITE_VERSION, ScenarioWrapper, training_scenarios
 from src.robustness.suite import default_workers, git_sha
 from src.training.experiment import RunDir, load_experiment
+from src.training.adaptive_kl_ppo import AdaptiveKLPPO
+from src.training.asymmetric_policy import AsymmetricActorCriticPolicy
 from src.training.robustness_eval import EARLY_STOP_DEFAULTS, RobustnessEvalCallback
 from src.training.run_logger import MetricsSink, TrainingLogger, start_wandb
 from src.training.schedules import lr_schedule, clip_schedule
+from src.training.transfer_callbacks import ValueFunctionWarmupCallback
 
 
 def _validation_video(run, standing: dict, sink, step: int, vv: dict):
@@ -427,6 +430,23 @@ def main():
     resume = args.model is not None
     device = standing.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
 
+    # Algorithm: SB3's PPO, or PPO whose LR follows the KL it produces (adaptive_kl_ppo.py).
+    algo = standing.get('algo', 'ppo')
+    if algo not in ('ppo', 'ppo_adaptive_kl'):
+        raise SystemExit(f"algo must be ppo or ppo_adaptive_kl, not {algo!r}")
+    algo_cls = AdaptiveKLPPO if algo == 'ppo_adaptive_kl' else PPO
+    algo_kwargs = {}
+    if algo == 'ppo_adaptive_kl':
+        ak = standing.get('adaptive_kl') or {}
+        algo_kwargs = {k: float(ak[k]) for k in ('desired_kl', 'lr_min', 'lr_max') if k in ak}
+    # Privileged critic: the env appends sim truth after the actor's obs; the actor only reads
+    # the first actor_obs_dim (asymmetric_policy.py), so export and the robot see no change.
+    policy_cls = 'MlpPolicy'
+    if standing.get('privileged_critic'):
+        policy_cls = AsymmetricActorCriticPolicy
+        policy_kwargs = {**policy_kwargs, 'actor_obs_dim': int(vec.get_attr('actor_obs_dim', [0])[0])}
+    clip_range_vf = standing.get('clip_range_vf')
+
     if resume:
         try:
             print(f"Loading model from: {args.model}")
@@ -435,8 +455,8 @@ def main():
             # a model trained on the old ctrlrange-sized space resume under
             # wide_action_space (or after a range correction in the MJCF) instead of failing
             # SB3's space check. A changed SHAPE still fails, as it should.
-            model = PPO.load(args.model, env=env, device=device,
-                             custom_objects={"action_space": env.action_space})
+            model = algo_cls.load(args.model, env=env, device=device,
+                                  custom_objects={"action_space": env.action_space})
 
             # Update schedules for continued training
             model.learning_rate = lr_fn
@@ -469,8 +489,8 @@ def main():
             sys.exit(1)
 
     if not resume:
-        model = PPO(
-            policy='MlpPolicy',
+        model = algo_cls(
+            policy=policy_cls,
             env=env,
             learning_rate=lr_fn,
             n_steps=int(standing.get('n_steps', 2048)),
@@ -485,10 +505,12 @@ def main():
             # flex_plant-1025-0011 ran approx_kl 0.2-0.8 with half the samples clipped: updates far
             # past the trust region. target_kl stops an update's epochs early once it is crossed.
             target_kl=(None if standing.get('target_kl') is None else float(standing['target_kl'])),
+            clip_range_vf=(None if clip_range_vf is None else float(clip_range_vf)),
             policy_kwargs=policy_kwargs,
             seed=seed,
             verbose=int(standing.get('verbose', 1)),
             device=device,
+            **algo_kwargs,
         )
         learn_timesteps = total_timesteps
         reset_num_timesteps = True
@@ -522,6 +544,17 @@ def main():
                        control_dt=float(vec.get_attr('_control_dt', [0])[0]),
                        log_std_bounds=log_std_bounds),
     ]
+    # Critic warm-up: the actor frozen while a fresh (privileged) critic learns the returns
+    # (rampup 0 and max_scale 1: then full-size actor updates -- a ramp would shrink the applied
+    # steps and the adaptive LR would grow to make up for it). Not re-added past the warm-up on
+    # a resume: it would freeze the actor again and reset Adam.
+    warm = standing.get('critic_warmup')
+    if warm and int(model.num_timesteps) < int(warm.get('warmup_steps', 0)):
+        callbacks.append(ValueFunctionWarmupCallback(
+            warmup_steps=int(warm.get('warmup_steps', 1_000_000)),
+            rampup_steps=int(warm.get('rampup_steps', 0)),
+            max_scale=float(warm.get('max_scale', 1.0)),
+            extra_vf_epochs=int(warm.get('extra_vf_epochs', 0)), verbose=1))
     if eval_every > 0:
         callbacks.append(RobustnessEvalCallback(
             standing, run, sink, every=eval_every,
@@ -541,7 +574,10 @@ def main():
     print(f"  Environments: {n_envs}")
     print(f"  Device: {device}")
     print(f"  VecNormalize: {'LOADED' if vecnorm_loaded else 'NEW'}")
-    print(f"  Policy: {n_params:,} parameters, obs {env.observation_space.shape[0]}")
+    print(f"  Policy: {n_params:,} parameters, obs {env.observation_space.shape[0]}"
+          + (f" (actor {policy_kwargs['actor_obs_dim']}, critic all)" if standing.get('privileged_critic') else ''))
+    print(f"  Algorithm: {algo}" + (f" (desired_kl {model.desired_kl:g}, lr {model.adaptive_lr:.2e} "
+                                    f"in [{model.lr_min:g}, {model.lr_max:g}])" if algo == 'ppo_adaptive_kl' else ''))
     unit = (standing.get('training_scenarios') or {}).get('mix_unit', 'steps')
     print(f"  Training scenarios: {mix or 'none (env as configured)'}"
           f"{f'  (weights = shares of training {unit})' if mix else ''}"

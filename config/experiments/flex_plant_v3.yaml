@@ -1,0 +1,43 @@
+# flex_plant_v2 with the update rule legged-robot RL actually uses: KL-adaptive LR + a critic that
+# sees the sim's truth. Step 1 of the robustness plan (PR feat/ppo-adaptive-kl).
+#
+# flex_plant-1025-0011 ran approx_kl 0.2-0.8 with 40-55% of samples clipped and never beat the law
+# it trained over (held-out best -1.7 +- 0.6). v2's target_kl only cuts an update's epochs short;
+# the step that crossed the line is still taken, and the LR that caused it stays. rsl_rl / Isaac
+# Lab instead set the LR from the KL of every minibatch (/1.5 above 2x 0.01, x1.5 below half),
+# take few large minibatch steps (4 per epoch, 5 epochs = 20 per update instead of v2's 36) and
+# decay neither LR nor clip. Their critic also reads privileged sim state the actor never sees.
+#
+# Changes from flex_plant_v2, and only these:
+#   algo ppo_adaptive_kl (desired_kl 0.01, LR in [1e-6, 1e-2]); target_kl off. lr_min is 10x below
+#     rsl_rl's 1e-5: our exploration std is 0.05 rad (theirs ~0.5-1), and KL grows as
+#     (d mu / sigma)^2, so the 400k smoke run sat pinned at 1e-5 with KL still 0.016
+#   batch_size 6144 = n_steps 2048 x n_envs 12 / 4;  n_epochs 5
+#   clip constant 0.2 (final_clip_range = clip_range);  clip_range_vf 0.2;  max_grad_norm 1.0
+#   privileged_critic: the critic also gets true gravity, base velocity, the applied push, the
+#     episode's kp scale / servo lag / flex scale and the gyro error (StandingEnv._privileged_state);
+#     the actor and the exported npz still read only the 228 robot dims
+#   critic_warmup: actor frozen for the first 1M steps while the new critic learns the returns
+#
+#   python scripts/train_standing.py --config config/experiments/flex_plant_v3.yaml --wandb online
+# Success (the plan's bar): median approx_kl < 0.03, clip_fraction < 0.2, and a held-out paired
+# difference vs models/real_standing_knee2_kneelaw_db.npz whose interval is entirely above 0.
+experiment:
+  name: flex_plant_v3
+  base: config/experiments/flex_plant_v2.yaml
+  description: flex_plant_v2 with KL-adaptive per-minibatch LR, big minibatches and a privileged critic.
+  hypothesis: With updates held at KL ~0.01 and a critic that knows the disturbance, PPO improves on the knee law.
+  tags: [standing, scratch, flex, ppo-fix, adaptive-kl, privileged-critic]
+overrides:
+  standing:
+    algo: ppo_adaptive_kl
+    adaptive_kl: {desired_kl: 0.01, lr_min: 0.000001, lr_max: 0.01}
+    target_kl: null
+    batch_size: 6144
+    n_epochs: 5
+    clip_range: 0.2
+    final_clip_range: 0.2
+    clip_range_vf: 0.2
+    max_grad_norm: 1.0
+    privileged_critic: true
+    critic_warmup: {warmup_steps: 1000000, rampup_steps: 0, max_scale: 1.0, extra_vf_epochs: 0}
