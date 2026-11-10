@@ -27,7 +27,7 @@ import numpy as np
 PROJ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJ))
 
-from src.robustness.suite import SuiteResult  # noqa: E402
+from src.robustness.suite import SuiteResult, paired  # noqa: E402,F401  (paired: tests import it here)
 
 EVALS = PROJ / "models" / "standing" / "evals"
 
@@ -43,30 +43,6 @@ def collect(paths):
         elif p.suffix == ".json":
             out.append(p)
     return out
-
-
-def paired(a: SuiteResult, b: SuiteResult):
-    """Mean and SE of a-b in % upright, and episodes won/lost.
-
-    The SE is CLUSTERED by episode index: episode i of every scenario shares its seed and its
-    pushes, so the 19 scenario differences at one index are not 19 independent observations.
-    Pooling them as if they were (until 10/9) made the SE ~1.5x too small and turned a -2.3
-    with a 95% interval of [-6.5, +0.8] into a "real" drop. won/lost is descriptive only.
-    """
-    if (a.seed, a.episodes_per_scenario, a.seconds) != (b.seed, b.episodes_per_scenario, b.seconds):
-        return None
-    bn = b.by_name()
-    rows = []
-    for s in a.scenarios:
-        o = bn.get(s.name)
-        if o is not None:
-            rows.append([100.0 * (x.upright_frac - y.upright_frac) for x, y in zip(s.episodes, o.episodes)])
-    if not rows:
-        return None
-    d = np.array(rows)                      # scenarios x episode index
-    per_ep = d.mean(axis=0)
-    se = float(per_ep.std(ddof=1) / np.sqrt(len(per_ep))) if len(per_ep) > 1 else 0.0
-    return float(d.mean()), se, int((d > 0).sum()), int((d < 0).sum())
 
 
 def scenario_delta(sa, sb):
