@@ -6,7 +6,7 @@
 |------|------|
 | `experiment.py` | `load_experiment(path)`: a plain config, or an experiment file = `experiment: {base, name, hypothesis, resume}` + `overrides:`. Chains (an experiment's base may be an experiment). `changes_flat()` is what the run changed. `RunDir`: `runs/<name>/{config.yaml, checkpoints/, best/, final/, metrics.jsonl, evals.jsonl}` |
 | `run_logger.py` | `MetricsSink` (one dict -> run JSONL + W&B; `log_video()` uploads a video FILE, no moviepy), `start_wandb()`, `TrainingLogger` callback (`train/` `reward/` `ppo/` `health/` `perf/`) and the console line. Module docstring = how to read the dashboard |
-| `robustness_eval.py` | `RobustnessEvalCallback`: every N steps (and at start) checkpoint -> score on `src/robustness` SUITE -> `eval/*`, copy best to `runs/<name>/best/`, optional adaptive training mix |
+| `robustness_eval.py` | `RobustnessEvalCallback`: every N steps (and at start) checkpoint -> score on `src/robustness` SUITE -> `eval/*`, copy best to `runs/<name>/best/`, optional adaptive training mix, early stop when best has not beaten the run's START eval by `k_se` paired SE after `after` steps (`early_stop`, default warn-only; start never pruned, `start_eval.json`) |
 
 - `eval/score` is the only number comparable across runs with different rewards/obs/nets.
 - Experiments never read or write the base config's `final_model_path`/`vecnormalize_path`
