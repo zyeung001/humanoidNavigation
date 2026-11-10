@@ -6,6 +6,8 @@
 |------|------|
 | `experiment.py` | `load_experiment(path)`: a plain config, or an experiment file = `experiment: {base, name, hypothesis, resume}` + `overrides:`. Chains (an experiment's base may be an experiment). `changes_flat()` is what the run changed. `RunDir`: `runs/<name>/{config.yaml, checkpoints/, best/, final/, metrics.jsonl, evals.jsonl}` |
 | `run_logger.py` | `MetricsSink` (one dict -> run JSONL + W&B; `log_video()` uploads a video FILE, no moviepy), `start_wandb()`, `TrainingLogger` callback (`train/` `reward/` `ppo/` `health/` `perf/`) and the console line. Module docstring = how to read the dashboard |
+| `adaptive_kl_ppo.py` | `AdaptiveKLPPO(PPO)`: rsl_rl's adaptive LR -- every minibatch's KL (k3 estimate, before its step) sets the LR it steps with (/1.5 above 2x desired_kl, x1.5 below half, clamped); no LR/clip decay; logs train/approx_kl over all minibatches, approx_kl_max, learning_rate. `algo: ppo_adaptive_kl` |
+| `asymmetric_policy.py` | `AsymmetricActorCriticPolicy(actor_obs_dim=...)`: actor MLP built on and fed only `obs[..., :actor_obs_dim]`, critic gets the full obs incl. StandingEnv's `privileged_critic` block. Export takes the actor + the first actor_obs_dim normalizer entries |
 | `robustness_eval.py` | `RobustnessEvalCallback`: every N steps (and at start) checkpoint -> score on `src/robustness` SUITE -> `eval/*`, copy best to `runs/<name>/best/`, optional adaptive training mix, early stop when best has not beaten the run's START eval by `k_se` paired SE after `after` steps (`early_stop`, default warn-only; start never pruned, `start_eval.json`) |
 
 - `eval/score` is the only number comparable across runs with different rewards/obs/nets.
