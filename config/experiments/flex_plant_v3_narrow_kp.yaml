@@ -1,0 +1,20 @@
+# flex_plant_v3 with the servo gain randomized narrowly: kp x0.9-1.1 instead of x0.7-1.3. Step 3
+# of the robustness plan (research finding 3), one change per run: this is the "narrow kp" run.
+#
+# Small-servo robots (ToddlerBot, Upkie) randomize kp only ~+-10% once the servo has been measured.
+# Ours randomizes +-30%. The hypothesis: so wide a spread pushes PPO toward a posture that survives
+# every gain, not a balancer -- "a posture, not a balancer" is what every earlier PPO policy was.
+# Our servo gains are NOT measured (that is hardware research step B, out of scope), so this is a
+# test of the hypothesis, not a calibrated range: a narrow-kp win in sim must be read against how
+# well the suite's slow_plant / plant scenarios (which perturb the plant) still score.
+#
+#   python scripts/train_standing.py --config config/experiments/flex_plant_v3_narrow_kp.yaml --wandb online
+experiment:
+  name: flex_plant_v3_narrow_kp
+  base: config/experiments/flex_plant_v3.yaml
+  description: flex_plant_v3 with servo kp randomized x0.9-1.1 instead of x0.7-1.3.
+  hypothesis: Narrower gain randomization lets PPO learn feedback instead of a posture that survives every gain.
+  tags: [standing, scratch, flex, adaptive-kl, privileged-critic, narrow-dr]
+overrides:
+  standing:
+    actuator_rand_range: [0.9, 1.1]
