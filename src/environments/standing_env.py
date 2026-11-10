@@ -107,6 +107,10 @@ class StandingEnv(gym.Wrapper):
         self.actuator_rand = bool(self.cfg.get('actuator_rand', False))
         self.actuator_rand_range = self.cfg.get('actuator_rand_range', [0.8, 1.2])
         self._nominal_gainprm = None
+        self._kp_scale = None          # this episode's per-actuator kp/kv scale (privileged)
+        self._lag_delay_ms = None      # this episode's per-joint dead time / time constant
+        self._lag_tau_ms = None
+        self._flex_scale = (1.0, 1.0)  # this episode's flex stiffness / damping scale
         self._nominal_biasprm = None
         # Servo-play randomization (models/humanoid_real_v2_soleplate_flex.xml): scale the passive
         # foot hinges' stiffness and damping per episode. The play was measured only as a share of
@@ -417,6 +421,18 @@ class StandingEnv(gym.Wrapper):
             shape=(self.frozen_obs_dim,), 
             dtype=np.float32
         )
+        # PRIVILEGED CRITIC: the true sim state (_privileged_state) appended AFTER the actor's
+        # observation, for a value function that may know what no robot sensor does. The actor
+        # reads only the first actor_obs_dim entries (src/training/asymmetric_policy.py), so
+        # what is exported and deployed is unchanged. Off = byte-identical observation.
+        self.actor_obs_dim = self.frozen_obs_dim
+        self.privileged_critic = bool(self.cfg.get('privileged_critic', False))
+        self.privileged_dim = 0
+        if self.privileged_critic:
+            na = int(self.env.action_space.shape[0])
+            self.privileged_dim = 3 + 6 + 3 + 3 * na + 2 + 3
+            self.observation_space = Box(low=-np.inf, high=np.inf, dtype=np.float32,
+                                         shape=(self.frozen_obs_dim + self.privileged_dim,))
         
         print("Observation space configuration:")
         if self.proprioceptive:
@@ -519,6 +535,7 @@ class StandingEnv(gym.Wrapper):
                 cs = np.random.uniform(*self.flex_damping_rand_range) if self.flex_damping_rand_range else 1.0
                 m.jnt_stiffness[js] = k0 * ks          # one draw per episode: both legs alike
                 m.dof_damping[m.jnt_dofadr[js]] = c0 * cs
+                self._flex_scale = (float(ks), float(cs))
 
         # Actuator-gain randomization: scale each position servo's kp/kv per episode, relative
         # to nominal (captured once). gainprm[:,0]=kp, biasprm[:,1]=-kp, biasprm[:,2]=-kv.
@@ -532,6 +549,7 @@ class StandingEnv(gym.Wrapper):
                 size=m.actuator_gainprm.shape[0]
             )
             m.actuator_gainprm[:, 0] = self._nominal_gainprm[:, 0] * scale
+            self._kp_scale = scale.astype(np.float32)
             m.actuator_biasprm[:, 1] = self._nominal_biasprm[:, 1] * scale
             m.actuator_biasprm[:, 2] = self._nominal_biasprm[:, 2] * scale
 
@@ -553,6 +571,7 @@ class StandingEnv(gym.Wrapper):
                 tau_ms = np.full(n, np.random.uniform(*self.actuator_tau_ms[:2]))
             delay_ms = delay_ms * self.actuator_lag_scale
             tau_ms = tau_ms * self.actuator_lag_scale
+            self._lag_delay_ms, self._lag_tau_ms = delay_ms.astype(np.float32), tau_ms.astype(np.float32)
             self._lag_delay_steps = np.maximum(0, np.round(delay_ms / 1000.0 / dt)).astype(int)
             self._lag_alpha = (1.0 - np.exp(-dt / np.maximum(tau_ms / 1000.0, 1e-4))).astype(np.float32)
             depth = int(self._lag_delay_steps.max()) + 1
@@ -1090,7 +1109,32 @@ class StandingEnv(gym.Wrapper):
                 pad = np.zeros((self.frozen_obs_dim - current_dim,), dtype=np.float32)
                 feat_vec = np.concatenate([feat_vec, pad], axis=0)
 
+        if self.privileged_critic:
+            feat_vec = np.concatenate([feat_vec, self._privileged_state()])
         return feat_vec
+
+    def _privileged_state(self) -> np.ndarray:
+        """The sim truth the critic gets after the actor's observation, each part ~unit scale:
+        clean projected gravity (3; no noise, bias, filter or crooked IMU), base velocity (6;
+        free-joint qvel, linear world / angular body), the external force being applied this
+        step (3; sum of xfrc_applied, N/10 -- the scenario pushes), per-actuator kp scale
+        (n; 1 = nominal), per-joint servo dead time (n; ms/50) and time constant (n; ms/100),
+        flex stiffness and damping scale (2), and the total gyro error the actor is reading
+        through (3; noise bias + scenario offset, rad/s)."""
+        d = self.env.unwrapped.data
+        na = int(self.env.action_space.shape[0])
+        grav = self._projected_gravity(np.asarray(d.qpos[3:7], dtype=np.float64))
+        force = np.asarray(d.xfrc_applied[:, 0:3]).sum(axis=0) * 0.1
+        kp = self._kp_scale if self._kp_scale is not None else np.ones(na, np.float32)
+        delay = (self._lag_delay_ms / 50.0) if self._lag_delay_ms is not None else np.zeros(na, np.float32)
+        tau = (self._lag_tau_ms / 100.0) if self._lag_tau_ms is not None else np.zeros(na, np.float32)
+        gyro_err = np.zeros(3, np.float32)
+        if self.obs_noise and getattr(self, '_bias_angvel', None) is not None:
+            gyro_err = gyro_err + self._bias_angvel
+        if self._sensor_gyro_bias is not None:
+            gyro_err = gyro_err + self._sensor_gyro_bias
+        return np.concatenate([grav, np.asarray(d.qvel[0:6]), force, kp, delay, tau,
+                               np.asarray(self._flex_scale), gyro_err]).astype(np.float32)
 
     # ======== Proprioceptive (deployable) observation ========
 
