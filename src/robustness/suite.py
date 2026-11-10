@@ -72,8 +72,10 @@ class EpisodeResult:
     excursion2: float       # mean squared distance of the raw action outside the clamp box
     recover_s: List[float] = field(default_factory=list)   # per disturbance; nan = never settled
     dt: float = 0.025       # control period, s
-    act_rate: float = float("nan")   # mean |command change| / dt over joints and steps, rad/s
-    hf_frac: float = float("nan")    # share of the command's power above HF_HZ (FFT, mean removed)
+    # None = not measured (results recorded before these existed); not nan, which would make
+    # two identical results compare unequal
+    act_rate: Optional[float] = None  # mean |command change| / dt over joints and steps, rad/s
+    hf_frac: Optional[float] = None   # share of the command's power above HF_HZ (FFT, mean removed)
 
     @property
     def upright_frac(self) -> float:
@@ -113,7 +115,7 @@ class ScenarioResult:
         return float(np.median(r)) if r else float("nan")
 
     def mean(self, attr: str) -> float:
-        v = [getattr(e, attr) for e in self.episodes if np.isfinite(getattr(e, attr))]
+        v = [x for x in (getattr(e, attr) for e in self.episodes) if x is not None and np.isfinite(x)]
         return float(np.mean(v)) if v else float("nan")
 
 

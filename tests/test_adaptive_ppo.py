@@ -182,4 +182,5 @@ def test_an_eval_saved_before_the_smoothness_metrics_still_loads(tmp_path):
                 "jitter": 0.001, "excursion2": 0.0, "recover_s": [], "dt": 0.025}]}]}
     (tmp_path / "old.json").write_text(json.dumps(old))
     r = SuiteResult.load(tmp_path / "old.json")
-    assert r.score == 100.0 and np.isnan(r.scenarios[0].episodes[0].act_rate)
+    assert r.score == 100.0 and r.scenarios[0].episodes[0].act_rate is None
+    assert np.isnan(r.metrics()["eval/quality/act_rate"])                # unmeasured reads nan
