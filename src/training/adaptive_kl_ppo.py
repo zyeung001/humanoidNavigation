@@ -20,6 +20,13 @@ KL estimator: SB3's (r - 1) - log r on the minibatch's stored log-probs (Schulma
 rsl_rl's closed-form Gaussian KL: SB3's buffer does not keep the rollout's mu/sigma, and k3 is
 an unbiased estimate of the same KL. train/approx_kl is logged over ALL minibatches of the
 update (SB3 logs only the last epoch's), next to train/learning_rate.
+
+SMOOTHNESS (lcp_lambda > 0; LCP, "Lipschitz-constrained policies"). Adds lcp_lambda * the mean
+squared Frobenius norm of d mu / d obs_norm to the loss: a policy whose ACTION MEAN changes little
+when its normalized input changes little cannot turn sensor noise into twitch. It is mu that is
+penalized, not log pi as in the paper: with our 0.05 rad std, the log-pi gradient is 2-500x
+larger and would swamp the term. Estimated with one Hutchinson probe per sample
+(E_v ||d(mu . v)/d obs||^2 = ||J||_F^2 for v ~ N(0, I)): one extra backward, not 17.
 """
 
 from __future__ import annotations
@@ -32,15 +39,24 @@ from stable_baselines3.common.utils import explained_variance
 from torch.nn import functional as F
 
 
+def lcp_penalty(policy, obs: th.Tensor) -> th.Tensor:
+    """Mean over the batch of ||d mu / d obs||_F^2 (one Hutchinson probe), differentiable."""
+    obs = obs.detach().requires_grad_(True)
+    mu = policy.get_distribution(obs).distribution.mean
+    (grad,) = th.autograd.grad((mu * th.randn_like(mu)).sum(), obs, create_graph=True)
+    return grad.pow(2).sum(dim=-1).mean()
+
+
 class AdaptiveKLPPO(PPO):
 
     def __init__(self, *args, desired_kl: float = 0.01, lr_min: float = 1e-5, lr_max: float = 1e-2,
-                 **kwargs):
+                 lcp_lambda: float = 0.0, **kwargs):
         kwargs.setdefault("target_kl", None)
         super().__init__(*args, **kwargs)
         if self.target_kl is not None:
             raise ValueError("AdaptiveKLPPO sets the LR from the KL; target_kl must be None")
         self.desired_kl, self.lr_min, self.lr_max = float(desired_kl), float(lr_min), float(lr_max)
+        self.lcp_lambda = float(lcp_lambda)
         # The starting LR. PPO.load() builds the object without a model first, then restores the
         # saved adaptive_lr over this, so a resumed run continues from where its LR had got to.
         lr0 = self.learning_rate(1.0) if callable(self.learning_rate) else float(self.learning_rate)
@@ -66,6 +82,7 @@ class AdaptiveKLPPO(PPO):
             clip_range_vf = self.clip_range_vf(self._current_progress_remaining)  # type: ignore[operator]
 
         entropy_losses, pg_losses, value_losses, clip_fractions, kls, lrs = [], [], [], [], [], []
+        lcps = []
         for _epoch in range(self.n_epochs):
             for rollout_data in self.rollout_buffer.get(self.batch_size):
                 actions = rollout_data.actions
@@ -104,6 +121,10 @@ class AdaptiveKLPPO(PPO):
                 entropy_losses.append(entropy_loss.item())
 
                 loss = policy_loss + self.ent_coef * entropy_loss + self.vf_coef * value_loss
+                if self.lcp_lambda > 0:
+                    lcp = lcp_penalty(self.policy, rollout_data.observations)
+                    lcps.append(lcp.item())
+                    loss = loss + self.lcp_lambda * lcp
                 self.policy.optimizer.zero_grad()
                 loss.backward()
                 th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
@@ -122,6 +143,8 @@ class AdaptiveKLPPO(PPO):
         self.logger.record("train/explained_variance", explained_var)
         self.logger.record("train/learning_rate", self.adaptive_lr)
         self.logger.record("train/learning_rate_mean", float(np.mean(lrs)))
+        if lcps:
+            self.logger.record("train/lcp_penalty", float(np.mean(lcps)))
         if hasattr(self.policy, "log_std"):
             self.logger.record("train/std", th.exp(self.policy.log_std).mean().item())
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")

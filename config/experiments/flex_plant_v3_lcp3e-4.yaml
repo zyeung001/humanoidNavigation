@@ -1,0 +1,19 @@
+# flex_plant_v3 + the LCP smoothness penalty at lambda 3e-4. Step 2 of the robustness plan
+# (PR feat/lcp-smoothness); one of three runs sweeping lambda over {3e-4, 1e-3, 3e-3}.
+#
+# loss += lcp_lambda * mean ||d mu / d obs_norm||^2 (src/training/adaptive_kl_ppo.py): the action
+# MEAN may change only a little when the normalized observation does, so sensor noise cannot
+# become twitch. On 4 hardware humanoids it cut jitter (LCP paper). The risk is the opposite
+# failure: the same smoothness can dull the gyro feedback that recovers from a push -- read the
+# push family and quality/push_act_rate, not only the quiet-stand jitter.
+#
+#   python scripts/train_standing.py --config config/experiments/flex_plant_v3_lcp3e-4.yaml --wandb online
+experiment:
+  name: flex_plant_v3_lcp3e-4
+  base: config/experiments/flex_plant_v3.yaml
+  description: flex_plant_v3 with the LCP action-mean smoothness penalty, lambda 3e-4.
+  hypothesis: A smoother actor keeps v3's robustness while twitching less on noisy sensors.
+  tags: [standing, scratch, flex, adaptive-kl, privileged-critic, lcp]
+overrides:
+  standing:
+    lcp_lambda: 0.0003
