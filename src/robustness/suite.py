@@ -72,6 +72,8 @@ class EpisodeResult:
     excursion2: float       # mean squared distance of the raw action outside the clamp box
     recover_s: List[float] = field(default_factory=list)   # per disturbance; nan = never settled
     dt: float = 0.025       # control period, s
+    act_rate: float = float("nan")   # mean |command change| / dt over joints and steps, rad/s
+    hf_frac: float = float("nan")    # share of the command's power above HF_HZ (FFT, mean removed)
 
     @property
     def upright_frac(self) -> float:
@@ -181,6 +183,12 @@ class SuiteResult:
             m[f"{prefix}quality/sway_deg"] = quiet.mean("sway_deg")
             m[f"{prefix}quality/jitter"] = quiet.mean("jitter")
             m[f"{prefix}quality/excursion2"] = quiet.mean("excursion2")
+            m[f"{prefix}quality/act_rate"] = quiet.mean("act_rate")
+            m[f"{prefix}quality/hf_frac"] = quiet.mean("hf_frac")
+        push = [s for s in self.scenarios if s.family == "push"]
+        if push:      # smoothness can also dull the feedback that recovers from a push
+            m[f"{prefix}quality/push_act_rate"] = float(np.nanmean([s.mean("act_rate") for s in push]))
+            m[f"{prefix}quality/push_hf_frac"] = float(np.nanmean([s.mean("hf_frac") for s in push]))
         rec = [s.recover_s for s in self.scenarios if s.family in ("push", "kick")]
         rec = [r for r in rec if np.isfinite(r)]
         if rec:
@@ -253,6 +261,25 @@ def _lean_deg(qpos) -> float:
     return float(np.degrees(np.arccos(np.clip(1.0 - 2.0 * (x * x + y * y), -1.0, 1.0))))
 
 
+HF_HZ = 3.0     # above the body's own sway (~0.3-2 Hz on the flex plant): twitch, not balance
+
+
+def _smoothness(acts: List[np.ndarray], dt: float):
+    """(act_rate rad/s, hf_frac) of the command sequence, or (nan, nan) when too short.
+
+    act_rate is how fast the command moves on average. hf_frac is the share of its power (per
+    joint, mean removed, summed over joints) above HF_HZ: a balance correction lives below it,
+    a policy that turns sensor noise into motion puts its power above it."""
+    if len(acts) < 32:
+        return float("nan"), float("nan")
+    a = np.asarray(acts, dtype=np.float64)
+    rate = float(np.mean(np.abs(np.diff(a, axis=0))) / dt)
+    p = np.abs(np.fft.rfft(a - a.mean(axis=0), axis=0)) ** 2
+    f = np.fft.rfftfreq(len(a), d=dt)
+    total = float(p[1:].sum())
+    return rate, (float(p[f > HF_HZ].sum()) / total if total > 0 else 0.0)
+
+
 def _recoveries(rates: np.ndarray, starts: List[int], end: int, dt: float) -> List[float]:
     out = []
     for i, s in enumerate(starts):
@@ -287,7 +314,7 @@ def run_episode(policy, wenv: ScenarioWrapper, scenario: Scenario, seed: int, st
         b, lo_c, hi_c = base.episode_baseline, base.env.action_space.low, base.env.action_space.high
         box = (np.maximum(b - clamp, lo_c), np.minimum(b + clamp, hi_c))
     leans, rates = [], np.zeros(steps + 1)
-    exc, prev, d_act = [], None, []
+    exc, prev, d_act, acts = [], None, [], []
     fell, t = False, 0
     for t in range(steps):
         a = np.asarray(policy.act(obs), dtype=np.float32)
@@ -297,6 +324,7 @@ def run_episode(policy, wenv: ScenarioWrapper, scenario: Scenario, seed: int, st
         if prev is not None:
             d_act.append(float(np.mean(np.square(a - prev))))
         prev = a
+        acts.append(a)
         if box is not None:
             e = np.maximum(box[0] - a, 0.0) + np.maximum(a - box[1], 0.0)
             exc.append(float(np.sum(e * e)))
@@ -308,6 +336,7 @@ def run_episode(policy, wenv: ScenarioWrapper, scenario: Scenario, seed: int, st
             break
     n = t + 1
     upright = leans[:-1] if fell else leans
+    rate, hf = _smoothness(acts[:-1] if fell else acts, base._control_dt)
     return EpisodeResult(
         seed=seed, steps=n if not fell else t, horizon=steps, fell=fell,
         lean_deg=float(np.median(upright)) if upright else float("nan"),
@@ -315,7 +344,7 @@ def run_episode(policy, wenv: ScenarioWrapper, scenario: Scenario, seed: int, st
         jitter=float(np.sqrt(np.mean(d_act))) if d_act else float("nan"),
         excursion2=float(np.mean(exc)) if exc else float("nan"),
         recover_s=_recoveries(rates, wenv.disturbance_steps, n, base._control_dt),
-        dt=base._control_dt,
+        dt=base._control_dt, act_rate=rate, hf_frac=hf,
     )
 
 
@@ -484,4 +513,10 @@ def format_result(r: SuiteResult, previous: Optional[SuiteResult] = None) -> str
     if q is not None:
         lines.append(f"  quiet stand: lean {q.mean('lean_deg'):.2f} deg, sway {q.mean('sway_deg'):.2f} deg, "
                      f"jitter {q.mean('jitter'):.4f} rad/step, clamp excursion^2 {q.mean('excursion2'):.4f}")
+    mm = r.metrics("")
+    if np.isfinite(mm.get("quality/act_rate", float("nan"))):
+        lines.append(f"  smoothness: quiet {mm['quality/act_rate']:.3f} rad/s, {100 * mm['quality/hf_frac']:.0f}% "
+                     f"of power above {HF_HZ:g} Hz"
+                     + (f"; under pushes {mm['quality/push_act_rate']:.3f} rad/s, "
+                        f"{100 * mm['quality/push_hf_frac']:.0f}%" if "quality/push_act_rate" in mm else ""))
     return "\n".join(lines)
