@@ -51,7 +51,7 @@ from src.environments.real_turning_env import make_real_turning_env
 from src.robustness import SUITE_VERSION, ScenarioWrapper, training_scenarios
 from src.robustness.suite import default_workers, git_sha
 from src.training.experiment import RunDir, load_experiment
-from src.training.robustness_eval import RobustnessEvalCallback
+from src.training.robustness_eval import EARLY_STOP_DEFAULTS, RobustnessEvalCallback
 from src.training.run_logger import MetricsSink, TrainingLogger, start_wandb
 from src.training.schedules import lr_schedule, clip_schedule
 
@@ -270,6 +270,9 @@ def main():
                              'training: checks an experiment file in a minute, not an hour')
     parser.add_argument('--no-video', action='store_true',
                         help='skip the end-of-run validation video (standing.validation_video)')
+    parser.add_argument('--no-early-stop', action='store_true',
+                        help='never end training early on a plateau (standing.early_stop); '
+                             'use it to resume a run that early stop ended')
     parser.add_argument('--resume-run', type=str, default=None,
                         help='continue a run that stopped (crash, Ctrl+C, power) in its own '
                              'directory and W&B run, from its furthest-trained saved weights')
@@ -505,6 +508,10 @@ def main():
                                    0 if standing.get('env_kind') == 'real_turning' else 5_000_000)))
     adaptive = (standing.get('training_scenarios') or {}).get('adaptive')
     floor = (None if not adaptive else 0.25 if adaptive is True else float(adaptive))
+    # Stop on a plateau: see src/training/robustness_eval.py. 'warn' (the default) only reports.
+    early_stop = {**EARLY_STOP_DEFAULTS, **(standing.get('early_stop') or {})}
+    if args.no_early_stop:
+        early_stop['mode'] = 'off'
 
     callbacks = [
         EntropyScheduleCallback(initial_ent, final_ent, verbose=1),
@@ -522,7 +529,7 @@ def main():
             workers=int(standing.get('robustness_eval_workers', min(11, default_workers()))),
             keep=int(standing.get('robustness_eval_keep', 5)),
             at_start=bool(standing.get('robustness_eval_at_start', True)),
-            mix=mix, adaptive_floor=floor))
+            mix=mix, adaptive_floor=floor, early_stop=early_stop))
 
     # Train
     print(f"\n{'='*60}")
@@ -540,6 +547,10 @@ def main():
           f"{f'  (weights = shares of training {unit})' if mix else ''}"
           f"{'  [adaptive]' if floor is not None else ''}")
     print(f"  Robustness eval: {'every ' + f'{eval_every:,}' + ' steps' if eval_every else 'off'}")
+    print(f"  Early stop: {'off' if early_stop['mode'] == 'off' or not eval_every else early_stop['mode']}"
+          + ('' if early_stop['mode'] == 'off' or not eval_every else
+             f" (best must beat the start by {early_stop['k_se']:g} paired SE after "
+             f"{int(early_stop['after']):,} steps)"))
     print(f"  W&B: {'off' if wb is None else wb.url or wb.settings.mode}")
     print(f"{'='*60}\n")
 
@@ -578,6 +589,10 @@ def main():
         save_where_it_got_to('crashed', 'Training crashed')
         raise
 
+    stopped = next((c.stopped_early for c in callbacks
+                    if isinstance(c, RobustnessEvalCallback) and c.stopped_early), None)
+    if stopped:
+        print(f"\nStopped early at {stopped['step']:,} steps (plateau; {run.root / 'early_stop.json'})")
     # Save final model + vecnorm: the run's own copy, then the legacy paths
     run.final.mkdir(exist_ok=True)
     model.save(str(run.final / 'model.zip'))

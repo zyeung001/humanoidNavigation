@@ -21,8 +21,15 @@ python scripts/train_standing.py --config config/real_humanoid_stand.yaml \
 ```
 
 Key args: `--timesteps` (cumulative), `--model`/`--vecnorm`, `--wandb online|offline|disabled`,
-`--seed`, `--eval-every N` (0 = off), `--dry-run`, `--run-name`, `--no-video`. Ctrl+C saves to
-`runs/<name>/interrupted/` (never over the legacy final path).
+`--seed`, `--eval-every N` (0 = off), `--dry-run`, `--run-name`, `--no-video`, `--no-early-stop`.
+Ctrl+C saves to `runs/<name>/interrupted/` (never over the legacy final path).
+
+**Early stop** (`standing.early_stop: {mode: warn|stop|off, after: 15000000, k_se: 2.0}`, default
+`warn`): from `after` steps past the run's first eval, each eval checks that `best/` beats that
+START eval by `k_se` paired SE. `warn` prints `EARLY STOP (warn only)` and logs `early_stop/fired`;
+`stop` ends training normally (final/ written, `runs/<name>/early_stop.json`); resume such a run
+with `--resume-run runs/<name> --no-early-stop`. The start checkpoint is never pruned
+(`runs/<name>/start_eval.json` points at it). W&B: `early_stop/gain_vs_start(_se)` every eval.
 
 When a run finishes normally it films ONE validation video of its best checkpoint
 (`runs/<name>/validation.mp4`, W&B `validation/video`; see `src/robustness/CLAUDE.md`). Any

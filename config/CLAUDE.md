@@ -30,6 +30,9 @@ as `changes.*` in W&B, so the runs table shows what each run changed.
 - `training_scenarios: {mix: {name: weight}, adaptive: <floor>|false, define: {...}}` mixes
   scenarios from `src/robustness/scenarios.py` TRAINING into training episodes.
 - One variable per file. obs_history / net_arch changes cannot resume old weights.
+- `early_stop: {mode: warn|stop|off, after, k_se}` (defaults `warn`, 15M, 2.0): end a run whose
+  best checkpoint has not beaten its own start eval by k_se paired SE after `after` steps.
+  `warn` only reports; `--no-early-stop` turns it off for one run (e.g. to resume a stopped one).
 - `validation_video: {enabled, width, height, fps, checkpoint}` (code defaults: on, except for
   `env_kind: real_turning`; 960x540; 20 fps; `best`, or `final`): the end-of-run video. No
   YAML needs it; `--no-video` turns it off for one run.
