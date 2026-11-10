@@ -302,6 +302,96 @@ def test_resuming_finds_the_furthest_trained_weights_and_keeps_the_best(tmp_path
     assert cb._last_step == 205_000_000
 
 
+# ---------------------------------------------------------------- early stop on a plateau
+
+PLATEAU = {0: [0.5, 0.4, 0.6, 0.5], 5_000_000: [0.55, 0.4, 0.6, 0.45],
+           10_000_000: [0.5, 0.45, 0.55, 0.5], 15_000_000: [0.5, 0.4, 0.6, 0.55]}
+LEARNS = {0: [0.5, 0.4, 0.6, 0.5], 5_000_000: [0.7, 0.6, 0.8, 0.7],
+          10_000_000: [0.9, 1.0, 0.95, 1.0], 15_000_000: [0.9, 0.95, 1.0, 1.0]}
+
+
+def _scripted_run(tmp_path, monkeypatch, scores, run=None, **kw):
+    """An eval callback whose suite returns `scores[step]` (one scenario), steps 0..15M."""
+    from src.robustness import suite
+    from src.training.experiment import RunDir
+    from src.training.robustness_eval import RobustnessEvalCallback
+    run = run or RunDir.create("r", base=tmp_path)
+
+    def evaluate(pol, cfg, step=None, **k):
+        r = _result(f"r@{step}", {"push_5N": scores[step]})
+        r.step = step
+        return r
+    monkeypatch.setattr(suite, "evaluate", evaluate)
+    monkeypatch.setattr(suite, "format_result", lambda r, previous=None: "")
+    monkeypatch.setattr("src.robustness.policies.SB3Policy.load", lambda *a, **k: None)
+    cb = RobustnessEvalCallback({}, run, MetricsSink(run.metrics), every=5_000_000, keep=1, **kw)
+    cb.model = _fake_trainer()
+    return run, cb
+
+
+def _train(cb, steps):
+    """Drive the callback as learn() would; returns the step at which it asked to stop."""
+    cb.num_timesteps = steps[0]
+    cb._on_training_start()
+    for s in steps[1:]:
+        cb.num_timesteps = s
+        if not cb._on_step():
+            return s
+    return None
+
+
+def test_early_stop_ends_a_plateaued_run_and_never_prunes_its_start(tmp_path, monkeypatch):
+    run, cb = _scripted_run(tmp_path, monkeypatch, PLATEAU,
+                            early_stop={"mode": "stop", "after": 10_000_000})
+    assert _train(cb, [0, 5_000_000, 10_000_000, 15_000_000]) == 10_000_000
+    start = run.checkpoint(0)
+    assert (start / "eval.json").exists() and (start / "model.zip").exists()   # keep=1, yet kept
+    assert json.loads((run.root / "start_eval.json").read_text())["checkpoint"] == start.name
+    stopped = json.loads((run.root / "early_stop.json").read_text())
+    assert stopped["step"] == 10_000_000 and stopped["start_step"] == 0
+    assert abs(stopped["gain"]) < 2 * stopped["se"] + 1e-9
+    logged = [json.loads(line) for line in run.metrics.read_text().splitlines()]
+    assert any(m.get("early_stop/fired") == 1.0 for m in logged)
+
+
+def test_early_stop_warn_only_reports_and_keeps_training(tmp_path, monkeypatch, capsys):
+    run, cb = _scripted_run(tmp_path, monkeypatch, PLATEAU,
+                            early_stop={"mode": "warn", "after": 10_000_000})
+    assert _train(cb, [0, 5_000_000, 10_000_000, 15_000_000]) is None
+    assert cb.stopped_early is None and not (run.root / "early_stop.json").exists()
+    assert "EARLY STOP (warn only)" in capsys.readouterr().out
+
+
+def test_early_stop_waits_for_after_and_spares_a_run_that_learns(tmp_path, monkeypatch):
+    _, cb = _scripted_run(tmp_path / "a", monkeypatch, PLATEAU,
+                          early_stop={"mode": "stop", "after": 15_000_000})
+    assert _train(cb, [0, 5_000_000, 10_000_000]) is None          # plateau, but not yet `after`
+    _, cb = _scripted_run(tmp_path / "b", monkeypatch, LEARNS,
+                          early_stop={"mode": "stop", "after": 10_000_000})
+    assert _train(cb, [0, 5_000_000, 10_000_000, 15_000_000]) is None
+    _, cb = _scripted_run(tmp_path / "c", monkeypatch, PLATEAU, early_stop={"mode": "off", "after": 0})
+    assert _train(cb, [0, 5_000_000, 10_000_000, 15_000_000]) is None
+
+
+def test_a_resumed_run_finds_its_start_again(tmp_path, monkeypatch):
+    run, cb = _scripted_run(tmp_path, monkeypatch, PLATEAU,
+                            early_stop={"mode": "stop", "after": 10_000_000})
+    _train(cb, [0, 5_000_000])
+    _, again = _scripted_run(tmp_path, monkeypatch, PLATEAU, run=run,
+                             early_stop={"mode": "stop", "after": 10_000_000})
+    assert again.start is not None and again.start.step == 0
+    assert run.checkpoint(0) not in again._saved                  # still never pruned
+    assert _train(again, [5_000_000, 10_000_000]) == 10_000_000
+
+
+def test_early_stop_rejects_an_unknown_mode(tmp_path):
+    from src.training.experiment import RunDir
+    from src.training.robustness_eval import RobustnessEvalCallback
+    run = RunDir.create("r", base=tmp_path)
+    with pytest.raises(ValueError, match="early_stop.mode"):
+        RobustnessEvalCallback({}, run, MetricsSink(run.metrics), early_stop={"mode": "kill"})
+
+
 # ---------------------------------------------------------------- 10/9 corrections
 
 def _train_standing_module():

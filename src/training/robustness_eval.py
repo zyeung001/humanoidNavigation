@@ -11,6 +11,15 @@ its episodes where the policy is currently failing -- the push family when pushe
 over, starts when it cannot be let go leaning. The floor keeps every scenario in the mix so a
 solved one is not forgotten. Off by default: it changes the training distribution during the
 run, which makes two runs harder to compare.
+
+EARLY STOP (early_stop). The run's first eval (step 0 when robustness_eval_at_start) is its
+START: it is never pruned, and a resumed run finds it again through start_eval.json. Once the
+run is `after` steps past it, every eval asks whether the best checkpoint beats the start by
+at least `k_se` paired standard errors (suite.paired, same seeds, clustered by episode). If it
+does not, the run has learned nothing it can show: 'warn' says so and logs it, 'stop' ends
+training (learn() returns normally, so final/ and the end-of-run steps still happen), 'off'
+skips the check. 2 of the last 3 scratch runs had stopped improving by 15M and ran 7-8 h more.
+The false-kill rate is untested, hence 'warn' by default.
 """
 
 from __future__ import annotations
@@ -18,6 +27,8 @@ from __future__ import annotations
 import json
 import shutil
 from typing import Dict, Optional
+
+EARLY_STOP_DEFAULTS = {"mode": "warn", "after": 15_000_000, "k_se": 2.0}
 
 from stable_baselines3.common.callbacks import BaseCallback
 
@@ -37,7 +48,8 @@ class RobustnessEvalCallback(BaseCallback):
     def __init__(self, env_cfg: dict, run_dir, sink, every: int = 5_000_000, episodes: int = 12,
                  seconds: float = 15.0, workers: int = 1, seed: int = 12345, keep: int = 5,
                  at_start: bool = True, mix: Optional[Dict[str, float]] = None,
-                 adaptive_floor: Optional[float] = None, verbose: int = 1):
+                 adaptive_floor: Optional[float] = None, early_stop: Optional[dict] = None,
+                 verbose: int = 1):
         super().__init__(verbose)
         self.env_cfg = dict(env_cfg)
         self.run = run_dir
@@ -50,22 +62,36 @@ class RobustnessEvalCallback(BaseCallback):
         self.adaptive_floor = adaptive_floor
         self.family = {n: s.family for n, s in training_scenarios(
             (env_cfg.get("training_scenarios") or {}).get("define")).items()}
+        self.early_stop = {**EARLY_STOP_DEFAULTS, **(early_stop or {})}
+        if self.early_stop["mode"] not in ("warn", "stop", "off"):
+            raise ValueError(f"early_stop.mode must be warn, stop or off, not {self.early_stop['mode']!r}")
         self.best: Optional[suite.SuiteResult] = None
         self.previous: Optional[suite.SuiteResult] = None
+        self.start: Optional[suite.SuiteResult] = None
+        self.start_ck = None
+        self.stopped_early: Optional[dict] = None
         self._next = None
         self._last_step = None
         self._saved = []
         self._pick_up_where_the_run_left_off()
+
+    @property
+    def _start_pointer(self):
+        return self.run.root / "start_eval.json"
 
     def _pick_up_where_the_run_left_off(self) -> None:
         """A resumed run (--resume-run) keeps its best, its last eval and its checkpoint list,
         so "best" still means best over the whole run and pruning still keeps the newest."""
         if (self.run.best / "eval.json").exists():
             self.best = suite.SuiteResult.load(self.run.best / "eval.json")
+        if self._start_pointer.exists():
+            ck = self.run.root / "checkpoints" / json.loads(self._start_pointer.read_text())["checkpoint"]
+            if (ck / "eval.json").exists():
+                self.start, self.start_ck = suite.SuiteResult.load(ck / "eval.json"), ck
         scored = sorted(self.run.root.glob("checkpoints/*/eval.json"))
         if scored:
             self.previous = suite.SuiteResult.load(scored[-1])
-        self._saved = [p.parent for p in scored]
+        self._saved = [p.parent for p in scored if p.parent != self.start_ck]
 
     def _on_training_start(self) -> None:
         self._next = (self.num_timesteps // self.every + 1) * self.every
@@ -80,7 +106,7 @@ class RobustnessEvalCallback(BaseCallback):
         if self.num_timesteps >= self._next:
             self._next += self.every
             self.evaluate()
-        return True
+        return self.stopped_early is None
 
     def _on_training_end(self) -> None:
         # The last rollout overshoots the target by up to one rollout (215.00M, then training
@@ -131,14 +157,56 @@ class RobustnessEvalCallback(BaseCallback):
             print(f"  best is still {self.best.score:.1f} @ {self.best.step / 1e6:.2f}M "
                   f"({r.score - self.best.score:+.1f})")
         self.previous = r
+        if self.start is None:
+            self.start, self.start_ck = r, ck
+            self._start_pointer.write_text(json.dumps({"checkpoint": ck.name, "step": step}))
+            print(f"  START {r.score:.1f} @ {step / 1e6:.2f}M: what the run must beat "
+                  f"(kept, never pruned)")
         self._prune(ck)
+        self._check_early_stop(step)
         if self.adaptive_floor is not None and self.base_mix:
             self._adapt(r, step)
         return r
 
+    def _check_early_stop(self, step: int) -> None:
+        """Has the best checkpoint beaten the start by k_se paired SEs? See the module doc."""
+        es = self.early_stop
+        if es["mode"] == "off" or self.start is None or self.best is None:
+            return
+        pr = suite.paired(self.best, self.start)        # best IS start -> a gain of exactly 0
+        if pr is None:
+            print("  early stop: best and start were not scored on the same episodes; no check")
+            return
+        gain, se = pr[0], pr[1]
+        self.sink.log({"early_stop/gain_vs_start": gain, "early_stop/gain_vs_start_se": se}, step)
+        since = step - int(self.start.step or 0)
+        if since < int(es["after"]):
+            return
+        if gain >= float(es["k_se"]) * se and gain > 0:
+            print(f"  early stop: best beats the start by {gain:+.1f} +- {se:.1f} "
+                  f"(>= {es['k_se']:g} SE): keep training")
+            return
+        msg = (f"best ({self.best.score:.1f} @ {self.best.step / 1e6:.2f}M) beats the start "
+               f"({self.start.score:.1f}) by only {gain:+.1f} +- {se:.1f}, under {es['k_se']:g} SE, "
+               f"{since / 1e6:.1f}M steps in")
+        self.sink.log({"early_stop/fired": 1.0}, step)
+        if es["mode"] == "warn":
+            print(f"  EARLY STOP (warn only): {msg}. Training continues "
+                  f"(early_stop.mode: stop would end it here).")
+            return
+        self.stopped_early = {"step": step, "gain": gain, "se": se, "k_se": float(es["k_se"]),
+                              "after": int(es["after"]), "best_step": self.best.step,
+                              "start_step": self.start.step}
+        (self.run.root / "early_stop.json").write_text(json.dumps(self.stopped_early, indent=1))
+        print(f"  EARLY STOP: {msg}. Ending training; final/ is still written. To keep going:\n"
+              f"    python scripts/train_standing.py --resume-run {self.run.root} --no-early-stop")
+
     def _prune(self, ck) -> None:
         """Keep the newest `keep` SCORED checkpoints. One whose eval failed never gets here, so
-        it is never deleted: it is the only copy of those weights until someone scores it."""
+        it is never deleted: it is the only copy of those weights until someone scores it. The
+        run's START checkpoint is never in the list either: early stop compares against it."""
+        if ck == self.start_ck:
+            return
         if ck not in self._saved:
             self._saved.append(ck)
         while len(self._saved) > self.keep:
