@@ -36,6 +36,9 @@ as `changes.*` in W&B, so the runs table shows what each run changed.
   sim truth after the 228 actor dims and the policy's actor reads only those (asymmetric_policy.py;
   export ships the actor alone). `critic_warmup: {warmup_steps, rampup_steps, max_scale, extra_vf_epochs}`
   freezes the actor while a new critic learns (use rampup 0 / max_scale 1 with ppo_adaptive_kl).
+- `imu_tilt_rand_deg` (default 0) / `obs_delay_ms: [lo, hi]` (default off): per-episode IMU
+  mounting tilt (rotates gravity and gyro) and a fractional sensor-stream delay (not last_action).
+  Joint zero offsets are `bias_jpos` (per-episode normal std, rad).
 - `early_stop: {mode: warn|stop|off, after, k_se}` (defaults `warn`, 15M, 2.0): end a run whose
   best checkpoint has not beaten its own start eval by k_se paired SE after `after` steps.
   `warn` only reports; `--no-early-stop` turns it off for one run (e.g. to resume a stopped one).

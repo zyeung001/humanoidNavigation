@@ -92,6 +92,16 @@ class StandingEnv(gym.Wrapper):
         # strengths are randomized per episode (observation-latency randomization) so the policy is
         # robust across the bracket that contains the real deploy values. Off by default.
         self.obs_filter = bool(self.cfg.get('obs_filter', False))
+        # Per-episode sensor errors a real build has and a single scenario offset does not cover:
+        # an IMU glued on up to imu_tilt_rand_deg off true (rotates both gravity and gyro), and
+        # the sensor stream arriving obs_delay_ms [lo, hi] late (fractional, linearly
+        # interpolated between control frames; last_action is the controller's own and is not
+        # delayed). Off by default: 0 / None = byte-identical observation.
+        self.imu_tilt_rand_deg = float(self.cfg.get('imu_tilt_rand_deg', 0.0) or 0.0)
+        self.obs_delay_ms = self.cfg.get('obs_delay_ms', None)
+        self._imu_tilt = None
+        self._obs_delay_steps = 0.0
+        self._sensor_frames = deque(maxlen=8)
         self.obs_projgrav_alpha = self.cfg.get('obs_projgrav_alpha', [0.2, 0.5])
         self.obs_jvel_alpha = self.cfg.get('obs_jvel_alpha', [0.2, 0.5])
         self.obs_jvel_finite_diff = bool(self.cfg.get('obs_jvel_finite_diff', True))
@@ -578,6 +588,17 @@ class StandingEnv(gym.Wrapper):
             zero = np.zeros(self.env.action_space.shape, dtype=np.float32)
             self._lag_buffer = deque([zero.copy() for _ in range(depth)], maxlen=depth)
             self._servo_state = zero.copy()
+
+        if self.imu_tilt_rand_deg > 0:
+            axis = np.random.normal(size=3)
+            axis /= np.linalg.norm(axis)
+            ang = np.deg2rad(np.random.uniform(-self.imu_tilt_rand_deg, self.imu_tilt_rand_deg))
+            k = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+            self._imu_tilt = (np.eye(3) + np.sin(ang) * k + (1 - np.cos(ang)) * k @ k).astype(np.float32)
+        if self.obs_delay_ms:
+            lo, hi = self.obs_delay_ms
+            self._obs_delay_steps = float(np.random.uniform(lo, hi)) / 1000.0 / self._control_dt
+        self._sensor_frames.clear()
 
         # Observation filter: sample this episode's EMA strengths + reset the filter states, so
         # each episode trains a different obs latency within the bracket (matches deploy ObsBuilder).
@@ -1207,6 +1228,9 @@ class StandingEnv(gym.Wrapper):
         # Scenario-chosen sensor errors (set_sensor_offsets): an IMU mounted crooked rotates the
         # gravity it reports; a gyro zeroed while moving reads a constant false rate; an encoder
         # zeroed off-centre reads every angle shifted. None (the default) adds nothing.
+        if self._imu_tilt is not None:          # this episode's mounting error (imu_tilt_rand_deg)
+            proj_grav = (self._imu_tilt @ proj_grav).astype(np.float32)
+            base_ang_vel = (self._imu_tilt @ base_ang_vel).astype(np.float32)
         if self._sensor_imu_rotation is not None:
             proj_grav = (self._sensor_imu_rotation @ proj_grav).astype(np.float32)
         if self._sensor_gyro_bias is not None:
@@ -1240,10 +1264,23 @@ class StandingEnv(gym.Wrapper):
             n = float(np.linalg.norm(self._obs_pg_ema))
             proj_grav = (self._obs_pg_ema / n if n > 1e-6 else self._obs_pg_ema).astype(np.float32)
 
+        if self.obs_delay_ms:
+            proj_grav, base_ang_vel, jpos, jvel = self._delayed_sensors(proj_grav, base_ang_vel, jpos, jvel)
         feats = [proj_grav, base_ang_vel, jpos, jvel, last_action]
         if self.include_foot_contact:
             feats.append(self._foot_contacts())
         return np.concatenate([np.atleast_1d(f).ravel() for f in feats]).astype(np.float32)
+
+    def _delayed_sensors(self, *channels):
+        """The sensor channels as they were _obs_delay_steps control frames ago, linearly
+        interpolated between the two frames around it (the oldest kept, right after a reset)."""
+        self._sensor_frames.append(tuple(np.asarray(c, np.float32).copy() for c in channels))
+        frames, d = self._sensor_frames, self._obs_delay_steps
+        i0 = min(int(np.floor(d)), len(frames) - 1)
+        i1 = min(i0 + 1, len(frames) - 1)
+        w = d - np.floor(d) if i1 != i0 else 0.0
+        a, b = frames[-1 - i0], frames[-1 - i1]
+        return tuple(((1 - w) * x + w * y).astype(np.float32) for x, y in zip(a, b))
 
     def _get_task_info(self):
         """Get task-specific information"""

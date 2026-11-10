@@ -1,0 +1,22 @@
+# flex_plant_v3 + the cheap sensor randomization the research found missing (finding 6). Step 3
+# of the robustness plan, one change per run: this is the "sensor" run.
+#
+# Already covered, not changed: joint zero offsets (bias_jpos is a per-episode N(0, 0.04 rad),
+# wider than the suggested +-0.03). Added:
+#   imu_tilt_rand_deg 2: the IMU glued on up to 2 deg off true, a new random axis every episode
+#     (rotates gravity AND gyro -- what a crooked mount does; the sensor_faults scenario only
+#     tilts gravity, and only in its share of episodes)
+#   obs_delay_ms [10, 50]: the sensor stream arriving late, fractional, per episode (the action
+#     path already has its own measured servo dead time)
+#
+#   python scripts/train_standing.py --config config/experiments/flex_plant_v3_sensor.yaml --wandb online
+experiment:
+  name: flex_plant_v3_sensor
+  base: config/experiments/flex_plant_v3.yaml
+  description: flex_plant_v3 with a per-episode IMU mounting tilt (+-2 deg) and a 10-50 ms sensor delay.
+  hypothesis: Training through the IMU and timing errors a real build has makes the policy hold up on the suite's sensor and combined families.
+  tags: [standing, scratch, flex, adaptive-kl, privileged-critic, sensor-rand]
+overrides:
+  standing:
+    imu_tilt_rand_deg: 2.0
+    obs_delay_ms: [10, 50]
