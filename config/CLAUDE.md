@@ -36,6 +36,11 @@ as `changes.*` in W&B, so the runs table shows what each run changed.
   sim truth after the 228 actor dims and the policy's actor reads only those (asymmetric_policy.py;
   export ships the actor alone). `critic_warmup: {warmup_steps, rampup_steps, max_scale, extra_vf_epochs}`
   freezes the actor while a new critic learns (use rampup 0 / max_scale 1 with ppo_adaptive_kl).
+- `lcp_lambda` (default 0; needs `algo: ppo_adaptive_kl`): LCP smoothness, loss += lambda *
+  mean ||d mu / d obs_norm||^2 on the action MEAN. `lcp_batch` (default 0 = all): estimate it on
+  that many samples per minibatch (same expectation, cheaper). Runs: `flex_plant_v3_lcp1e-3`
+  (stopped at 10M: no change in jitter vs v3, the term was ~0.02% of the loss),
+  `flex_plant_v3_lcp1e-2` (10x stronger, lcp_batch 1024), `flex_plant_v3_lcp3e-3`.
 - `early_stop: {mode: warn|stop|off, after, k_se}` (defaults `warn`, 15M, 2.0): end a run whose
   best checkpoint has not beaten its own start eval by k_se paired SE after `after` steps.
   `warn` only reports; `--no-early-stop` turns it off for one run (e.g. to resume a stopped one).

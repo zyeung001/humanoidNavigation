@@ -55,6 +55,10 @@ python scripts/compare_models.py                             # ranked, paired vs
 python scripts/compare_models.py --run-history runs/<name>   # one run over time
 ```
 
+Smoothness is printed under the table (`smoothness: quiet ... rad/s, ..% of power above 3 Hz;
+under pushes ...`): compare it next to the push family, because a smoother policy can also be a
+slower one to catch a push.
+
 `eval_standing.py` runs the `src/robustness` suite (~1 min, 11 workers) and records JSON to
 `models/standing/evals/` + a row in `models/standing/robustness.csv`. `compare_models.py` only
 reads results. The old `models/standing/scoreboard.csv` (9/19 harness) is history; its rows

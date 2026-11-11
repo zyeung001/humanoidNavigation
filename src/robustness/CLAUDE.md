@@ -9,7 +9,7 @@ Standing only.
 | `scenarios.py` | `Scenario` = `Start` + `Disturb` + `Sensors` + `Plant`. `SUITE` (19 fixed-severity eval scenarios, `SUITE_VERSION`), `TRAINING` (wide ranges, for mixing) |
 | `wrapper.py` | `ScenarioWrapper(gym.Wrapper)`: plays one scenario per episode on a `StandingEnv`. Training passes `mix`; eval passes `reset(options={"scenario": s, "stratum": (i, n)})` |
 | `policies.py` | `SB3Policy` (.zip + .pkl, or live model), `NpzPolicy` (runs `scripts/deploy/numpy_policy.py`, the robot's code), `HoldPosePolicy` (a fixed pose, no feedback) |
-| `suite.py` | `evaluate(policy, cfg, ...) -> SuiteResult`; `format_result()` prints the table |
+| `suite.py` | `evaluate(policy, cfg, ...) -> SuiteResult`; `format_result()` prints the table. Per episode, besides upright time: `jitter` (rms per-step command change), `act_rate` (mean \|d command\|/dt, rad/s) and `hf_frac` (share of the command's FFT power above `HF_HZ` = 3 Hz: twitch, not balance); `metrics()` gives them for quiet stand and averaged over the push family (`quality/push_*`) |
 | `showcase.py` | `SHOWCASE`: ONE fixed 30 s timeline for the validation video (3/4/5/6 N torso pushes from front/left/behind/right, 5 N pelvis, kick 2x toward front-right, 5 N under a 0.12 rad/s gyro fault). `run_showcase()` plays it through the wrapper's `inject_push`/`inject_kick`; a fall shows 1 s of physics, resets, and shifts later beats 2 s. No GL |
 | `video.py` | `make_validation_video()` films it: main + side view with the applied-force arrow, top-down support map, HUD, timeline, end card -> `.mp4` (H.264 via MSMF) or `.webm` + `.json` |
 

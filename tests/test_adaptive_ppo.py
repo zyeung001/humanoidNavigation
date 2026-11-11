@@ -131,3 +131,71 @@ def test_export_ships_the_actor_only_and_matches_sb3(tmp_path, monkeypatch):
 
     from src.robustness.policies import NpzPolicy
     assert np.allclose(NpzPolicy(tmp_path / "p.npz").act(raw), want, atol=1e-5)   # full obs, sliced
+
+
+# ---------------------------------------------------------------- LCP smoothness (step 2)
+
+def test_the_lcp_estimate_is_the_jacobian_norm_on_average():
+    from src.training.adaptive_kl_ppo import lcp_penalty
+    pol = _model().policy
+    obs = torch.randn(4, 3)
+    exact = 0.0
+    for o in obs:
+        jac = torch.autograd.functional.jacobian(
+            lambda x: pol.get_distribution(x[None]).distribution.mean[0], o)
+        exact += float(jac.pow(2).sum()) / len(obs)
+    torch.manual_seed(0)
+    est = np.mean([float(lcp_penalty(pol, obs)) for _ in range(4000)])
+    assert est == pytest.approx(exact, rel=0.05)
+    assert lcp_penalty(pol, obs).requires_grad                      # it trains the actor
+
+
+def test_lcp_is_logged_when_on_and_absent_when_off():
+    on = _model(lcp_lambda=1e-3)
+    on.learn(128)
+    assert on.logger.name_to_value["train/lcp_penalty"] > 0
+    off = _model()
+    off.learn(128)
+    assert "train/lcp_penalty" not in off.logger.name_to_value
+
+
+def test_smoothness_separates_sway_from_twitch():
+    from src.robustness.suite import HF_HZ, _smoothness
+    dt, t = 0.025, np.arange(400) * 0.025
+    sway = [np.full(17, 0.02 * np.sin(2 * np.pi * 1.0 * x)) for x in t]
+    twitch = [np.full(17, 0.02 * np.sin(2 * np.pi * 8.0 * x)) for x in t]
+    rate_s, hf_s = _smoothness(sway, dt)
+    rate_t, hf_t = _smoothness(twitch, dt)
+    assert HF_HZ == 3.0 and hf_s < 0.01 and hf_t > 0.99
+    assert rate_t == pytest.approx(8 * rate_s, rel=0.05)           # same size, 8x the frequency
+    assert np.isnan(_smoothness(sway[:10], dt)[0])
+
+
+def test_an_eval_saved_before_the_smoothness_metrics_still_loads(tmp_path):
+    import json
+    from src.robustness.suite import SuiteResult
+    old = {"label": "old", "fingerprint": "f", "suite_version": "v", "seed": 1, "seconds": 15.0,
+           "episodes_per_scenario": 1, "complete": True, "config": "", "git": "", "when": "",
+           "step": None, "wall_s": 0.0,
+           "scenarios": [{"name": "quiet", "family": "quiet", "about": "", "episodes": [
+               {"seed": 0, "steps": 600, "horizon": 600, "fell": False, "lean_deg": 1.0, "sway_deg": 0.1,
+                "jitter": 0.001, "excursion2": 0.0, "recover_s": [], "dt": 0.025}]}]}
+    (tmp_path / "old.json").write_text(json.dumps(old))
+    r = SuiteResult.load(tmp_path / "old.json")
+    assert r.score == 100.0 and r.scenarios[0].episodes[0].act_rate is None
+    assert np.isnan(r.metrics()["eval/quality/act_rate"])                # unmeasured reads nan
+
+
+def test_lcp_batch_subsamples_the_minibatch_and_survives_save_load(tmp_path):
+    m = _model(lcp_lambda=1e-3, lcp_batch=8)
+    seen = []
+    import src.training.adaptive_kl_ppo as mod
+    real = mod.lcp_penalty
+    mod.lcp_penalty = lambda pol, obs: (seen.append(len(obs)), real(pol, obs))[1]
+    try:
+        m.learn(128)
+    finally:
+        mod.lcp_penalty = real
+    assert seen and set(seen) == {8}                                 # 8 of each 32-sample minibatch
+    m.save(tmp_path / "m.zip")
+    assert AdaptiveKLPPO.load(tmp_path / "m.zip", device="cpu").lcp_batch == 8
