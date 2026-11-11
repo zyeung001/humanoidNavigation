@@ -1,0 +1,27 @@
+# flex_plant_v3 + the LCP smoothness penalty at lambda 1e-2. Step 2 of the robustness plan
+# (PR feat/lcp-smoothness).
+#
+# The plan's sweep was lambda in {3e-4, 1e-3, 3e-3}. flex_plant_v3_lcp1e-3 was stopped at 10M:
+# its quiet-stand jitter matched v3's at every eval (0.0057 vs 0.0059 at 5M, 0.0073 vs 0.0066
+# at 10M), and the term was ~0.02% of the loss (train/lcp_penalty ~0.018 x 1e-3 against a
+# ~0.1 loss). Our actions are small (exploration std 0.05 rad), so d mu / d obs is small and
+# the paper's lambdas do not bite. 3e-4 was dropped; this run is 10x the middle value.
+#
+# lcp_batch 1024: the penalty on 1024 random samples of each 6144-sample minibatch -- same
+# expected value, a sixth of the double backward that slowed the 1e-3 run's updates ~2.4x.
+#
+#   python scripts/train_standing.py --config config/experiments/flex_plant_v3_lcp1e-2.yaml --wandb online
+# Read: quiet jitter / quality/act_rate vs v3 at the same steps, AND the push family and
+# quality/push_act_rate (the risk is smoothness that dulls push recovery).
+experiment:
+  name: flex_plant_v3_lcp1e-2
+  base: config/experiments/flex_plant_v3.yaml
+  description: flex_plant_v3 with the LCP action-mean smoothness penalty, lambda 1e-2, on 1024 samples per minibatch.
+  hypothesis: A penalty strong enough to register makes the actor smoother than v3 without losing robustness.
+  tags: [standing, scratch, flex, adaptive-kl, privileged-critic, lcp]
+overrides:
+  standing:
+    lcp_lambda: 0.01
+    lcp_batch: 1024
+    # v3 went flat by 15M (training seeds) and tied the law held-out; stop a flat sweep run there.
+    early_stop: {mode: stop}

@@ -440,6 +440,7 @@ def main():
         ak = standing.get('adaptive_kl') or {}
         algo_kwargs = {k: float(ak[k]) for k in ('desired_kl', 'lr_min', 'lr_max') if k in ak}
         algo_kwargs['lcp_lambda'] = float(standing.get('lcp_lambda', 0.0))   # smoothness penalty
+        algo_kwargs['lcp_batch'] = int(standing.get('lcp_batch', 0))         # 0 = whole minibatch
     elif standing.get('lcp_lambda'):
         raise SystemExit("lcp_lambda needs algo: ppo_adaptive_kl")
     # Privileged critic: the env appends sim truth after the actor's obs; the actor only reads
@@ -582,6 +583,8 @@ def main():
     print(f"  Algorithm: {algo}" + (f" (desired_kl {model.desired_kl:g}, lr {model.adaptive_lr:.2e} "
                                     f"in [{model.lr_min:g}, {model.lr_max:g}]"
                                     + (f", LCP smoothness {model.lcp_lambda:g}" if model.lcp_lambda else '')
+                                    + (f" on {model.lcp_batch} samples/minibatch"
+                                       if model.lcp_lambda and model.lcp_batch else '')
                                     + ")" if algo == 'ppo_adaptive_kl' else ''))
     unit = (standing.get('training_scenarios') or {}).get('mix_unit', 'steps')
     print(f"  Training scenarios: {mix or 'none (env as configured)'}"

@@ -27,6 +27,9 @@ when its normalized input changes little cannot turn sensor noise into twitch. I
 penalized, not log pi as in the paper: with our 0.05 rad std, the log-pi gradient is 2-500x
 larger and would swamp the term. Estimated with one Hutchinson probe per sample
 (E_v ||d(mu . v)/d obs||^2 = ||J||_F^2 for v ~ N(0, I)): one extra backward, not 17.
+lcp_batch > 0 estimates it on that many random samples of each minibatch instead of all of
+them: the same expected penalty for a fraction of the double backward, which on the full
+6144-sample minibatch more than doubled the update's cost.
 """
 
 from __future__ import annotations
@@ -50,13 +53,13 @@ def lcp_penalty(policy, obs: th.Tensor) -> th.Tensor:
 class AdaptiveKLPPO(PPO):
 
     def __init__(self, *args, desired_kl: float = 0.01, lr_min: float = 1e-5, lr_max: float = 1e-2,
-                 lcp_lambda: float = 0.0, **kwargs):
+                 lcp_lambda: float = 0.0, lcp_batch: int = 0, **kwargs):
         kwargs.setdefault("target_kl", None)
         super().__init__(*args, **kwargs)
         if self.target_kl is not None:
             raise ValueError("AdaptiveKLPPO sets the LR from the KL; target_kl must be None")
         self.desired_kl, self.lr_min, self.lr_max = float(desired_kl), float(lr_min), float(lr_max)
-        self.lcp_lambda = float(lcp_lambda)
+        self.lcp_lambda, self.lcp_batch = float(lcp_lambda), int(lcp_batch)
         # The starting LR. PPO.load() builds the object without a model first, then restores the
         # saved adaptive_lr over this, so a resumed run continues from where its LR had got to.
         lr0 = self.learning_rate(1.0) if callable(self.learning_rate) else float(self.learning_rate)
@@ -122,7 +125,10 @@ class AdaptiveKLPPO(PPO):
 
                 loss = policy_loss + self.ent_coef * entropy_loss + self.vf_coef * value_loss
                 if self.lcp_lambda > 0:
-                    lcp = lcp_penalty(self.policy, rollout_data.observations)
+                    obs = rollout_data.observations
+                    if 0 < self.lcp_batch < len(obs):
+                        obs = obs[th.randperm(len(obs), device=obs.device)[:self.lcp_batch]]
+                    lcp = lcp_penalty(self.policy, obs)
                     lcps.append(lcp.item())
                     loss = loss + self.lcp_lambda * lcp
                 self.policy.optimizer.zero_grad()

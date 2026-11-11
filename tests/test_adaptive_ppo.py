@@ -184,3 +184,18 @@ def test_an_eval_saved_before_the_smoothness_metrics_still_loads(tmp_path):
     r = SuiteResult.load(tmp_path / "old.json")
     assert r.score == 100.0 and r.scenarios[0].episodes[0].act_rate is None
     assert np.isnan(r.metrics()["eval/quality/act_rate"])                # unmeasured reads nan
+
+
+def test_lcp_batch_subsamples_the_minibatch_and_survives_save_load(tmp_path):
+    m = _model(lcp_lambda=1e-3, lcp_batch=8)
+    seen = []
+    import src.training.adaptive_kl_ppo as mod
+    real = mod.lcp_penalty
+    mod.lcp_penalty = lambda pol, obs: (seen.append(len(obs)), real(pol, obs))[1]
+    try:
+        m.learn(128)
+    finally:
+        mod.lcp_penalty = real
+    assert seen and set(seen) == {8}                                 # 8 of each 32-sample minibatch
+    m.save(tmp_path / "m.zip")
+    assert AdaptiveKLPPO.load(tmp_path / "m.zip", device="cpu").lcp_batch == 8
