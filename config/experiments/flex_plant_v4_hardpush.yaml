@@ -1,0 +1,43 @@
+# flex_plant_v3 trained on the pushes where the plant has room, not only on the ones it can already take.
+#
+# WHY (11/11/2026, scripts/ceiling.py + ceiling.md on feat/standing-ceilings). Every controller ties the
+# knee law on standing-v2, but oracles find room in ONE place inside today's +-0.2 rad clamp: a 5 N
+# SIDEWAYS torso push. The law falls on it; an all-knowing trajectory search recovers it in place (hip
+# roll +0.8, waist pitch +0.6 within 0.15 s, still 9 s later in the real env); a closed-loop MPC that
+# only FEELS the push (no foresight, like a policy) survived 5 N left with a 10 cm side shuffle.
+# Fore/aft pushes of 3+ N and anything over ~5.5 N stayed unrecoverable for every method.
+#
+# v3's mix never showed PPO those pushes: flex_plant redefined torso_pushes as 1-3 N (sized to what
+# the flex plant could take), so the 4-6 N pushes of the eval suite were never trained on.
+#
+# Changes from flex_plant_v3, and only these:
+#   training_scenarios: + hard_pushes (4-6 N, 0.15-0.25 s, every 2-4 s) at 0.2 of episodes; the 1-3 N
+#     torso_pushes drop 0.2 -> 0.1 and as_configured 0.4 -> 0.3 to make room. Directions are random,
+#     so about half of the hard pushes are fore/aft and cannot be saved: they teach the critic, not
+#     the actor. Same magnitudes as the suite, different seeds (the suite stays held out).
+#   early_stop: stop (as the LCP runs) -- a run that never beats its start ends at ~15M.
+#
+#   python scripts/train_standing.py --config config/experiments/flex_plant_v4_hardpush.yaml --wandb online
+# Success: a held-out paired difference vs models/real_standing_knee2_kneelaw_db.npz whose interval
+# is entirely above 0 (777x24, then fresh 778x48), with the gain on the push / sensor / plant rows.
+experiment:
+  name: flex_plant_v4_hardpush
+  base: config/experiments/flex_plant_v3.yaml
+  description: flex_plant_v3 with 4-6 N torso pushes in the training mix (where the oracle found room).
+  hypothesis: PPO over the knee law learns the 5 N sideways recovery an oracle MPC finds inside the clamp, once it trains on such pushes.
+  tags: [standing, scratch, flex, adaptive-kl, privileged-critic, hard-pushes]
+overrides:
+  standing:
+    early_stop: {mode: stop}
+    training_scenarios:
+      mix: {as_configured: 0.3, wide_start: 0.15, torso_pushes: 0.1, hard_pushes: 0.2, big_kicks: 0.1,
+            sensor_faults: 0.1, slow_plant: 0.05}
+      define:
+        torso_pushes:
+          family: push
+          about: 1-3 N hand pushes on the upper torso for 0.15-0.25 s (sized to the flex plant)
+          disturb: {kind: push, magnitude: [1, 3], duration_s: [0.15, 0.25], first_s: [1.0, 3.0], interval_s: [2.0, 4.0]}
+        hard_pushes:
+          family: push
+          about: 4-6 N pushes on the upper torso for 0.15-0.25 s (the suite's range; room only sideways)
+          disturb: {kind: push, magnitude: [4, 6], duration_s: [0.15, 0.25], first_s: [1.0, 3.0], interval_s: [2.0, 4.0]}
