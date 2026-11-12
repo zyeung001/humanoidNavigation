@@ -12,6 +12,7 @@ Standing only.
 | `suite.py` | `evaluate(policy, cfg, ...) -> SuiteResult`; `format_result()` prints the table |
 | `showcase.py` | `SHOWCASE`: ONE fixed 30 s timeline for the validation video (3/4/5/6 N torso pushes from front/left/behind/right, 5 N pelvis, kick 2x toward front-right, 5 N under a 0.12 rad/s gyro fault). `run_showcase()` plays it through the wrapper's `inject_push`/`inject_kick`; a fall shows 1 s of physics, resets, and shifts later beats 2 s. No GL |
 | `video.py` | `make_validation_video()` films it: main + side view with the applied-force arrow, top-down support map, HUD, timeline, end card -> `.mp4` (H.264 via MSMF) or `.webm` + `.json` |
+| `oracle.py` | Ceilings on sim truth, NOT deployable: `LQRPolicy` (env step linearised, discounted DARE), `MPCPolicy` (MPPI on the episode's own sim via `mujoco.rollout`; `command_chain` replicates the env's clip->clamp->EMA->dead time->servo, tested bit-for-bit), `AnkleServoPolicy` (what-if: an SCS15 ankle-pitch servo driving the ankle_flex rest angle); `run_bound()` scores any of them with the suite's paired seeds. CLI + results: `scripts/ceiling.py`, `scripts/ceiling.md` |
 
 ## The validation video (end of every standing run)
 
