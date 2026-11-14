@@ -97,3 +97,20 @@ controller that could run on it. The next gain is ankle-pitch actuation; the Hum
 already has it. The policy stack carries over as it is: `feedback_prior` takes any joint in
 `config/joint_servo_map.yaml`, so the ankle law is one more config line once the servo is in the
 map.
+
+## 6. Without new hardware: stepping and sideways pushes (11/11–13)
+
+Ankle servos are out (the robot stays as built), so the question was whether RL could find room by
+moving the feet, or by reacting harder to the pushes the law falls on. These were one-off sim checks
+(scratch scripts, not in this PR), every result replayed in the real env:
+
+| push (one, 0.2 s, upper torso) | knee law | trajectory search, push KNOWN | closed-loop MPC, push only FELT |
+|---|---|---|---|
+| 3 N forward | falls | survives with a 2-step recovery (+16 cm, +32 cm), but needs 1.7 rad hip pitch: impossible inside the ±0.2 clamp | falls (clamp 1.5) |
+| 3 N back, 4–5 N forward/back | falls | none found (clamp 1.5; also with the EMA smoothing removed) | falls |
+| **5 N sideways** | **falls** | survives in place inside ±0.2 (hip roll +0.8, waist pitch +0.6 in 0.15 s) | **2 of 12 saved** (±0–30° off sideways, randomised plants) |
+| 6 N sideways, 4 N diagonal | falls | none found | falls |
+
+The search knew the push in advance; the MPC, like a policy, only feels it. Feedback alone saves
+2/12 sideways 5 N pushes and delays the other falls by 0.1–0.35 s. Training PPO on 4–6 N pushes
+was prepared (`flex_plant_v4_hardpush`) and NOT run: there is no room worth that run on this plant.
