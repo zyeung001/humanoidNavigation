@@ -54,6 +54,23 @@ reads results. The old `models/standing/scoreboard.csv` (9/19 harness) is histor
 are not comparable with the new score. `gate_standing_kick.py` is superseded (binary, every
 model passed it).
 
+### `eval_walking.py` / `build_walk_reference.py` — real-robot walking
+
+```bash
+python scripts/eval_walking.py --run runs/<walk run>          # policy vs reference alone, paired
+python scripts/eval_walking.py --config config/experiments/walk_step_to.yaml   # reference alone
+python scripts/build_walk_reference.py --config config/experiments/flex_plant_v2.yaml     --steps config/gaits/step_R_fwd.npy config/gaits/step_L_slide_after_R.npy --hold-s 1.0     --out config/gaits/step_to_v1.npz
+```
+
+- `eval_walking.py`: held-out seeds (777000+), 30 s each, the run's own randomisation. It reports
+  the share that stays up, distance, speed and fall times, plus the paired difference. The
+  reference alone: 2/24 up, falls mostly at 12-13 s (the second right step). It also counts the
+  right/left steps landed per episode and the rear foot's progress: survival alone can hide a
+  policy that slides instead of stepping.
+- `build_walk_reference.py`: joins step command sequences into one cycle, then replays it open-loop
+  in the suite's `quiet` env, after a 3 s settle on the standing pose, to record the sole heights
+  and advance. It refuses to save a cycle that falls.
+
 ### `robot_run.py` — one command per hardware run (laptop side)
 
 ```bash

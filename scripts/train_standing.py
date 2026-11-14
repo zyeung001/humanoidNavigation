@@ -48,6 +48,7 @@ from stable_baselines3.common.callbacks import CallbackList, BaseCallback
 
 from src.environments.standing_curriculum import make_standing_curriculum_env
 from src.environments.real_turning_env import make_real_turning_env
+from src.environments.real_walking_env import make_real_walking_env
 from src.robustness import SUITE_VERSION, ScenarioWrapper, training_scenarios
 from src.robustness.suite import default_workers, git_sha
 from src.training.experiment import RunDir, load_experiment
@@ -131,12 +132,17 @@ def pin_scenario_definitions(cfg: dict) -> None:
     cfg['training_scenarios'] = ts
 
 
+# Env kinds the standing robustness suite (and so best/ by eval/score and the video) does not apply to.
+NOT_STANDING = ('real_turning', 'real_walking')
+
+
 def make_env_fns(n_envs: int, seed: int, cfg: dict):
-    # env_kind selects the factory: 'standing' (default, height curriculum) or
-    # 'real_turning' (the WTR turning env on the real body). Absent -> standing, so
-    # existing standing configs are unaffected.
-    factory = (make_real_turning_env if cfg.get('env_kind') == 'real_turning'
-               else make_standing_curriculum_env)
+    # env_kind selects the factory: 'standing' (default, height curriculum), 'real_turning'
+    # (the WTR turning env on the real body) or 'real_walking' (a reference gait + learned
+    # corrections, src/environments/real_walking_env.py). Absent -> standing, so existing
+    # standing configs are unaffected.
+    factory = {'real_turning': make_real_turning_env,
+               'real_walking': make_real_walking_env}.get(cfg.get('env_kind'), make_standing_curriculum_env)
     mix, scenarios = scenario_mix(cfg)
     mix_unit = (cfg.get('training_scenarios') or {}).get('mix_unit', 'steps')
 
@@ -502,7 +508,7 @@ def main():
     sink = MetricsSink(run.metrics, wb)
     eval_every = (args.eval_every if args.eval_every is not None else
                   int(standing.get('robustness_eval_every',
-                                   0 if standing.get('env_kind') == 'real_turning' else 5_000_000)))
+                                   0 if standing.get('env_kind') in NOT_STANDING else 5_000_000)))
     adaptive = (standing.get('training_scenarios') or {}).get('adaptive')
     floor = (None if not adaptive else 0.25 if adaptive is True else float(adaptive))
 
@@ -592,14 +598,17 @@ def main():
     except Exception as e:
         print(f"✗ VecNormalize save failed: {e}")
     # One video of the best policy on the fixed showcase timeline. Only on normal completion:
-    # an interrupt or a crash returned or raised above. Off by default for real_turning, which
-    # has no robustness eval either; validation_video.enabled turns it on.
+    # an interrupt or a crash returned or raised above. Off by default for real_turning and
+    # real_walking, which have no robustness eval either; validation_video.enabled turns it on.
     vv = standing.get('validation_video') or {}
-    if not args.dry_run and not args.no_video and vv.get('enabled', standing.get('env_kind') != 'real_turning'):
+    if not args.dry_run and not args.no_video and vv.get('enabled', standing.get('env_kind') not in NOT_STANDING):
         _validation_video(run, standing, sink, int(model.num_timesteps), vv)
     sink.close()
-    print(f"Best robustness checkpoint: {run.best}  (score it on its own with "
-          f"scripts/eval_standing.py --run {run.root})")
+    if run.best.exists():
+        print(f"Best robustness checkpoint: {run.best}  (score it on its own with "
+              f"scripts/eval_standing.py --run {run.root})")
+    elif standing.get('env_kind') == 'real_walking':
+        print(f"Score it: python scripts/eval_walking.py --run {run.root}")
 
 
 if __name__ == "__main__":

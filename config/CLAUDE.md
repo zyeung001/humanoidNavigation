@@ -31,8 +31,15 @@ as `changes.*` in W&B, so the runs table shows what each run changed.
   scenarios from `src/robustness/scenarios.py` TRAINING into training episodes.
 - One variable per file. obs_history / net_arch changes cannot resume old weights.
 - `validation_video: {enabled, width, height, fps, checkpoint}` (code defaults: on, except for
-  `env_kind: real_turning`; 960x540; 20 fps; `best`, or `final`): the end-of-run video. No
-  YAML needs it; `--no-video` turns it off for one run.
+  `env_kind: real_turning` / `real_walking`; 960x540; 20 fps; `best`, or `final`): the end-of-run
+  video. No YAML needs it; `--no-video` turns it off for one run.
+- `walk_step_to` = walking on the real body (`env_kind: real_walking`): PPO corrections around
+  `config/gaits/step_to_v1.npz`, with the knee law underneath. No robustness eval: judge it with
+  `scripts/eval_walking.py`. Run 1 (11/14) stayed up 24/24 held out but slid instead of
+  stepping (0 steps, 0.11 cm/s). `walk_step_to_v2` fixes the reward: a missed step ends the
+  episode, plus a step bonus and rear-foot progress in place of the speed term.
+- `config/gaits/`: walking references (`.npz`, one cycle) and the step command sequences
+  (`.npy`, (T, 17) at 40 Hz) they are built from.
 
 ## `training_config.yaml`
 
