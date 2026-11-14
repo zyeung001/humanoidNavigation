@@ -54,6 +54,20 @@ reads results. The old `models/standing/scoreboard.csv` (9/19 harness) is histor
 are not comparable with the new score. `gate_standing_kick.py` is superseded (binary, every
 model passed it).
 
+### `ceiling.py` — what does the PLANT allow?
+
+```bash
+python scripts/ceiling.py lqr                                   # best linear full-state feedback
+python scripts/ceiling.py mpc --scenarios band --N 256 --H 40 --knots 6 --sigma 0.15
+python scripts/ceiling.py ankle --k 4.4 --ka 0.3 --kd 0.18 --seed 778 --episodes 48
+```
+
+Oracle LQR / sampling MPC on sim truth, and the ankle-servo what-if, each paired against the
+knee law alone (`src/robustness/oracle.py`). Results and the argument, 11/11: `scripts/ceiling.md`
+(suite pushes 4-6 N are past any in-place controller; the robot has no ankle servos; an added
+ankle-pitch servo + 2-gain law beats the law +1.7 +- 0.3 held-out). MPC is slow: 0.26 s per
+control step at N 32 / H 16, ~3 s at N 256 / H 40.
+
 ### `robot_run.py` â€” one command per hardware run (laptop side)
 
 ```bash
