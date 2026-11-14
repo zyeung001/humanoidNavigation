@@ -6,7 +6,10 @@ offsets), `--seconds` long. Both the policy and "reference alone" (zero action: 
 feedback prior, no network) run the identical episodes, so the difference is paired.
 
 Reported per controller: share of episodes that stay up for the whole test, mean distance walked
-(COM, forward), mean forward speed while up, and the fall times.
+(COM, forward), mean forward speed while up, the fall times, and whether it really steps: right
+steps landed per episode (sole up past 12 mm, landed ahead; slides do not count) and the new
+ground under the rear foot. A policy can stay up by sliding instead of stepping (11/14,
+walk_step_to-1113-2300: 24/24 up, 0 steps), so read the steps column with the survival one.
 
   python scripts/eval_walking.py --run runs/<name>                 # final/ (or best/ if present)
   python scripts/eval_walking.py --config config/experiments/walk_step_to.yaml   # reference only
@@ -31,17 +34,19 @@ from src.environments.real_walking_env import make_real_walking_env  # noqa: E40
 
 def run_episodes(cfg, policy, seeds, seconds):
     with contextlib.redirect_stdout(io.StringIO()):
-        env = make_real_walking_env(config=dict(cfg, debug_print_every=0))
+        # Falls only: a missed step (the v2 training termination) is read from the steps column,
+        # so survival means the same thing for every config.
+        env = make_real_walking_env(config=dict(cfg, debug_print_every=0, walk_missed_step_terminate=False))
     out = []
     for s in seeds:
         np.random.seed(s)
-        obs, _ = env.reset(seed=s)
+        obs, info = env.reset(seed=s)
         d = env.env.unwrapped.data
         x0 = float(d.subtree_com[0][0])
         fell = None
         steps = int(round(seconds / env._control_dt))
         for k in range(steps):
-            obs, _, term, trunc, _ = env.step(policy(obs))
+            obs, _, term, trunc, info = env.step(policy(obs))
             if term:
                 fell = (k + 1) * env._control_dt
                 break
@@ -49,7 +54,9 @@ def run_episodes(cfg, policy, seeds, seconds):
                 break
         t_up = fell if fell is not None else seconds
         dx = float(d.subtree_com[0][0]) - x0
-        out.append(dict(seed=s, fell_s=fell, dx_m=dx, speed_mps=dx / max(t_up, 1e-6)))
+        out.append(dict(seed=s, fell_s=fell, dx_m=dx, speed_mps=dx / max(t_up, 1e-6),
+                        steps_R=int(info.get("walk_steps_R", 0)), steps_L=int(info.get("walk_steps_L", 0)),
+                        rear_progress_m=float(info.get("walk_rear_progress_m", 0.0))))
     return out
 
 
@@ -59,6 +66,9 @@ def summary(eps):
     return dict(survived=f"{int(up.sum())}/{len(eps)}", survive_rate=float(up.mean()),
                 mean_dx_cm=round(100 * float(dx.mean()), 1),
                 mean_speed_cm_s=round(100 * float(np.mean([e["speed_mps"] for e in eps])), 2),
+                steps_R_per_ep=round(float(np.mean([e["steps_R"] for e in eps])), 2),
+                steps_L_per_ep=round(float(np.mean([e["steps_L"] for e in eps])), 2),
+                rear_progress_cm=round(100 * float(np.mean([e["rear_progress_m"] for e in eps])), 1),
                 falls_s=[round(e["fell_s"], 1) for e in eps if e["fell_s"] is not None])
 
 

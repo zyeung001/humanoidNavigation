@@ -14,6 +14,20 @@ the ones the deployed standing controller runs on. What it adds:
     would run).
   * a reward for following the reference (joint pose and sole heights) and for the forward speed
     the reference makes, plus upright, heading and smoothness terms.
+  * a reward for real forward travel (both off by default, on in walk_step_to_v2):
+      - `progress`: the REAR sole's new ground, ratcheted, so standing still, rocking, a
+        split stance or a dive earn nothing;
+      - `step`: a bonus at each touchdown of a foot that cleared `walk_step_clear_m` in the air
+        and landed ahead of both its take-off and its furthest landing, so a slide or a hop in
+        place earns nothing.
+    and, with `walk_missed_step_terminate`, an episode ends (like a fall) when a step the
+    reference lifts a foot for has not been landed `walk_step_grace_s` after its swing ends:
+    without it, not stepping is a safe option a fall-averse policy takes (early termination, as
+    in DeepMimic).
+    WHY (11/14, walk_step_to-1113-2300): with only the speed and sole-height terms, a policy that
+    slid its feet and never stepped kept ~97% of the reward (0.5 cm/s target: standing still paid
+    95% of the speed term; the swing is 5% of the cycle), stayed up 24/24 held out, and walked
+    0.11 cm/s instead of 0.5.
 
 WHY A REFERENCE (11/13/2026, scratchpad walk/ feasibility). This body cannot walk statically: the
 legs are hip roll/yaw/pitch + knee with no ankle, hip flexion stops at +0.35 rad and a bent knee
@@ -84,6 +98,60 @@ class GaitReference:
                ((1 - f) * self.foot_z[i] + f * self.foot_z[j]).astype(np.float32)
 
 
+def swing_ends(t, z, clear_m) -> np.ndarray:
+    """End times (s, within the cycle) of each stretch where a reference sole is above clear_m."""
+    up = np.asarray(z) > clear_m
+    ends = [t[i] for i in range(len(t)) if up[i] and not up[(i + 1) % len(t)]]
+    return np.array([e + (t[1] - t[0]) for e in ends]) if len(t) > 1 else np.zeros(0)
+
+
+def steps_due(gait_time_s, deadlines, period_s) -> int:
+    """How many reference swings with these deadlines have passed by gait_time_s."""
+    if gait_time_s < 0.0 or len(deadlines) == 0:
+        return 0
+    cycles, tt = divmod(gait_time_s, period_s)
+    return int(cycles) * len(deadlines) + int(np.sum(np.asarray(deadlines) <= tt))
+
+
+class StepTracker:
+    """Real steps of each foot, from its sole height and position along the walking direction.
+
+    A foot is in the air from when its sole rises above `lift_m` until it is back below `land_m`.
+    A touchdown counts as a step when the sole cleared `clear_m` in between; its gain is how far
+    it landed ahead of both where it took off and the furthest it had landed before (so stepping
+    back and forth, or sliding forward and then hopping in place, gains nothing)."""
+
+    def __init__(self, n_feet=2, lift_m=0.005, land_m=0.002, clear_m=0.015):
+        self.n, self.lift_m, self.land_m, self.clear_m = n_feet, lift_m, land_m, clear_m
+        self.reset(np.zeros(n_feet))
+
+    def reset(self, x):
+        self.best = np.asarray(x, dtype=np.float64).copy()
+        self.air = np.zeros(self.n, dtype=bool)
+        self.x_off = self.best.copy()
+        self.peak = np.zeros(self.n)
+        self.count = np.zeros(self.n, dtype=int)
+
+    def update(self, z, x) -> np.ndarray:
+        """Feed one control step; returns each foot's gain (m) if it just landed a step, else 0."""
+        gain = np.zeros(self.n)
+        for i in range(self.n):
+            if not self.air[i]:
+                if z[i] > self.lift_m:
+                    self.air[i], self.x_off[i], self.peak[i] = True, x[i], z[i]
+                continue
+            self.peak[i] = max(self.peak[i], z[i])
+            if z[i] < self.land_m:
+                self.air[i] = False
+                if self.peak[i] >= self.clear_m:
+                    g = x[i] - max(self.x_off[i], self.best[i])
+                    if g > 0.0:
+                        gain[i] = g
+                        self.count[i] += 1
+                self.best[i] = max(self.best[i], x[i])
+        return gain
+
+
 class RealWalkingEnv(StandingEnv):
     def __init__(self, render_mode: Optional[str] = None, config=None):
         super().__init__(render_mode=render_mode, config=config)
@@ -109,6 +177,20 @@ class RealWalkingEnv(StandingEnv):
         self.w_alive = float(cfg.get("walk_alive_bonus", 0.5))
         self.w_rate = float(cfg.get("walk_action_rate_weight", 0.5))
         self.fall_penalty = float(cfg.get("walk_fall_penalty", 10.0))
+        # Real forward travel (off by default; see the module docstring). progress pays
+        # walk_progress_weight per reference cycle's advance of new rear-sole ground; step pays
+        # walk_step_bonus per walk_step_ref_m a foot lands ahead (capped at 1.25 steps).
+        self.w_progress = float(cfg.get("walk_progress_weight", 0.0))
+        self.w_step = float(cfg.get("walk_step_bonus", 0.0))
+        self.step_ref_m = float(cfg.get("walk_step_ref_m", 0.05))
+        self.steps = StepTracker(clear_m=float(cfg.get("walk_step_clear_m", 0.015)))
+        self._rear_best = 0.0
+        self.rear_progress_m = 0.0
+        self.missed_step_terminate = bool(cfg.get("walk_missed_step_terminate", False))
+        grace = float(cfg.get("walk_step_grace_s", 0.5))
+        # Deadlines in the cycle (s) by which each foot must have landed each reference swing.
+        self.step_deadlines = [swing_ends(self.ref.t, self.ref.foot_z[:, i], self.steps.clear_m)
+                               + grace for i in range(2)]
         # Each episode stands this long (s, drawn per episode) before the gait clock starts: the
         # reference was recorded from a settled stance, and the robot spawns a few mm up.
         ss = cfg.get("walk_stand_s", [1.0, 2.0])
@@ -157,6 +239,12 @@ class RealWalkingEnv(StandingEnv):
             self._foot_geoms = sole_boxes(self.env.unwrapped.model, self.model_spec.foot_body_ids)
         return sole_heights(self.env.unwrapped.data, self._foot_geoms)
 
+    def sole_x(self) -> np.ndarray:
+        """Forward (world x) position of each sole box's centre, m (R, L)."""
+        self.sole_heights()                                  # builds the geom list once
+        d = self.env.unwrapped.data
+        return np.array([float(d.geom_xpos[g][0]) for g, _ in self._foot_geoms])
+
     @staticmethod
     def _yaw(quat) -> float:
         w, x, y, z = quat
@@ -180,6 +268,10 @@ class RealWalkingEnv(StandingEnv):
         self._speed_ema = 0.0
         self._yaw0 = self._yaw(self.env.unwrapped.data.qpos[3:7])
         self._stand_s = float(np.random.uniform(*self.walk_stand_s))
+        x = self.sole_x()
+        self.steps.reset(x)
+        self._rear_best = float(x.min())
+        self.rear_progress_m = 0.0
         # Recompute the first obs: its phase dims were built before this episode's stand length.
         obs, info = out
         return np.concatenate([obs[:-PHASE_DIM], self.phase_features()]).astype(np.float32), info
@@ -206,11 +298,21 @@ class RealWalkingEnv(StandingEnv):
         q_lag, z_ref, on = self.reference(self.gait_time_s - self.walk_track_lag_s)
         q = np.asarray(data.qpos[self.act_qposadr], dtype=np.float32)
         pose_err = float(np.mean(np.square(q - q_lag)))
-        foot_err = float(np.sum(np.square(self.sole_heights() - z_ref)))
+        foot_err = float(np.sum(np.square(self.sole_heights() - z_ref)))   # the reference's soles
 
         a = 1.0 - np.exp(-self._control_dt / max(self.speed_tau_s, 1e-6))
         self._speed_ema += a * (float(data.qvel[0]) - self._speed_ema)
         speed_err = self._speed_ema - on * self.ref.speed
+        # New ground under the rear foot, and steps landed (both paid only once the gait runs).
+        z, x = self.sole_heights(), self.sole_x()
+        step_gain = self.steps.update(z, x)
+        rear_gain = max(float(x.min()) - self._rear_best, 0.0)
+        self._rear_best += rear_gain
+        if on:
+            self.rear_progress_m += rear_gain
+        else:
+            step_gain[:] = 0.0
+            self.steps.count[:] = 0
         heading_err = float(np.arctan2(np.sin(self._yaw(data.qpos[3:7]) - self._yaw0),
                                        np.cos(self._yaw(data.qpos[3:7]) - self._yaw0)))
 
@@ -219,19 +321,28 @@ class RealWalkingEnv(StandingEnv):
             "foot": self.w_foot * np.exp(-self.k_foot * foot_err),
             "speed": self.w_speed * np.exp(-self.k_speed * speed_err ** 2),
             "upright": self.w_up * np.exp(-8.0 * (1.0 - upright_cos) ** 2),
+            "progress": on * self.w_progress * rear_gain / max(self.ref.advance, 1e-3),
+            "step": self.w_step * float(np.minimum(step_gain / self.step_ref_m, 1.25).sum()),
             "heading": -self.w_heading * heading_err ** 2,
             "alive": self.w_alive,
             "action_rate": -self.w_rate * float(np.sum(np.square(self._last_action_rate))),
         }
         terminated = bool(height < 0.75 or height > 2.0 or upright_cos < 0.5)
-        if terminated:
+        missed = self.missed_step_terminate and any(
+            self.steps.count[i] < steps_due(self.gait_time_s, self.step_deadlines[i], self.ref.period)
+            for i in range(2))
+        if terminated or missed:
             terms["termination"] = -self.fall_penalty
             self._termination_cause = ("height_low" if height < 0.75 else
-                                       "tilt" if upright_cos < 0.5 else "height_high")
+                                       "tilt" if upright_cos < 0.5 else
+                                       "height_high" if terminated else "missed_step")
+            terminated = True
         self._last_reward_terms = {k: float(v) for k, v in terms.items()}
         info.update({"walk_speed_ema": self._speed_ema, "walk_pose_err": pose_err,
                      "walk_foot_err": foot_err, "walk_heading_err": heading_err,
-                     "upright_cos": upright_cos, "height": height})
+                     "upright_cos": upright_cos, "height": height,
+                     "walk_steps_R": int(self.steps.count[0]), "walk_steps_L": int(self.steps.count[1]),
+                     "walk_rear_progress_m": self.rear_progress_m})
         return float(sum(terms.values())), terminated
 
 

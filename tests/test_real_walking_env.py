@@ -8,7 +8,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from src.environments.real_walking_env import PHASE_DIM, GaitReference, make_real_walking_env
+from src.environments.real_walking_env import (PHASE_DIM, GaitReference, StepTracker,
+                                               make_real_walking_env, steps_due, swing_ends)
 from src.training.experiment import load_experiment
 
 REF = "config/gaits/step_to_v1.npz"
@@ -100,3 +101,63 @@ def test_phase_dims_are_appended_once(env):
     obs, _ = env.reset(seed=4)
     base = env.walking_obs_dim - PHASE_DIM
     assert obs.shape[0] == base + PHASE_DIM
+
+
+def _feed(tracker, path):
+    """Feed (z, x) of the right foot (the left stays put) and return the summed gains."""
+    return sum(tracker.update(np.array([z, 0.0]), np.array([x, 0.0]))[0] for z, x in path)
+
+
+def test_a_step_is_a_lift_that_lands_ahead():
+    t = StepTracker(clear_m=0.012)
+    t.reset(np.zeros(2))
+    lift = [(0.0, 0.0), (0.006, 0.0), (0.02, 0.02), (0.01, 0.04), (0.0, 0.04)]
+    assert _feed(t, lift) == pytest.approx(0.04) and t.count[0] == 1
+
+
+def test_slides_hops_and_back_and_forth_are_not_steps():
+    t = StepTracker(clear_m=0.012)
+    t.reset(np.zeros(2))
+    assert _feed(t, [(0.001, 0.01 * k) for k in range(6)]) == 0.0            # slide 5 cm
+    assert _feed(t, [(0.006, 0.05), (0.02, 0.05), (0.0, 0.05)]) == 0.0      # then hop in place
+    assert _feed(t, [(0.006, 0.05), (0.004, 0.08), (0.0, 0.08)]) == 0.0     # a scuff (3 mm up)
+    t.reset(np.zeros(2))
+    back = [(0.006, 0.0), (0.02, -0.03), (0.0, -0.03)]
+    fwd = [(0.006, -0.03), (0.02, 0.0), (0.0, 0.0)]
+    assert _feed(t, back) == 0.0 and _feed(t, fwd) == 0.0                   # back to the start
+    assert t.count[0] == 0
+
+
+def test_missed_step_deadlines_follow_the_reference_swing():
+    ref = GaitReference.load(REF)
+    ends = swing_ends(ref.t, ref.foot_z[:, 0], 0.012)
+    assert len(ends) == 1 and 1.5 < ends[0] < 3.0                          # one right step
+    assert len(swing_ends(ref.t, ref.foot_z[:, 1], 0.012)) == 0              # the left slides
+    assert [steps_due(g, [3.0], 9.0) for g in (-1.0, 2.9, 3.0, 11.9, 12.0)] == [0, 0, 1, 1, 2]
+
+
+def test_v2_reward_pays_stepping_and_ends_standing_still():
+    """The run-1 exploit: a policy that keeps its balance and never steps must not keep the
+    reference's reward. Nominal plant, so the reference's first step lands."""
+    with contextlib.redirect_stdout(io.StringIO()):
+        cfg = load_experiment("config/experiments/walk_step_to_v2.yaml").task_cfg("standing")
+        cfg.update(debug_print_every=0, domain_rand=False, actuator_rand=False, obs_noise=False,
+                   residual_baseline_rand=0.0, walk_stand_s=1.0)
+        e = make_real_walking_env(config=cfg)
+    stand = e.residual_baseline.astype(np.float32)
+    out = {}
+    for name in ("reference", "stand still"):
+        e.reset(seed=0)
+        ret, term = 0.0, False
+        for _ in range(int(5.0 / e._control_dt)):
+            q_ref = e.reference(e.gait_time_s)[0]
+            a = np.zeros(17, np.float32) if name == "reference" else np.clip(stand - q_ref, -0.2, 0.2)
+            _, r, term, _, info = e.step(a)
+            ret += r
+            if term:
+                break
+        out[name] = (ret, term, e._termination_cause if term else None, info["walk_steps_R"])
+    ref, still = out["reference"], out["stand still"]
+    assert not ref[1] and ref[3] == 1                                        # stepped, still up
+    assert still[1] and still[2] == "missed_step" and still[3] == 0
+    assert ref[0] - still[0] > cfg["walk_step_bonus"]                         # by more than a step

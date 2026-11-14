@@ -78,7 +78,14 @@ feedback prior. Each episode stands `walk_stand_s` before the gait clock starts.
 - **Obs:** the standing obs + `[sin, cos, gait running]` (3), appended after the history stack.
 - **Reward terms:** `pose` and `foot` (follow the reference, compared `walk_track_lag_s` late for
   the servo lag), `speed` (COM forward speed EMA vs the reference's), `upright`, `heading`, `alive`,
-  `action_rate`, `termination`.
+  `action_rate`, `termination`; and (off by default, on in `walk_step_to_v2`) `progress` (new
+  ground under the REAR sole, ratcheted, per reference cycle advance) and `step` (bonus per
+  `walk_step_ref_m` a foot lands ahead after clearing `walk_step_clear_m`; `StepTracker`).
+- **Missed-step termination** (`walk_missed_step_terminate`): the episode ends like a fall
+  (cause `missed_step`) when a reference swing's deadline (its end + `walk_step_grace_s`) passes
+  without a landed step of that foot. Why: run 1 (`walk_step_to`, no termination) stayed up 24/24
+  by SLIDING its feet and never stepped, since the speed/sole terms paid ~97% for it. A soft
+  reward cannot price "not stepping" above "safe" against a fall; early termination can.
 - **Why a reference:** this body cannot walk statically, and scratch PPO never found standing
   feedback. A trajectory search found the steps (see `config/experiments/walk_step_to.yaml`).
 

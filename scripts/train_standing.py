@@ -604,8 +604,11 @@ def main():
     if not args.dry_run and not args.no_video and vv.get('enabled', standing.get('env_kind') not in NOT_STANDING):
         _validation_video(run, standing, sink, int(model.num_timesteps), vv)
     sink.close()
-    print(f"Best robustness checkpoint: {run.best}  (score it on its own with "
-          f"scripts/eval_standing.py --run {run.root})")
+    if run.best.exists():
+        print(f"Best robustness checkpoint: {run.best}  (score it on its own with "
+              f"scripts/eval_standing.py --run {run.root})")
+    elif standing.get('env_kind') == 'real_walking':
+        print(f"Score it: python scripts/eval_walking.py --run {run.root}")
 
 
 if __name__ == "__main__":
