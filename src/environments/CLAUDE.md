@@ -68,6 +68,20 @@ lean about the feet, start velocities; keeps servo-lag and EMA state consistent)
 
 **Advancement:** Height within tolerance + episode length ≥ minimum + not fallen + 60% success rate over 20 episodes.
 
+### `real_walking_env.py` — RealWalkingEnv(StandingEnv) (`env_kind: real_walking`)
+
+Walking on the REAL robot body (flex plant, proprioceptive obs, real command chain). A reference
+gait (`walk_reference`, one cycle of joint targets + the sole heights it makes, built by
+`scripts/build_walk_reference.py`) drives the command; the policy outputs corrections inside the
+residual box, which is re-centred on `q_ref(phase)` every step. Zero action = the reference + the
+feedback prior. Each episode stands `walk_stand_s` before the gait clock starts.
+- **Obs:** the standing obs + `[sin, cos, gait running]` (3), appended after the history stack.
+- **Reward terms:** `pose` and `foot` (follow the reference, compared `walk_track_lag_s` late for
+  the servo lag), `speed` (COM forward speed EMA vs the reference's), `upright`, `heading`, `alive`,
+  `action_rate`, `termination`.
+- **Why a reference:** this body cannot walk statically, and scratch PPO never found standing
+  feedback. A trajectory search found the steps (see `config/experiments/walk_step_to.yaml`).
+
 ### `walking_env.py` — WalkingEnv(gym.Wrapper)
 
 Command-conditioned walking with velocity tracking.
