@@ -1,0 +1,32 @@
+# walk_step_to_v2, fine-tuned to walk on any floor: contact friction 0.3-1.5.
+#
+# WHY (11/15/2026). Run 2 (walk_step_to_v2-1114-0940, 30M from scratch) walks in sim: 17/24
+# held out stay up 30 s (reference alone 2/24), ~1 right step per 9 s cycle (~12 cm, the left
+# foot slides up), 1.6 cm/s. But its friction was narrower than it looked: MuJoCo uses the LARGER
+# of a contact pair's two coefficients and the floor's is 1.0, so rand_friction_range
+# [0.6, 1.4] per geom gave contacts of mu ~0.8-1.4. A plastic sole on wood or tile is nearer
+# 0.3-0.5. The robot has to walk on whatever floor it is put on, so the friction is randomised
+# over that whole range instead of measured:
+#   walk_friction_range: one mu per episode, log-uniform 0.3-1.5, set on EVERY contact geom
+#   (floor and robot) so it is the contact's friction (src/environments/real_walking_env.py).
+# Everything else is v2 (missed-step termination, step bonus, rear-foot progress, knee law).
+# Fine-tuned from run 2's final weights (it already balances and steps), 30M more steps.
+#
+#   python scripts/train_standing.py --config config/experiments/walk_step_to_v3.yaml --wandb online
+#   python scripts/eval_walking.py --run runs/<name> --friction 0.3 0.5 0.8 1.2 1.5
+# Success: at every friction it stays up at least as often as run 2 does at mu 0.8-1.2 (and far
+# more at 0.3-0.5), still landing ~1 right step per cycle; and no worse than run 2 on its own
+# held-out test (eval_walking.py without --friction).
+experiment:
+  name: walk_step_to_v3
+  base: config/experiments/walk_step_to_v2.yaml
+  description: walk_step_to_v2 fine-tuned from run 2 with one contact friction per episode, log-uniform 0.3-1.5.
+  hypothesis: Training across the real friction range keeps run 2's walking on slippery floors without losing it on grippy ones.
+  tags: [walking, real-robot, flex, reference-gait, finetune, friction]
+  resume:
+    model: runs/walk_step_to_v2-1114-0940/final/model.zip
+    vecnorm: runs/walk_step_to_v2-1114-0940/final/vecnorm.pkl
+    timesteps: 60000000
+overrides:
+  standing:
+    walk_friction_range: [0.3, 1.5]

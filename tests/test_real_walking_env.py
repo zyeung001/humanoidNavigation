@@ -161,3 +161,16 @@ def test_v2_reward_pays_stepping_and_ends_standing_still():
     assert not ref[1] and ref[3] == 1                                        # stepped, still up
     assert still[1] and still[2] == "missed_step" and still[3] == 0
     assert ref[0] - still[0] > cfg["walk_step_bonus"]                         # by more than a step
+
+
+def test_friction_range_sets_the_contact_friction_itself():
+    """MuJoCo takes the larger coefficient of a pair (the floor's is 1.0), so the drawn friction
+    must be set on every contact geom for the contact to use it."""
+    with contextlib.redirect_stdout(io.StringIO()):
+        e = make_real_walking_env(config=_cfg(walk_friction_range=[0.3, 0.3]))
+    e.reset(seed=5)
+    for _ in range(5):
+        e.step(np.zeros(17, np.float32))
+    d = e.env.unwrapped.data
+    assert d.ncon > 0
+    np.testing.assert_allclose([d.contact[i].friction[0] for i in range(d.ncon)], 0.3, rtol=1e-6)

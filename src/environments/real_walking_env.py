@@ -186,6 +186,18 @@ class RealWalkingEnv(StandingEnv):
         self.steps = StepTracker(clear_m=float(cfg.get("walk_step_clear_m", 0.015)))
         self._rear_best = 0.0
         self.rear_progress_m = 0.0
+        # One friction coefficient per episode for EVERY contact (floor and robot alike), drawn
+        # log-uniform from walk_friction_range. MuJoCo uses the larger of a contact pair's two
+        # coefficients, and the floor's is 1.0, so the plant's per-geom friction randomisation
+        # (rand_friction_range) never made a contact slipperier than ~0.6-1.0: run 2 trained on
+        # mu ~0.8-1.4 and kept 5/12 up at 0.4 (11/15). Setting all of them alike makes the drawn
+        # value the contact's. Off (None) by default.
+        fr = cfg.get("walk_friction_range")
+        self.friction_range = None if fr is None else (float(fr[0]), float(fr[1]))
+        m = self.env.unwrapped.model
+        self._contact_geoms = np.array([g for g in range(m.ngeom)
+                                        if m.geom_contype[g] | m.geom_conaffinity[g]], dtype=int)
+        self.friction = None
         self.missed_step_terminate = bool(cfg.get("walk_missed_step_terminate", False))
         grace = float(cfg.get("walk_step_grace_s", 0.5))
         # Deadlines in the cycle (s) by which each foot must have landed each reference swing.
@@ -268,6 +280,10 @@ class RealWalkingEnv(StandingEnv):
         self._speed_ema = 0.0
         self._yaw0 = self._yaw(self.env.unwrapped.data.qpos[3:7])
         self._stand_s = float(np.random.uniform(*self.walk_stand_s))
+        if self.friction_range is not None:
+            lo, hi = self.friction_range
+            self.friction = float(np.exp(np.random.uniform(np.log(lo), np.log(hi))))
+            self.env.unwrapped.model.geom_friction[self._contact_geoms, 0] = self.friction
         x = self.sole_x()
         self.steps.reset(x)
         self._rear_best = float(x.min())

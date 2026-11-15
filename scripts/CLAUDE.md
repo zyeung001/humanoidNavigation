@@ -66,7 +66,7 @@ python scripts/build_walk_reference.py --config config/experiments/flex_plant_v2
   the share that stays up, distance, speed and fall times, plus the paired difference. The
   reference alone: 2/24 up, falls mostly at 12-13 s (the second right step). It also counts the
   right/left steps landed per episode and the rear foot's progress: survival alone can hide a
-  policy that slides instead of stepping.
+  policy that slides instead of stepping. `--friction 0.3 0.5 0.8 1.2 1.5` repeats it per floor.
 - `build_walk_reference.py`: joins step command sequences into one cycle, then replays it open-loop
   in the suite's `quiet` env, after a 3 s settle on the standing pose, to record the sole heights
   and advance. It refuses to save a cycle that falls.
