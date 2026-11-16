@@ -113,6 +113,14 @@ def steps_due(gait_time_s, deadlines, period_s) -> int:
     return int(cycles) * len(deadlines) + int(np.sum(np.asarray(deadlines) <= tt))
 
 
+def pay_progress(gain_m, credit_m, accrue_m, cap_m):
+    """Progress paid under a speed cap (a token bucket): credit grows by accrue_m per step up to
+    cap_m, and only gain the credit covers is paid. Returns (paid_m, new credit_m)."""
+    credit = min(credit_m + accrue_m, cap_m)
+    paid = min(gain_m, credit)
+    return paid, credit - paid
+
+
 class StepTracker:
     """Real steps of each foot, from its sole height and position along the walking direction.
 
@@ -186,6 +194,14 @@ class RealWalkingEnv(StandingEnv):
         self.steps = StepTracker(clear_m=float(cfg.get("walk_step_clear_m", 0.015)))
         self._rear_best = 0.0
         self.rear_progress_m = 0.0
+        # Speed cap on what progress pays (m/s; None = uncapped). WHY (11/16): uncapped, the v3
+        # fine-tune slid ~3 cm/s and fell more on ordinary floors (67 vs run 2's 74 of 120 up
+        # across mu 0.3-1.5), all its extra distance being sliding. Above the cap, going faster
+        # earns nothing, so staying up wins. Credit carries up to one reference cycle's advance,
+        # so the burst of a step or a slide is paid in full at the cap's average speed.
+        ms = cfg.get("walk_progress_max_speed")
+        self.progress_max_speed = None if ms is None else float(ms)
+        self._progress_credit = 0.0
         # One friction coefficient per episode for EVERY contact (floor and robot alike), drawn
         # log-uniform from walk_friction_range. MuJoCo uses the larger of a contact pair's two
         # coefficients, and the floor's is 1.0, so the plant's per-geom friction randomisation
@@ -288,6 +304,7 @@ class RealWalkingEnv(StandingEnv):
         self.steps.reset(x)
         self._rear_best = float(x.min())
         self.rear_progress_m = 0.0
+        self._progress_credit = 0.0
         # Recompute the first obs: its phase dims were built before this episode's stand length.
         obs, info = out
         return np.concatenate([obs[:-PHASE_DIM], self.phase_features()]).astype(np.float32), info
@@ -326,6 +343,10 @@ class RealWalkingEnv(StandingEnv):
         self._rear_best += rear_gain
         if on:
             self.rear_progress_m += rear_gain
+            if self.progress_max_speed is not None:
+                rear_gain, self._progress_credit = pay_progress(
+                    rear_gain, self._progress_credit, self.progress_max_speed * self._control_dt,
+                    self.ref.advance)
         else:
             step_gain[:] = 0.0
             self.steps.count[:] = 0

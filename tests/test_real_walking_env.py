@@ -9,7 +9,8 @@ import numpy as np
 import pytest
 
 from src.environments.real_walking_env import (PHASE_DIM, GaitReference, StepTracker,
-                                               make_real_walking_env, steps_due, swing_ends)
+                                               make_real_walking_env, pay_progress, steps_due,
+                                               swing_ends)
 from src.training.experiment import load_experiment
 
 REF = "config/gaits/step_to_v1.npz"
@@ -174,3 +175,18 @@ def test_friction_range_sets_the_contact_friction_itself():
     d = e.env.unwrapped.data
     assert d.ncon > 0
     np.testing.assert_allclose([d.contact[i].friction[0] for i in range(d.ncon)], 0.3, rtol=1e-6)
+
+
+def test_progress_is_paid_up_to_the_speed_cap():
+    """A burst (a step or a slide) is paid in full from saved credit; going faster than the cap
+    for long is not paid beyond it."""
+    credit, paid = 0.0, 0.0
+    for _ in range(100):                                   # 100 steps at 1 mm/step, cap 0.5 mm/step
+        got, credit = pay_progress(0.001, credit, 0.0005, 0.05)
+        paid += got
+    assert paid == pytest.approx(0.05, abs=1e-9)           # the cap's average, no more
+    credit = 0.0
+    for _ in range(80):                                    # standing: credit builds (to the cap)
+        _, credit = pay_progress(0.0, credit, 0.0005, 0.05)
+    got, credit = pay_progress(0.03, credit, 0.0005, 0.05)  # then a 3 cm step in one go
+    assert got == pytest.approx(0.03)

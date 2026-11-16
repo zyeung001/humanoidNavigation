@@ -84,6 +84,8 @@ feedback prior. Each episode stands `walk_stand_s` before the gait clock starts.
 - **Friction** (`walk_friction_range`, log-uniform, off by default): one coefficient per episode on
   EVERY contact geom. MuJoCo uses the larger of a pair's two and the floor's is 1.0, so the
   plant's per-geom `rand_friction_range` never made contacts slippery (run 2 trained on ~0.8-1.4).
+- **Speed cap** (`walk_progress_max_speed`, m/s, off by default): progress is paid from a credit
+  that grows at the cap (up to one cycle's advance). v3, uncapped, slid ~3 cm/s and fell more.
 - **Missed-step termination** (`walk_missed_step_terminate`): the episode ends like a fall
   (cause `missed_step`) when a reference swing's deadline (its end + `walk_step_grace_s`) passes
   without a landed step of that foot. Why: run 1 (`walk_step_to`, no termination) stayed up 24/24

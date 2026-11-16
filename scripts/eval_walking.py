@@ -81,7 +81,8 @@ def main():
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument("--run", help="runs/<name>: its config.yaml and final/ (or --which best)")
     g.add_argument("--config", help="experiment yaml: score the reference alone")
-    p.add_argument("--which", default="final", choices=["final", "best"])
+    p.add_argument("--which", default="final",
+                   help="final, best, or a checkpoint: checkpoints/<timesteps> (checkpoint_every)")
     p.add_argument("--seed", type=int, default=777, help="first held-out seed (training uses others)")
     p.add_argument("--episodes", type=int, default=24)
     p.add_argument("--seconds", type=float, default=30.0)

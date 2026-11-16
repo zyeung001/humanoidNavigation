@@ -38,7 +38,9 @@ as `changes.*` in W&B, so the runs table shows what each run changed.
   `scripts/eval_walking.py`. Run 1 (11/14) stayed up 24/24 held out but slid instead of
   stepping (0 steps, 0.11 cm/s). `walk_step_to_v2` fixes the reward: a missed step ends the
   episode, plus a step bonus and rear-foot progress in place of the speed term. Run 2 walks
-  (17/24 up, ~1 step per cycle); `walk_step_to_v3` fine-tunes it on contact friction 0.3-1.5.
+  (17/24 up, ~1 step per cycle); `walk_step_to_v3` fine-tunes it on contact friction 0.3-1.5,
+  which slid faster and fell more (67 vs 74 of 120 across the floors); `walk_step_to_v4` adds a
+  1.5 cm/s cap on paid progress. `checkpoint_every` saves runs/<run>/checkpoints/<timesteps>/.
 - `config/gaits/`: walking references (`.npz`, one cycle) and the step command sequences
   (`.npy`, (T, 17) at 40 Hz) they are built from.
 

@@ -23,6 +23,7 @@ import os
 import sys
 import warnings
 import argparse
+from pathlib import Path
 import time
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -134,6 +135,29 @@ def pin_scenario_definitions(cfg: dict) -> None:
 
 # Env kinds the standing robustness suite (and so best/ by eval/score and the video) does not apply to.
 NOT_STANDING = ('real_turning', 'real_walking')
+
+
+class PeriodicCheckpoint(BaseCallback):
+    """Every `every` steps, save model.zip + vecnorm.pkl to <dir>/<timesteps>/ (the layout of
+    final/). Runs without the robustness eval (walking, turning) otherwise keep only final/:
+    walk_step_to_v3 peaked near 38M of 60M and that policy was gone (11/16)."""
+
+    def __init__(self, directory, every):
+        super().__init__()
+        self.directory, self.every, self._next = Path(directory), int(every), None
+
+    def _on_step(self) -> bool:
+        if self._next is None:
+            self._next = (self.num_timesteps // self.every + 1) * self.every
+        if self.num_timesteps >= self._next:
+            d = self.directory / str(self._next)
+            d.mkdir(parents=True, exist_ok=True)
+            self.model.save(d / "model.zip")
+            vn = self.model.get_vec_normalize_env()
+            if vn is not None:
+                vn.save(str(d / "vecnorm.pkl"))
+            self._next += self.every
+        return True
 
 
 def make_env_fns(n_envs: int, seed: int, cfg: dict):
@@ -521,6 +545,9 @@ def main():
                        control_dt=float(vec.get_attr('_control_dt', [0])[0]),
                        log_std_bounds=log_std_bounds),
     ]
+    ck_every = int(standing.get('checkpoint_every', 0))
+    if ck_every > 0:
+        callbacks.append(PeriodicCheckpoint(run.root / 'checkpoints', every=ck_every))
     if eval_every > 0:
         callbacks.append(RobustnessEvalCallback(
             standing, run, sink, every=eval_every,
