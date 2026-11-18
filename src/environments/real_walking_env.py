@@ -185,6 +185,13 @@ class RealWalkingEnv(StandingEnv):
         self.w_alive = float(cfg.get("walk_alive_bonus", 0.5))
         self.w_rate = float(cfg.get("walk_action_rate_weight", 0.5))
         self.fall_penalty = float(cfg.get("walk_fall_penalty", 10.0))
+        # Torso smoothness (off by default). WHY (11/17): v4 walked by throwing its upper body,
+        # the waist roll swinging ~60 deg at up to 90 deg/s; the user rejected it on video.
+        # torso_rate: base roll/pitch angular velocity^2 (rad/s); waist_rate: waist roll and
+        # pitch joint velocity^2.
+        self.w_torso_rate = float(cfg.get("walk_torso_rate_weight", 0.0))
+        self.w_waist_rate = float(cfg.get("walk_waist_rate_weight", 0.0))
+        self._waist_dof = None
         # Real forward travel (off by default; see the module docstring). progress pays
         # walk_progress_weight per reference cycle's advance of new rear-sole ground; step pays
         # walk_step_bonus per walk_step_ref_m a foot lands ahead (capped at 1.25 steps).
@@ -350,6 +357,11 @@ class RealWalkingEnv(StandingEnv):
         else:
             step_gain[:] = 0.0
             self.steps.count[:] = 0
+        if self._waist_dof is None:
+            m = self.env.unwrapped.model
+            self._waist_dof = [int(m.jnt_dofadr[m.actuator_trnid[a][0]]) for a in (8, 9)]
+        torso_rate2 = float(data.qvel[3] ** 2 + data.qvel[4] ** 2)
+        waist_rate2 = float(np.sum(np.square(data.qvel[self._waist_dof])))
         heading_err = float(np.arctan2(np.sin(self._yaw(data.qpos[3:7]) - self._yaw0),
                                        np.cos(self._yaw(data.qpos[3:7]) - self._yaw0)))
 
@@ -361,6 +373,8 @@ class RealWalkingEnv(StandingEnv):
             "progress": on * self.w_progress * rear_gain / max(self.ref.advance, 1e-3),
             "step": self.w_step * float(np.minimum(step_gain / self.step_ref_m, 1.25).sum()),
             "heading": -self.w_heading * heading_err ** 2,
+            "torso_rate": -self.w_torso_rate * torso_rate2,
+            "waist_rate": -self.w_waist_rate * waist_rate2,
             "alive": self.w_alive,
             "action_rate": -self.w_rate * float(np.sum(np.square(self._last_action_rate))),
         }
@@ -379,7 +393,10 @@ class RealWalkingEnv(StandingEnv):
                      "walk_foot_err": foot_err, "walk_heading_err": heading_err,
                      "upright_cos": upright_cos, "height": height,
                      "walk_steps_R": int(self.steps.count[0]), "walk_steps_L": int(self.steps.count[1]),
-                     "walk_rear_progress_m": self.rear_progress_m})
+                     "walk_rear_progress_m": self.rear_progress_m,
+                     "walk_torso_rate": float(np.sqrt(torso_rate2)),
+                     "walk_waist_roll": float(data.qpos[self.act_qposadr[8]]),
+                     "walk_waist_pitch": float(data.qpos[self.act_qposadr[9]])})
         return float(sum(terms.values())), terminated
 
 

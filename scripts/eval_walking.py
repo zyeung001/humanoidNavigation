@@ -10,6 +10,9 @@ Reported per controller: share of episodes that stay up for the whole test, mean
 steps landed per episode (sole up past 12 mm, landed ahead; slides do not count) and the new
 ground under the rear foot. A policy can stay up by sliding instead of stepping (11/14,
 walk_step_to-1113-2300: 24/24 up, 0 steps), so read the steps column with the survival one.
+Torso: the p95 body roll/pitch rate and the waist roll/pitch swing (p5-p95) while the gait runs
+(the last 1 s before a fall left out)
+-- v4 @50M walked by swinging the waist ~60 deg, which survival and steps did not show (11/17).
 
   python scripts/eval_walking.py --run runs/<name>                 # final/ (or best/ if present)
   python scripts/eval_walking.py --config config/experiments/walk_step_to.yaml   # reference only
@@ -48,11 +51,18 @@ def run_episodes(cfg, policy, seeds, seconds):
         d = env.env.unwrapped.data
         x0 = float(d.subtree_com[0][0])
         fell = None
+        rate, wr, wp = [], [], []
         steps = int(round(seconds / env._control_dt))
         for k in range(steps):
             obs, _, term, trunc, info = env.step(policy(obs))
+            if env.gait_time_s >= 0.0:
+                rate.append(info["walk_torso_rate"])
+                wr.append(info["walk_waist_roll"])
+                wp.append(info["walk_waist_pitch"])
             if term:
                 fell = (k + 1) * env._control_dt
+                tail = int(round(1.0 / env._control_dt))     # the fall itself is not the gait
+                rate, wr, wp = rate[:-tail], wr[:-tail], wp[:-tail]
                 break
             if trunc:
                 break
@@ -60,7 +70,10 @@ def run_episodes(cfg, policy, seeds, seconds):
         dx = float(d.subtree_com[0][0]) - x0
         out.append(dict(seed=s, fell_s=fell, dx_m=dx, speed_mps=dx / max(t_up, 1e-6),
                         steps_R=int(info.get("walk_steps_R", 0)), steps_L=int(info.get("walk_steps_L", 0)),
-                        rear_progress_m=float(info.get("walk_rear_progress_m", 0.0))))
+                        rear_progress_m=float(info.get("walk_rear_progress_m", 0.0)),
+                        torso_rate_p95_dps=float(np.degrees(np.percentile(rate, 95))) if rate else 0.0,
+                        waist_roll_swing_deg=float(np.degrees(np.ptp(np.percentile(wr, [5, 95])))) if wr else 0.0,
+                        waist_pitch_swing_deg=float(np.degrees(np.ptp(np.percentile(wp, [5, 95])))) if wp else 0.0))
     return out
 
 
@@ -73,6 +86,9 @@ def summary(eps):
                 steps_R_per_ep=round(float(np.mean([e["steps_R"] for e in eps])), 2),
                 steps_L_per_ep=round(float(np.mean([e["steps_L"] for e in eps])), 2),
                 rear_progress_cm=round(100 * float(np.mean([e["rear_progress_m"] for e in eps])), 1),
+                torso_rate_p95_dps=round(float(np.mean([e["torso_rate_p95_dps"] for e in eps])), 1),
+                waist_roll_swing_deg=round(float(np.mean([e["waist_roll_swing_deg"] for e in eps])), 1),
+                waist_pitch_swing_deg=round(float(np.mean([e["waist_pitch_swing_deg"] for e in eps])), 1),
                 falls_s=[round(e["fell_s"], 1) for e in eps if e["fell_s"] is not None])
 
 

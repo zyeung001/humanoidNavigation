@@ -86,6 +86,11 @@ feedback prior. Each episode stands `walk_stand_s` before the gait clock starts.
   plant's per-geom `rand_friction_range` never made contacts slippery (run 2 trained on ~0.8-1.4).
 - **Speed cap** (`walk_progress_max_speed`, m/s, off by default): progress is paid from a credit
   that grows at the cap (up to one cycle's advance). v3, uncapped, slid ~3 cm/s and fell more.
+- **Torso** (`walk_torso_rate_weight`, `walk_waist_rate_weight`, off by default): penalise the
+  body's roll/pitch rate^2 and the waist joints' speed^2. v4 walked by swinging the waist ~60 deg.
+- **Real servo limits:** set `clip_to_servo_limits` (StandingEnv, `servo_limits.py`) for walking.
+  The MJCF ranges are wider than what the robot can be sent (knees -90 vs ~-3 deg): without it
+  v4 hyperextended its knees to -13 deg.
 - **Missed-step termination** (`walk_missed_step_terminate`): the episode ends like a fall
   (cause `missed_step`) when a reference swing's deadline (its end + `walk_step_grace_s`) passes
   without a landed step of that foot. Why: run 1 (`walk_step_to`, no termination) stayed up 24/24

@@ -83,6 +83,8 @@ def main():
     p.add_argument("--cycles", type=int, default=3, help="cycles replayed to measure the reference")
     p.add_argument("--no-prior", action="store_true",
                    help="replay without the config's feedback_prior (as the step search ran)")
+    p.add_argument("--servo-limits", action="store_true",
+                   help="replay with commands clipped to the real servo limits (clip_to_servo_limits)")
     p.add_argument("--out", required=True)
     a = p.parse_args()
 
@@ -90,6 +92,8 @@ def main():
     cfg["residual_clamp"] = 3.0       # the replay may go anywhere the servos can
     if a.no_prior:
         cfg["feedback_prior"] = None
+    if a.servo_limits:
+        cfg["clip_to_servo_limits"] = True
     q = join([np.load(s) for s in a.steps], a.motion_steps, a.hold_s, a.blend_s)
     soles, advance, fell_at = replay(cfg, q, a.cycles)
     if fell_at is not None:

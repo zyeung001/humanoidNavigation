@@ -1,0 +1,48 @@
+# Walking with a QUIET TORSO: a new reference step where the legs do the work, trained from
+# scratch with the real servo limits enforced.
+#
+# WHY (11/17/2026). The user rejected walk_step_to_v4 on video: "why is the torso slamming side
+# to side ... it doesn't even look like the legs are moving". Measured:
+#   * the reference (step_to_v1) was searched with the waist roll SEEDED at its stop and no
+#     torso cost, so it shifted weight by swinging the upper body (waist roll 44 deg p5-p95);
+#     v4 amplified it (48 deg, 29 deg of waist pitch, body roll/pitch rate p95 41 deg/s) while
+#     the legs barely moved (knee <= 12 deg);
+#   * training only clipped commands to the MJCF ranges, which are wider than the real servos:
+#     v4 hyperextended the knees to -13 deg (robot: ~-3) and drove the waist roll to +35 (+22).
+# The new step search (scratchpad walk/step2.py) froze the waist roll entirely, seeded the lean
+# with hip roll, penalised torso angular velocity, and rewarded the swing leg's knee and hip
+# flexion. The step still exists:
+#   config/gaits/step_R_march.npy: waist roll -1..+2 deg, right knee 21 deg, hip flex 17 deg,
+#     foot 3.5 cm up for 0.48 s, lands 5.3 cm forward, body rate <= 30 deg/s;
+#   config/gaits/step_L_slide_after_march.npy: the left foot slides 5.3 cm up (it still cannot
+#     lift: left hip roll stops at +10 deg), body rate <= 9 deg/s;
+#   config/gaits/march_v1.npz (0.5 s holds): 8 s cycle, 4.4-4.9 cm per cycle open-loop with the
+#     knee law and the real servo limits, 0.59 cm/s.
+# Training keeps v2's step rewards, v3's friction range and v4's speed cap and checkpoints, and adds:
+#   clip_to_servo_limits     commands clipped exactly as the robot's deploy map clips them;
+#   per-joint residual_clamp the waist roll/pitch may deviate only 0.1 rad from the reference;
+#   torso / waist rate terms penalise the body's roll/pitch rate and the waist joints' speed.
+# From scratch: the gait is new, and every earlier policy learned on impossible joint angles.
+#
+#   python scripts/train_standing.py --config config/experiments/walk_march.yaml --wandb online
+#   python scripts/eval_walking.py --run runs/<name> --friction 0.3 0.5 0.8 1.2 1.5
+# Success: across the five floors, clearly more episodes up than the reference alone, ~1 right
+# step per cycle, AND a quiet torso: waist roll swing under ~12 deg and body rate p95 under
+# ~25 deg/s (v4: 48 deg and 41 deg/s) -- judged on video too.
+experiment:
+  name: walk_march
+  base: config/experiments/walk_step_to_v2.yaml
+  description: New leg-driven reference (waist frozen, knee/hip flex), real servo limits, torso-rate penalties, friction 0.3-1.5, from scratch.
+  hypothesis: With a leg-driven reference, real joint limits and a torso cost, PPO keeps the robot walking without swinging its upper body.
+  tags: [walking, real-robot, flex, reference-gait, torso, servo-limits]
+overrides:
+  standing:
+    walk_reference: config/gaits/march_v1.npz
+    clip_to_servo_limits: true
+    #               R_roll yaw pitch knee L_roll yaw pitch knee W_roll W_pitch W_yaw  arms x6
+    residual_clamp: [0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.1, 0.1, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2]
+    walk_friction_range: [0.3, 1.5]
+    walk_progress_max_speed: 0.01
+    walk_torso_rate_weight: 1.0
+    walk_waist_rate_weight: 0.5
+    checkpoint_every: 5000000

@@ -190,3 +190,15 @@ def test_progress_is_paid_up_to_the_speed_cap():
         _, credit = pay_progress(0.0, credit, 0.0005, 0.05)
     got, credit = pay_progress(0.03, credit, 0.0005, 0.05)  # then a 3 cm step in one go
     assert got == pytest.approx(0.03)
+
+
+def test_march_reference_keeps_the_torso_still_and_stays_in_the_real_limits():
+    """march_v1 (walk_march) was searched with the waist roll frozen; and every command must be
+    one the robot can be sent (the step search clipped to the real servo limits)."""
+    from src.environments.servo_limits import real_command_limits
+    ref = GaitReference.load("config/gaits/march_v1.npz")
+    lo, hi = real_command_limits("config/joint_servo_map.yaml", 17)
+    assert np.all(ref.q >= lo - 1e-4) and np.all(ref.q <= hi + 1e-4)
+    assert np.ptp(ref.q[:, 8]) < 0.05                       # waist roll: under 3 deg
+    assert ref.q[:, 3].max() > 0.3                          # the right knee bends (>17 deg)
+    assert ref.foot_z[:, 0].max() > 0.025 and ref.advance > 0.03
