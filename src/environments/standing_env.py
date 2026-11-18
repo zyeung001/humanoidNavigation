@@ -290,6 +290,19 @@ class StandingEnv(gym.Wrapper):
         self.residual_baseline_rand = float(self.cfg.get('residual_baseline_rand', 0.0))
         self._res_base_ep = self.residual_baseline.copy()
 
+        # Where commands are clipped: the actuator ctrlrange, and with clip_to_servo_limits
+        # also the REAL servo limits the deploy map clips to (servo_limits.py). Off = the
+        # ctrlrange only, byte-identical to before.
+        self._cmd_lo = self.env.action_space.low.astype(np.float32).copy()
+        self._cmd_hi = self.env.action_space.high.astype(np.float32).copy()
+        if self.cfg.get('clip_to_servo_limits', False):
+            from .servo_limits import real_command_limits
+            lo, hi = real_command_limits(self.cfg.get("joint_map", "config/joint_servo_map.yaml"),
+                                         int(self.env.action_space.shape[0]))
+            self._cmd_lo = np.maximum(self._cmd_lo, lo)
+            self._cmd_hi = np.minimum(self._cmd_hi, hi)
+            print(f"  Commands clipped to the real servo limits ({self.cfg.get('joint_map', 'config/joint_servo_map.yaml')})")
+
         # WIDE ACTION SPACE: expose a +-pi Box to the learner instead of the actuator
         # ctrlrange, so SB3 stops clipping actions before this env ever sees them.
         #
@@ -945,7 +958,7 @@ class StandingEnv(gym.Wrapper):
         # without it an elbow asked for -0.69 would be clamped to -0.2 by the residual box
         # and carried into last_action, while the robot clamps it to 0 at the stop -- the
         # two would feed the policy different observations for the same command.
-        low, high = self.env.action_space.low, self.env.action_space.high
+        low, high = self._cmd_lo, self._cmd_hi
         action = np.clip(action, low, high)
         if np.any(self.residual_clamp > 0.0):
             action = np.clip(action, self._res_base_ep - self.residual_clamp,
@@ -973,8 +986,7 @@ class StandingEnv(gym.Wrapper):
             tau = np.clip(self.action_smoothing_tau, 0.0, 1.0)
             action = (1.0 - tau) * self.prev_action + tau * action
 
-        low, high = self.env.action_space.low, self.env.action_space.high
-        action = np.clip(action, low, high)
+        action = np.clip(action, self._cmd_lo, self._cmd_hi)
         self.prev_action = action.copy()
         return action
 
