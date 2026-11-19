@@ -1,0 +1,49 @@
+# Walking on the real robot: PPO learns the feedback that keeps a reference step-to gait upright.
+#
+# WHY (11/13/2026). Standing is at the plant's limit: no controller beat the knee law
+# (scripts/ceiling.md, PR #56). Walking has no hand-written law to tie, so it is where RL has work
+# to do. But this body cannot walk statically (no ankles, hip flexion stops at +0.35 rad, a bent
+# knee tips the foot toe-down), and plain PPO never found even standing feedback from scratch on
+# it. So a gait is given and PPO learns corrections around it:
+#
+#   config/gaits/step_to_v1.npz -- one 9 s cycle (scripts/build_walk_reference.py), found by an
+#   open-loop trajectory search through the real command chain within the REAL servo limits:
+#     1. lean onto the left foot (~1 s; hip roll, waist roll, arms), lift the RIGHT foot 2-3 cm
+#        for ~0.45 s and put it down 5 cm forward;
+#     2. lean back and SLIDE the left foot up beside it (the left foot could not be lifted: the
+#        left hip roll stops at +0.17 rad, too little lean onto the right foot);
+#     3. 1 s pauses between.
+#   Open loop with the knee law under it, on the nominal plant: 3 cycles, ~5 cm/cycle, 0.5 cm/s.
+#   On this config's randomised plants it is fragile: zero action survives 29 s on 3/12 episodes
+#   with the env's root kicks off, 0/12 with them on. That gap is the policy's job.
+#
+# The knee law stays under the policy (feedback_prior, as in standing): the reference was measured
+# with it, and without it the same commands fall in the second cycle.
+#
+#   python scripts/train_standing.py --config config/experiments/walk_step_to.yaml --wandb online
+#   python scripts/eval_walking.py --run runs/<name>          # vs the reference alone, held out
+# Success: on held-out episodes (seed 777 x 24, 30 s) the policy stays up clearly more often than
+# the reference alone, and keeps walking forward (not standing still: the speed term pays only
+# for the reference's ~0.5 cm/s).
+experiment:
+  name: walk_step_to
+  base: config/experiments/flex_plant_v2.yaml
+  description: PPO corrections around a 9 s step-to reference gait on the flex plant, knee law underneath.
+  hypothesis: With the gait given, PPO can learn the balance feedback that keeps it upright on randomised plants.
+  tags: [walking, real-robot, flex, reference-gait]
+overrides:
+  standing:
+    env_kind: real_walking
+    walk_reference: config/gaits/step_to_v1.npz
+    walk_stand_s: [1.0, 2.0]          # stand before the gait clock starts (s, per episode)
+    residual_clamp: 0.2               # the policy's corrections, around the reference
+    max_episode_steps: 1200           # 30 s = 3 cycles
+    total_timesteps: 30000000
+    # The root kicks (push_lin_vel/ang_vel) and the standing scenarios (lean starts, torso
+    # pushes, big kicks) are off for the first walking run: the reference alone survives none of
+    # them yet. The plant, sensor and lag randomisation stay on.
+    push_enabled: false
+    training_scenarios:
+      mix: {as_configured: 0.7, wide_start: 0.0, torso_pushes: 0.0, big_kicks: 0.0,
+            sensor_faults: 0.15, slow_plant: 0.15}
+    validation_video: {enabled: false}

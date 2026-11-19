@@ -68,6 +68,37 @@ lean about the feet, start velocities; keeps servo-lag and EMA state consistent)
 
 **Advancement:** Height within tolerance + episode length ≥ minimum + not fallen + 60% success rate over 20 episodes.
 
+### `real_walking_env.py` — RealWalkingEnv(StandingEnv) (`env_kind: real_walking`)
+
+Walking on the REAL robot body (flex plant, proprioceptive obs, real command chain). A reference
+gait (`walk_reference`, one cycle of joint targets + the sole heights it makes, built by
+`scripts/build_walk_reference.py`) drives the command; the policy outputs corrections inside the
+residual box, which is re-centred on `q_ref(phase)` every step. Zero action = the reference + the
+feedback prior. Each episode stands `walk_stand_s` before the gait clock starts.
+- **Obs:** the standing obs + `[sin, cos, gait running]` (3), appended after the history stack.
+- **Reward terms:** `pose` and `foot` (follow the reference, compared `walk_track_lag_s` late for
+  the servo lag), `speed` (COM forward speed EMA vs the reference's), `upright`, `heading`, `alive`,
+  `action_rate`, `termination`; and (off by default, on in `walk_step_to_v2`) `progress` (new
+  ground under the REAR sole, ratcheted, per reference cycle advance) and `step` (bonus per
+  `walk_step_ref_m` a foot lands ahead after clearing `walk_step_clear_m`; `StepTracker`).
+- **Friction** (`walk_friction_range`, log-uniform, off by default): one coefficient per episode on
+  EVERY contact geom. MuJoCo uses the larger of a pair's two and the floor's is 1.0, so the
+  plant's per-geom `rand_friction_range` never made contacts slippery (run 2 trained on ~0.8-1.4).
+- **Speed cap** (`walk_progress_max_speed`, m/s, off by default): progress is paid from a credit
+  that grows at the cap (up to one cycle's advance). v3, uncapped, slid ~3 cm/s and fell more.
+- **Torso** (`walk_torso_rate_weight`, `walk_waist_rate_weight`, off by default): penalise the
+  body's roll/pitch rate^2 and the waist joints' speed^2. v4 walked by swinging the waist ~60 deg.
+- **Real servo limits:** set `clip_to_servo_limits` (StandingEnv, `servo_limits.py`) for walking.
+  The MJCF ranges are wider than what the robot can be sent (knees -90 vs ~-3 deg): without it
+  v4 hyperextended its knees to -13 deg.
+- **Missed-step termination** (`walk_missed_step_terminate`): the episode ends like a fall
+  (cause `missed_step`) when a reference swing's deadline (its end + `walk_step_grace_s`) passes
+  without a landed step of that foot. Why: run 1 (`walk_step_to`, no termination) stayed up 24/24
+  by SLIDING its feet and never stepped, since the speed/sole terms paid ~97% for it. A soft
+  reward cannot price "not stepping" above "safe" against a fall; early termination can.
+- **Why a reference:** this body cannot walk statically, and scratch PPO never found standing
+  feedback. A trajectory search found the steps (see `config/experiments/walk_step_to.yaml`).
+
 ### `walking_env.py` — WalkingEnv(gym.Wrapper)
 
 Command-conditioned walking with velocity tracking.

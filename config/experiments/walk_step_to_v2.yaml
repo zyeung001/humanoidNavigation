@@ -1,0 +1,44 @@
+# walk_step_to, rewarded for real steps: the first run kept its balance and stopped stepping.
+#
+# WHY (11/14/2026). walk_step_to-1113-2300 (30M) stayed up on 24/24 held-out episodes (the
+# reference alone: 2/24) but never lifted a foot: it slid the right foot 5-17 cm forward and
+# walked 0.11 cm/s, not the reference's 0.5. Sliding kept ~97% of that reward: standing still
+# paid 95% of the speed term (target 0.5 cm/s) and the sole-height term only differs during the
+# 0.45 s swing (5% of the 9 s cycle), against a -10 fall for trying.
+#
+# What changes (src/environments/real_walking_env.py):
+#   * walk_missed_step_terminate: the episode ends like a fall when the reference's right step
+#     (its swing ends 2.45 s into the cycle) has not landed 0.5 s later. A landed step = the sole
+#     rose above 12 mm and came down ahead of its take-off and of its furthest landing. Sliding,
+#     hopping in place and stepping back and forth do not count. Not stepping stops being safe.
+#   * step bonus 150 per 3 cm landed (the reference's own step lands 2.4-4.4 cm ahead on
+#     randomised plants; capped at 1.25 x 3 cm) and progress 150 per cycle advance of new
+#     ground under the REAR foot, so the left foot has to come up too. For scale: the remaining
+#     per-step terms pay ~4.2/step, ~1500 per 9 s cycle.
+#   * the speed term is off: it was nearly constant (it paid standing still), and a constant
+#     reward only makes falling, and so trying, more expensive.
+# Measured before training on 8 randomised plants (seeds 777000-7, 1.5 s stand + 2 cycles):
+#   reference alone   return ~2800, 1-2 right steps each, rear foot +4-11 cm (falls 6/8: the job)
+#   standing still    return  ~725, 0 steps, ended by missed_step at the first deadline
+#   run-1 policy      return  ~725, 0 steps, ended by missed_step (it scored ~97% of the
+#                     reference under walk_step_to's reward)
+#
+#   python scripts/train_standing.py --config config/experiments/walk_step_to_v2.yaml --wandb online
+#   python scripts/eval_walking.py --run runs/<name>
+# Success: held out (777 x 24, 30 s), it stays up clearly more often than the reference alone AND
+# lands about one right step per cycle (eval_walking's steps column), walking ~0.3-0.5 cm/s.
+experiment:
+  name: walk_step_to_v2
+  base: config/experiments/walk_step_to.yaml
+  description: walk_step_to with missed-step termination, a step bonus and rear-foot progress instead of the speed term.
+  hypothesis: When not stepping ends the episode like a fall, PPO keeps the reference's steps and learns to balance them.
+  tags: [walking, real-robot, flex, reference-gait]
+overrides:
+  standing:
+    walk_speed_weight: 0.0
+    walk_progress_weight: 150.0
+    walk_step_bonus: 150.0
+    walk_step_ref_m: 0.03
+    walk_step_clear_m: 0.012
+    walk_missed_step_terminate: true
+    walk_step_grace_s: 0.5
