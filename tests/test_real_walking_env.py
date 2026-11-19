@@ -202,3 +202,17 @@ def test_march_reference_keeps_the_torso_still_and_stays_in_the_real_limits():
     assert np.ptp(ref.q[:, 8]) < 0.05                       # waist roll: under 3 deg
     assert ref.q[:, 3].max() > 0.3                          # the right knee bends (>17 deg)
     assert ref.foot_z[:, 0].max() > 0.025 and ref.advance > 0.03
+
+
+def test_slip_counts_only_soles_moving_on_the_floor():
+    """Standing still: the soles barely move, so the slip term and the slide info stay ~0."""
+    with contextlib.redirect_stdout(io.StringIO()):
+        e = make_real_walking_env(config=_cfg(walk_slip_weight=1.0, walk_stand_s=2.0,
+                                              residual_baseline_rand=0.0, obs_noise=False))
+    e.reset(seed=6)
+    slid = 0.0
+    for _ in range(40):                                    # 1 s, all inside the opening stand
+        _, _, _, _, info = e.step(np.zeros(17, np.float32))
+        slid += abs(info["walk_slide_x_m"]) + abs(info["walk_slide_y_m"])
+        assert "reward/slip" in info
+    assert slid < 0.005                                    # under 5 mm in a second of standing

@@ -192,6 +192,13 @@ class RealWalkingEnv(StandingEnv):
         self.w_torso_rate = float(cfg.get("walk_torso_rate_weight", 0.0))
         self.w_waist_rate = float(cfg.get("walk_waist_rate_weight", 0.0))
         self._waist_dof = None
+        # Foot slip (off by default): a sole on the floor (< walk_slip_contact_m up) that moves
+        # sideways or forward costs walk_slip_weight per m/s, summed over the feet. WHY (11/18):
+        # walk_march kept the torso quiet but its feet scrubbed ~75 cm SIDEWAYS per 30 s (more
+        # than they moved forward); the user asked why the feet slide side to side.
+        self.w_slip = float(cfg.get("walk_slip_weight", 0.0))
+        self.slip_contact_m = float(cfg.get("walk_slip_contact_m", 0.003))
+        self._sole_xy = None
         # Real forward travel (off by default; see the module docstring). progress pays
         # walk_progress_weight per reference cycle's advance of new rear-sole ground; step pays
         # walk_step_bonus per walk_step_ref_m a foot lands ahead (capped at 1.25 steps).
@@ -274,6 +281,12 @@ class RealWalkingEnv(StandingEnv):
             self._foot_geoms = sole_boxes(self.env.unwrapped.model, self.model_spec.foot_body_ids)
         return sole_heights(self.env.unwrapped.data, self._foot_geoms)
 
+    def sole_xy(self) -> np.ndarray:
+        """World (x, y) of each sole box's centre, m, shape (2, 2): (R, L) x (x, y)."""
+        self.sole_heights()
+        d = self.env.unwrapped.data
+        return np.array([d.geom_xpos[g][:2] for g, _ in self._foot_geoms], dtype=np.float64)
+
     def sole_x(self) -> np.ndarray:
         """Forward (world x) position of each sole box's centre, m (R, L)."""
         self.sole_heights()                                  # builds the geom list once
@@ -308,6 +321,7 @@ class RealWalkingEnv(StandingEnv):
             self.friction = float(np.exp(np.random.uniform(np.log(lo), np.log(hi))))
             self.env.unwrapped.model.geom_friction[self._contact_geoms, 0] = self.friction
         x = self.sole_x()
+        self._sole_xy = self.sole_xy()
         self.steps.reset(x)
         self._rear_best = float(x.min())
         self.rear_progress_m = 0.0
@@ -361,6 +375,13 @@ class RealWalkingEnv(StandingEnv):
             m = self.env.unwrapped.model
             self._waist_dof = [int(m.jnt_dofadr[m.actuator_trnid[a][0]]) for a in (8, 9)]
         torso_rate2 = float(data.qvel[3] ** 2 + data.qvel[4] ** 2)
+        xy = self.sole_xy()
+        if self._sole_xy is None:
+            self._sole_xy = xy
+        on_floor = z < self.slip_contact_m
+        moved = np.abs(xy - self._sole_xy) * on_floor[:, None]       # (foot, x/y), m this step
+        self._sole_xy = xy
+        slip_speed = float(np.sum(np.linalg.norm(moved, axis=1))) / self._control_dt
         waist_rate2 = float(np.sum(np.square(data.qvel[self._waist_dof])))
         heading_err = float(np.arctan2(np.sin(self._yaw(data.qpos[3:7]) - self._yaw0),
                                        np.cos(self._yaw(data.qpos[3:7]) - self._yaw0)))
@@ -375,6 +396,7 @@ class RealWalkingEnv(StandingEnv):
             "heading": -self.w_heading * heading_err ** 2,
             "torso_rate": -self.w_torso_rate * torso_rate2,
             "waist_rate": -self.w_waist_rate * waist_rate2,
+            "slip": -self.w_slip * slip_speed,
             "alive": self.w_alive,
             "action_rate": -self.w_rate * float(np.sum(np.square(self._last_action_rate))),
         }
@@ -396,7 +418,8 @@ class RealWalkingEnv(StandingEnv):
                      "walk_rear_progress_m": self.rear_progress_m,
                      "walk_torso_rate": float(np.sqrt(torso_rate2)),
                      "walk_waist_roll": float(data.qpos[self.act_qposadr[8]]),
-                     "walk_waist_pitch": float(data.qpos[self.act_qposadr[9]])})
+                     "walk_waist_pitch": float(data.qpos[self.act_qposadr[9]]),
+                     "walk_slide_x_m": float(moved[:, 0].sum()), "walk_slide_y_m": float(moved[:, 1].sum())})
         return float(sum(terms.values())), terminated
 
 
