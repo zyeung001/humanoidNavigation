@@ -205,17 +205,19 @@ def test_march_reference_keeps_the_torso_still_and_stays_in_the_real_limits():
 
 
 def test_slip_counts_only_soles_moving_on_the_floor():
-    """Standing still: the soles barely move, so the slip term and the slide info stay ~0."""
+    """Standing still: once settled, the soles barely move, so the slide info stays ~0.
+    (The first 0.5 s is the spawn settling onto the floor: ~3 mm of sole motion.)"""
     with contextlib.redirect_stdout(io.StringIO()):
         e = make_real_walking_env(config=_cfg(walk_slip_weight=1.0, walk_stand_s=2.0,
                                               residual_baseline_rand=0.0, obs_noise=False))
     e.reset(seed=6)
     slid = 0.0
-    for _ in range(40):                                    # 1 s, all inside the opening stand
+    for k in range(60):                                    # 1.5 s, all inside the opening stand
         _, _, _, _, info = e.step(np.zeros(17, np.float32))
-        slid += abs(info["walk_slide_x_m"]) + abs(info["walk_slide_y_m"])
         assert "reward/slip" in info
-    assert slid < 0.005                                    # under 5 mm in a second of standing
+        if k >= 20:
+            slid += abs(info["walk_slide_x_m"]) + abs(info["walk_slide_y_m"])
+    assert slid < 0.004                                    # measured 1.4-2.1 mm over 12 seeds
 
 
 def test_alternating_reference_lifts_both_feet():
@@ -224,3 +226,11 @@ def test_alternating_reference_lifts_both_feet():
     for foot in (0, 1):
         assert ref.foot_z[:, foot].max() > 0.025
         assert len(swing_ends(ref.t, ref.foot_z[:, foot], 0.012)) == 1
+
+
+def test_slip_axes_y_costs_only_sideways_sliding():
+    with contextlib.redirect_stdout(io.StringIO()):
+        e = make_real_walking_env(config=_cfg(walk_slip_weight=1.0, walk_slip_axes="y"))
+    assert e._slip_cols == [1]
+    with pytest.raises(ValueError), contextlib.redirect_stdout(io.StringIO()):
+        make_real_walking_env(config=_cfg(walk_slip_axes="z"))

@@ -1,0 +1,32 @@
+# walk_march, fine-tuned to stop the feet scrubbing sideways.
+#
+# WHY (11/18/2026). walk_march-1117-2323 (30M) walks with a quiet torso (105/120 up across
+# mu 0.3-1.5, waist roll swing 8.6 deg) but its soles scrub ~75 cm SIDEWAYS per 30 s while on
+# the floor -- more than they move forward. With no ankle the foot is locked to the shin, so
+# rolling the hips drags the feet, and nothing in the reward minded. The user asked why the
+# feet slide side to side.
+#   walk_slip_weight 10, walk_slip_axes y: a sole on the floor moving SIDEWAYS costs 10 per m/s
+#   (~0.5 per step at walk_march's ~5 cm/s, ~12% of the per-step reward). Forward sliding is
+#   not costed: march_v1's left foot slides forward by design (it is the gait's left "step").
+# Fine-tuned from walk_march's final weights (same reference and env), 30M more steps.
+# (The alternative, walk_alt.yaml -- both feet lifting -- is a gamble: its reference alone stays
+# up 0/24; the user chose this one for an overnight run.)
+#
+#   python scripts/train_standing.py --config config/experiments/walk_march_noslip.yaml --wandb online
+#   python scripts/eval_walking.py --run runs/<name> --friction 0.3 0.5 0.8 1.2 1.5
+# Success: slide_y far below walk_march's, with about as many episodes up (105/120), ~1 right
+# step per cycle and the torso as quiet.
+experiment:
+  name: walk_march_noslip
+  base: config/experiments/walk_march.yaml
+  description: walk_march fine-tuned with a cost on sideways foot sliding (walk_slip_axes y).
+  hypothesis: Costing sideways sole motion removes the scrubbing without losing walk_march's balance.
+  tags: [walking, real-robot, flex, reference-gait, torso, servo-limits, finetune, slip]
+  resume:
+    model: runs/walk_march-1117-2323/final/model.zip
+    vecnorm: runs/walk_march-1117-2323/final/vecnorm.pkl
+    timesteps: 60000000
+overrides:
+  standing:
+    walk_slip_weight: 10.0
+    walk_slip_axes: y

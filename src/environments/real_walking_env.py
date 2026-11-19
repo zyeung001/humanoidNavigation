@@ -198,6 +198,12 @@ class RealWalkingEnv(StandingEnv):
         # than they moved forward); the user asked why the feet slide side to side.
         self.w_slip = float(cfg.get("walk_slip_weight", 0.0))
         self.slip_contact_m = float(cfg.get("walk_slip_contact_m", 0.003))
+        # Which sliding is costed: "xy" (any) or "y" (sideways only -- for a gait whose left
+        # foot is MEANT to slide forward, like march_v1).
+        axes = str(cfg.get("walk_slip_axes", "xy"))
+        if axes not in ("xy", "y"):
+            raise ValueError(f"walk_slip_axes must be 'xy' or 'y', not {axes!r}")
+        self._slip_cols = [0, 1] if axes == "xy" else [1]
         self._sole_xy = None
         # Real forward travel (off by default; see the module docstring). progress pays
         # walk_progress_weight per reference cycle's advance of new rear-sole ground; step pays
@@ -381,7 +387,7 @@ class RealWalkingEnv(StandingEnv):
         on_floor = z < self.slip_contact_m
         moved = np.abs(xy - self._sole_xy) * on_floor[:, None]       # (foot, x/y), m this step
         self._sole_xy = xy
-        slip_speed = float(np.sum(np.linalg.norm(moved, axis=1))) / self._control_dt
+        slip_speed = float(np.sum(np.linalg.norm(moved[:, self._slip_cols], axis=1))) / self._control_dt
         waist_rate2 = float(np.sum(np.square(data.qvel[self._waist_dof])))
         heading_err = float(np.arctan2(np.sin(self._yaw(data.qpos[3:7]) - self._yaw0),
                                        np.cos(self._yaw(data.qpos[3:7]) - self._yaw0)))
