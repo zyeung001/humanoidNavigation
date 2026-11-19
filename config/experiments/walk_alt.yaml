@@ -1,0 +1,35 @@
+# Alternating left-right walking: BOTH feet lift and step, no sliding, quiet torso.
+#
+# WHY (11/18/2026). walk_march (30M) kept the torso quiet (waist roll swing 8.6 deg, 105/120 up
+# across mu 0.3-1.5) but it was still a step-and-drag gait: only the right foot stepped, the left
+# SLID up, and both soles scrubbed ~75 cm sideways per 30 s. The user: "why is the gait having
+# the feet slide side to side? Can you not just walk forward normally like a person by bending
+# the knees". Two findings:
+#   * The left foot CAN step (my earlier "it cannot lift" was wrong: that search started from
+#     a poor lean). Leaning onto the right foot uses the right hip's inward roll; with a waist
+#     lean of ~10-14 deg the left foot lifts ~3 cm and lands ~6 cm forward.
+#   * Chained after the right step it is marginal open-loop: config/gaits/alt_v1.npz
+#     (step_R_march + step_L_march_after_R, 2.5 s pauses, 12 s cycle, both feet up ~3.3 cm,
+#     4.4 cm per cycle) survives ONE cycle with the real servo limits and no knee law, and falls
+#     with the knee law on. Keeping it upright is the policy's job.
+# Knee bend is bounded by the body: with no ankle the foot turns with the shin, so a flat foot
+# needs the hip to flex as much as the knee bends, and hip flexion stops at +20 deg. The steps
+# use ~20 deg of knee.
+# Changes from walk_march: the alternating reference (the missed-step deadline now covers both
+# feet), and walk_slip_weight: a sole on the floor that moves costs 5 per m/s.
+#
+#   python scripts/train_standing.py --config config/experiments/walk_alt.yaml --wandb online
+#   python scripts/eval_walking.py --run runs/<name> --friction 0.3 0.5 0.8 1.2 1.5
+# Success: both feet step (~1 right and ~1 left per cycle), sliding far below walk_march's
+# (~75 cm sideways per 30 s), torso as quiet as walk_march, and more episodes up than the
+# reference alone.
+experiment:
+  name: walk_alt
+  base: config/experiments/walk_march.yaml
+  description: Alternating R+L reference (both feet lift), foot-slip penalty, on top of walk_march (real limits, torso terms, friction), from scratch.
+  hypothesis: With a two-step reference and slip costed, PPO learns a walk where both feet step instead of sliding.
+  tags: [walking, real-robot, flex, reference-gait, torso, servo-limits, alternating]
+overrides:
+  standing:
+    walk_reference: config/gaits/alt_v1.npz
+    walk_slip_weight: 5.0

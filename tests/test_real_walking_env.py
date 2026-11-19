@@ -216,3 +216,11 @@ def test_slip_counts_only_soles_moving_on_the_floor():
         slid += abs(info["walk_slide_x_m"]) + abs(info["walk_slide_y_m"])
         assert "reward/slip" in info
     assert slid < 0.005                                    # under 5 mm in a second of standing
+
+
+def test_alternating_reference_lifts_both_feet():
+    """alt_v1 (walk_alt): both feet have a swing, so the missed-step deadline covers both."""
+    ref = GaitReference.load("config/gaits/alt_v1.npz")
+    for foot in (0, 1):
+        assert ref.foot_z[:, foot].max() > 0.025
+        assert len(swing_ends(ref.t, ref.foot_z[:, foot], 0.012)) == 1
